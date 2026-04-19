@@ -65,6 +65,7 @@ urlpatterns = [
     path("api/config/hvacrules/<int:pk>/", template_views.api_config_hvacrule_detail, name="api_config_hvacrule_detail"),
     # AJAX API -- HVAC Service Scope (read-only reference table)
     path("api/config/servicescopes/", template_views.api_config_servicescopes, name="api_config_servicescopes"),
+    path("api/config/servicescopes/<int:pk>/", template_views.api_config_servicescope_detail, name="api_config_servicescope_detail"),
     # End-to-End lifecycle timeline
     path("<int:pk>/e2e-timeline/", template_views.procurement_e2e_timeline, name="e2e_timeline"),
 ]

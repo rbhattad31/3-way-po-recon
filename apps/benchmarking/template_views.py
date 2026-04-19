@@ -161,9 +161,14 @@ def _create_quotations_from_upload(*, bench_request, upload, quotation_ref: str,
     return created, None
 
 
-def _run_benchmark_with_live(*, bench_request, user, tenant):
+def _run_benchmark_with_live(*, bench_request, user, tenant, force_reextract=False):
     """Run core benchmark + best-effort live enrichment."""
-    result = BenchmarkEngine.run(bench_request.pk, user=user, tenant=tenant)
+    result = BenchmarkEngine.run(
+        bench_request.pk,
+        user=user,
+        tenant=tenant,
+        force_reextract=bool(force_reextract),
+    )
     live_result = None
     if result.get("success"):
         try:
@@ -251,6 +256,38 @@ def request_list(request):
     )
     return render(request, "benchmarking/request_list.html", ctx)
 
+@login_required
+def dashboard(request):
+    """Benchmarking dashboard with tenant-scoped KPIs and recent activity."""
+    tenant = require_tenant(request)
+    scoped_base = _scope_requests(request, BenchmarkRequest.objects.filter(is_active=True))
+
+    total_count = scoped_base.count()
+    completed_count = scoped_base.filter(status="COMPLETED").count()
+    processing_count = scoped_base.filter(status="PROCESSING").count()
+    failed_count = scoped_base.filter(status="FAILED").count()
+    pending_count = scoped_base.filter(status="PENDING").count()
+
+    recent_requests = scoped_base.select_related("submitted_by").order_by("-created_at", "-id")[:10]
+
+    company_name = "Bradsol Group"
+    if tenant is not None and getattr(tenant, "name", None):
+        company_name = tenant.name
+    elif getattr(request.user, "company", None) and getattr(request.user.company, "name", None):
+        company_name = request.user.company.name
+
+    ctx = _base_ctx(
+        total_count=total_count,
+        completed_count=completed_count,
+        processing_count=processing_count,
+        failed_count=failed_count,
+        pending_count=pending_count,
+        recent_requests=recent_requests,
+        company_name=company_name,
+        page_title="Benchmarking Dashboard",
+        active_menu="benchmarking_dashboard",
+    )
+    return render(request, "benchmarking/dashboard.html", ctx)
 
 # --------------------------------------------------------------------------- #
 # 2. New Request (upload form)
@@ -451,9 +488,21 @@ def request_detail(request, pk):
     line_items = []
     quotation_summaries = []
     vendor_cards = []
-    for q in quotations:
+    for idx, q in enumerate(quotations, start=1):
         q_items = list(q.line_items.filter(is_active=True))
         line_items.extend(q_items)
+        fallback_vendor_label = f"Vendor {chr(64 + idx)}" if idx <= 26 else f"Vendor {idx}"
+        supplier_name = (q.supplier_name or "").strip() or fallback_vendor_label
+        quotation_document_url = ""
+        if q.blob_name:
+            quotation_document_url = (BlobStorageService.get_sas_url(q.blob_name, expiry_hours=24) or "").strip()
+        if not quotation_document_url:
+            quotation_document_url = (q.blob_url or "").strip()
+        if not quotation_document_url:
+            try:
+                quotation_document_url = q.document.url if q.document else ""
+            except Exception:
+                quotation_document_url = ""
         q_total = 0.0
         q_total_bench_covered = 0.0
         q_bench = 0.0
@@ -497,8 +546,9 @@ def request_detail(request, pk):
         })
         vendor_cards.append({
             "quotation_id": q.pk,
-            "supplier_name": q.supplier_name or "Unnamed Vendor",
+            "supplier_name": supplier_name,
             "quotation_ref": q.quotation_ref,
+            "quotation_document_url": quotation_document_url,
             "line_items": q_items,
             "line_count": len(q_items),
             "benchmarked_line_count": benchmarked_line_count,
@@ -530,6 +580,107 @@ def request_detail(request, pk):
         negotiation_notes = result.negotiation_notes_json or []
     except Exception:
         pass
+
+    quotation_count = len(vendor_cards)
+    quotation_mode = "MULTI_VENDOR" if quotation_count > 1 else ("SINGLE_VENDOR" if quotation_count == 1 else "NO_QUOTATION")
+    quotation_mode_label_map = {
+        "MULTI_VENDOR": "Multi Vendor",
+        "SINGLE_VENDOR": "Single Vendor",
+        "NO_QUOTATION": "No Quotation",
+    }
+    quotation_mode_label = quotation_mode_label_map.get(quotation_mode, quotation_mode.replace("_", " ").title())
+
+    rfq_source = (bench_request.rfq_source or "").strip().lower()
+    rfq_ref = (bench_request.rfq_ref or "").strip()
+    rfq_present = bool(
+        rfq_ref
+        or bench_request.rfq_blob_path
+        or bench_request.rfq_blob_url
+        or bench_request.rfq_document
+    )
+    if rfq_present:
+        if rfq_source == "system":
+            rfq_mode = "SYSTEM_RFQ"
+            rfq_label = "System RFQ"
+        elif rfq_source == "upload":
+            rfq_mode = "UPLOADED_RFQ"
+            rfq_label = "Uploaded RFQ"
+        else:
+            rfq_mode = "MANUAL_RFQ"
+            rfq_label = "Manual RFQ Reference"
+    else:
+        rfq_mode = "NO_RFQ"
+        rfq_label = "No RFQ"
+
+    total_line_count = len(line_items)
+    db_line_count = len([li for li in line_items if li.benchmark_source == "CORRIDOR_DB"])
+    market_line_count = len([li for li in line_items if li.benchmark_source == "PERPLEXITY_LIVE"])
+    no_benchmark_line_count = len(
+        [
+            li for li in line_items
+            if li.benchmark_source not in {"CORRIDOR_DB", "PERPLEXITY_LIVE"} or li.benchmark_mid is None
+        ]
+    )
+    if total_line_count > 0:
+        db_coverage_pct = round((db_line_count / float(total_line_count)) * 100.0, 1)
+        market_coverage_pct = round((market_line_count / float(total_line_count)) * 100.0, 1)
+        gap_pct = round((no_benchmark_line_count / float(total_line_count)) * 100.0, 1)
+    else:
+        db_coverage_pct = 0.0
+        market_coverage_pct = 0.0
+        gap_pct = 0.0
+
+    flow_explanations = []
+    if quotation_mode == "SINGLE_VENDOR":
+        flow_explanations.append(
+            "Single vendor quotation uploaded. Decision support is benchmark-vs-quote and RFQ alignment only."
+        )
+    elif quotation_mode == "MULTI_VENDOR":
+        flow_explanations.append(
+            "Multiple vendor quotations uploaded. Benchmarked line coverage is used for cross-vendor ranking and recommendation."
+        )
+    else:
+        flow_explanations.append(
+            "No quotations are currently uploaded. Upload one or more vendor files to run benchmarking."
+        )
+
+    if rfq_mode == "SYSTEM_RFQ":
+        flow_explanations.append("RFQ context is sourced from procurement request records and used as the baseline scope.")
+    elif rfq_mode == "UPLOADED_RFQ":
+        flow_explanations.append("RFQ context is from an uploaded RFQ file and used as the baseline scope.")
+    elif rfq_mode == "MANUAL_RFQ":
+        flow_explanations.append("RFQ context is a manual reference string and used for traceability in review.")
+    else:
+        flow_explanations.append("No RFQ was provided. Benchmarking is performed directly from quotation line items.")
+
+    flow_explanations.append(
+        f"DB-first coverage: {db_line_count}/{total_line_count} lines ({db_coverage_pct}%) matched benchmark corridor rules."
+    )
+    flow_explanations.append(
+        f"Market fallback coverage: {market_line_count}/{total_line_count} lines ({market_coverage_pct}%) used live market research when DB corridor data was missing."
+    )
+    if no_benchmark_line_count > 0:
+        flow_explanations.append(
+            f"Remaining gap: {no_benchmark_line_count}/{total_line_count} lines ({gap_pct}%) still need manual review because benchmark values were not resolved."
+        )
+
+    benchmark_flow_summary = {
+        "quotation_mode": quotation_mode,
+        "quotation_mode_label": quotation_mode_label,
+        "quotation_count": quotation_count,
+        "rfq_mode": rfq_mode,
+        "rfq_label": rfq_label,
+        "rfq_ref": rfq_ref,
+        "rfq_present": rfq_present,
+        "total_line_count": total_line_count,
+        "db_line_count": db_line_count,
+        "market_line_count": market_line_count,
+        "no_benchmark_line_count": no_benchmark_line_count,
+        "db_coverage_pct": db_coverage_pct,
+        "market_coverage_pct": market_coverage_pct,
+        "gap_pct": gap_pct,
+        "details": flow_explanations,
+    }
 
     # Category filter
     cat_filter = request.GET.get("category", "")
@@ -565,6 +716,7 @@ def request_detail(request, pk):
         vendor_recommendation=vendor_recommendation,
         best_vendor_summary=best_vendor_summary,
         no_vendor_recommendation=no_vendor_recommendation,
+        benchmark_flow_summary=benchmark_flow_summary,
     )
     return render(request, "benchmarking/request_detail.html", ctx)
 
@@ -596,6 +748,7 @@ def request_add_quotations(request, pk):
         bench_request=bench_request,
         user=request.user,
         tenant=getattr(request, "tenant", None),
+        force_reextract=True,
     )
     if result.get("success"):
         if live_result and live_result.get("success"):

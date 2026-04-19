@@ -12,9 +12,8 @@
 <div class="lmg-banner mb-4 d-flex align-items-center justify-content-between flex-wrap gap-3">
   <div>
     <div class="fw-bold mb-2 d-flex align-items-center gap-3">
-       <img src="{% static 'images/bradsol-logo.png' %}?v=3" alt="Bradsol" width="132" height="34"
-         style="width:132px;height:34px;max-width:132px;max-height:34px;object-fit:contain;background:#fff;border-radius:8px;padding:4px 10px;">
-      <span style="font-size:1.05rem;letter-spacing:.5px;opacity:.9;">Procurement Intelligence for Bradsol Group</span>
+
+      <span style="font-size:1.05rem;letter-spacing:.5px;opacity:.9;">Procurement Intelligence for {{ company_name }}</span>
     </div>
 
     <div class="lmg-brand-pills mb-2">
@@ -32,14 +31,52 @@
     </small>
   </div>
 
-  <div class="d-flex gap-2 flex-wrap">
-    <a href="{% url 'procurement:hvac_create' %}" class="btn btn-warning text-dark fw-semibold">
-      New HVAC Request
-    </a>
-   
-    <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-light">
-      All Requests
-    </a>
+  <div class="d-flex flex-column align-items-end gap-2">
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <a href="{% url 'procurement:hvac_create' %}" class="btn btn-warning text-dark fw-semibold">
+        New HVAC Request
+      </a>
+
+      <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-light">
+        All Requests
+      </a>
+    </div>
+
+    <div class="dropdown">
+      <button class="btn btn-light btn-sm dropdown-toggle d-inline-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7 16V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M12 16V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M17 16V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        Dashboard Switch
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width:220px;">
+        <li>
+          <a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'procurement:procurement_dashboard' %}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
+              <rect x="13" y="3" width="8" height="5" rx="1.5" stroke="currentColor" stroke-width="2"/>
+              <rect x="13" y="10" width="8" height="11" rx="1.5" stroke="currentColor" stroke-width="2"/>
+              <rect x="3" y="13" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Procurement Dashboard
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'benchmarking:dashboard' %}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M4 19H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M7 16V11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M12 16V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M17 16V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Benchmarking Dashboard
+          </a>
+        </li>
+      </ul>
+    </div>
   </div>
 </div>
 
@@ -103,48 +140,7 @@
   </div>
 </div>
 
-<div class="row g-3 mb-3">
-  <div class="col-xl-12">
-    <div class="ap-card h-100">
-      <div class="ap-card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-clock-history me-2"></i>Procurement Timeline</span>
-        <span class="small text-muted">Latest request activity</span>
-      </div>
-      <div class="ap-card-body">
-        {% if procurement_timeline %}
-        <div class="proc-dashboard-timeline">
-          {% for item in procurement_timeline %}
-          <div class="proc-dashboard-timeline-item">
-            <div class="proc-dashboard-timeline-marker proc-dashboard-timeline-marker--{{ item.tone }}">
-              <i class="bi {{ item.icon }}"></i>
-            </div>
-            <div class="proc-dashboard-timeline-content">
-              <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                <div>
-                  <div class="proc-dashboard-timeline-title">{{ item.title }}</div>
-                  <div class="proc-dashboard-timeline-meta">{{ item.detail }}</div>
-                </div>
-                <span class="badge text-bg-{{ item.tone }}">{{ item.status_label }}</span>
-              </div>
-              <div class="proc-dashboard-timeline-desc">{{ item.action_text }}</div>
-              <div class="proc-dashboard-timeline-time">
-                {{ item.timestamp|date:"d M Y, H:i" }}
-                <span class="text-muted">({{ item.timestamp|timesince }} ago)</span>
-              </div>
-              <div class="mt-2">
-                <a href="{% url 'procurement:request_workspace' item.pk %}" class="btn btn-xs btn-outline-primary">Open request</a>
-              </div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="text-muted small">No procurement activity yet.</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
+
 
 <!-- RECENT -->
 <div class="ap-card">

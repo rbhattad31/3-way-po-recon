@@ -44,6 +44,25 @@
     </div>
   </div>
 
+  {% has_permission "email.view" as can_view_email_integration %}
+  {% if can_view_email_integration %}
+  <div class="card border-0 shadow-sm mb-3" style="border-radius:10px;">
+    <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2 py-2 px-3">
+      <div>
+        <div style="font-size:.9rem;font-weight:700;color:#111827;">
+          <i class="bi bi-envelope me-1 text-primary"></i>Email Integration
+        </div>
+        <div class="text-muted" style="font-size:.78rem;">Open mailbox dashboard, view recent messages, and check routing activity.</div>
+      </div>
+      <div class="d-flex gap-2">
+        <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-primary">
+          Open Email Integration
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
 
   <!-- ═══════════════════════════════════════════════════════════════
        SECTION 1: KPI HEADER (role-specific)

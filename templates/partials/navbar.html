@@ -27,7 +27,7 @@
     {% has_permission "procurement.view" as can_view_procurement_top %}
     {% if can_view_procurement_top %}
     <a class="ap-nav-link {% if request.resolver_match.app_name == 'procurement' %}active{% endif %}"
-       href="{% url 'procurement:request_list' %}">
+       href="{% url 'procurement:procurement_dashboard' %}">
       <i class="bi bi-cart4 me-1"></i>Procurement Agents
     </a>
     {% endif %}
@@ -56,6 +56,14 @@
     <a class="ap-nav-link {% if request.resolver_match.app_name == 'posting' and request.resolver_match.url_name == 'posting-workbench' %}active{% endif %}"
        href="{% url 'posting:posting-workbench' %}">
       <i class="bi bi-send me-1"></i>Posting
+    </a>
+    {% endif %}
+
+    {% has_permission "email.view" as can_view_email_integration %}
+    {% if can_view_email_integration %}
+    <a class="ap-nav-link {% if request.resolver_match.app_name == 'email_integration' %}active{% endif %}"
+       href="{% url 'email_integration:dashboard' %}">
+      <i class="bi bi-envelope me-1"></i>Email Integration
     </a>
     {% endif %}
 

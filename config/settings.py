@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "apps.posting",
     "apps.posting_core",
     "apps.erp_integration",
+    "apps.email_integration",
     "apps.core_eval",
     "apps.benchmarking",
 ]

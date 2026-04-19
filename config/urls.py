@@ -55,6 +55,8 @@ urlpatterns = [
     path("eval/", include("apps.core_eval.urls")),
     path("procurement/", include("apps.procurement.urls")),
     path("api/v1/procurement/", include("apps.procurement.api_urls")),
+    path("email/", include("apps.email_integration.urls")),
+    path("api/v1/email-integration/", include("apps.email_integration.api.urls")),
     path("posting/", include("apps.posting.urls")),
     path("api/v1/posting/", include("apps.posting.api_urls")),
     path("api/v1/posting-core/", include("apps.posting_core.api_urls")),

@@ -17,6 +17,7 @@ from django.views.decorators.http import require_POST, require_http_methods
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 
 from apps.auditlog.services import AuditService
@@ -48,6 +49,77 @@ from apps.procurement.services.agent_run_tracking import run_procurement_compone
 from apps.agents.services.llm_client import LLMClient, LLMMessage
 
 logger = logging.getLogger(__name__)
+
+
+def _is_platform_admin(user) -> bool:
+    return bool(getattr(user, "is_platform_admin", False) or getattr(user, "is_superuser", False))
+
+
+def _tenant_scoped_queryset(request, model_class):
+    """Return tenant-scoped queryset for a model.
+
+    Scope strategy:
+    - If model has `tenant` FK, filter by tenant.
+    - Else if model has `created_by` FK (BaseModel), filter by creator's company.
+    - Platform admins (or no tenant context) get unfiltered queryset.
+    """
+    qs = model_class.objects.all()
+    tenant = get_tenant_or_none(request)
+    if _is_platform_admin(request.user) or tenant is None:
+        return qs
+
+    field_names = {f.name for f in model_class._meta.get_fields()}
+    if "tenant" in field_names:
+        return qs.filter(tenant=tenant)
+    if "request" in field_names:
+        return qs.filter(request__tenant=tenant)
+    if "run" in field_names:
+        return qs.filter(run__request__tenant=tenant)
+    if "analysis_run" in field_names:
+        return qs.filter(analysis_run__request__tenant=tenant)
+    if "quotation" in field_names:
+        return qs.filter(quotation__request__tenant=tenant)
+    if "created_by" in field_names:
+        return qs.filter(created_by__company=tenant)
+    return qs.none()
+
+
+def _tenant_create_kwargs(request, model_class) -> dict:
+    """Build audit/tenant kwargs for create() on tenant-scoped models."""
+    kwargs = {"created_by": request.user}
+    tenant = get_tenant_or_none(request)
+    if tenant is None or _is_platform_admin(request.user):
+        return kwargs
+    field_names = {f.name for f in model_class._meta.get_fields()}
+    if "tenant" in field_names:
+        kwargs["tenant"] = tenant
+    return kwargs
+
+
+def _assert_tenant_object_access(request, obj) -> None:
+    """Enforce tenant ownership for a fetched object."""
+    tenant = get_tenant_or_none(request)
+    if _is_platform_admin(request.user) or tenant is None:
+        return
+
+    if hasattr(obj, "tenant_id"):
+        if obj.tenant_id != tenant.pk:
+            raise PermissionDenied("Object does not belong to your tenant.")
+        return
+
+    if hasattr(obj, "created_by_id"):
+        creator_company_id = getattr(getattr(obj, "created_by", None), "company_id", None)
+        if creator_company_id != tenant.pk:
+            raise PermissionDenied("Object does not belong to your tenant.")
+        return
+
+    if hasattr(obj, "request_id"):
+        request_tenant_id = getattr(getattr(obj, "request", None), "tenant_id", None)
+        if request_tenant_id != tenant.pk:
+            raise PermissionDenied("Object does not belong to your tenant.")
+        return
+
+    raise PermissionDenied("Tenant scope is not configured for this object.")
 
 
 def _generate_reason_summary_with_tracking(*, recommendation, proc_request, request_user):
@@ -185,7 +257,7 @@ def _hvac_create_context() -> dict:
 def procurement_home(request):
     """HVAC Procurement Intelligence home page."""
     recent_requests = (
-        ProcurementRequest.objects
+        _tenant_scoped_queryset(request, ProcurementRequest)
         .select_related("created_by")
         .filter(request_type="HVAC")
         .order_by("-created_at")[:6]
@@ -202,7 +274,6 @@ def procurement_home(request):
 @permission_required_code("procurement.view")
 def request_list(request):
     """List all procurement requests with filters."""
-    tenant = getattr(request, "tenant", None)
     status_choices = [
         (ProcurementRequestStatus.PENDING_RFQ, "Pending RFQ"),
         (ProcurementRequestStatus.READY_RFQ, "Ready RFQ"),
@@ -225,7 +296,7 @@ def request_list(request):
         .values("confidence_score")[:1]
     )
 
-    qs = ProcurementRequest.objects.select_related("created_by", "assigned_to").filter(
+    qs = _tenant_scoped_queryset(request, ProcurementRequest).select_related("created_by", "assigned_to").filter(
         is_duplicate=False,
         duplicate_of__isnull=True,
     ).annotate(
@@ -235,9 +306,6 @@ def request_list(request):
         latest_recommended_option=latest_recommendation_sq,
         latest_confidence_score=latest_confidence_sq,
     )
-    if tenant is not None:
-        qs = qs.filter(tenant=tenant)
-
     # Filters
     status_filter = (request.GET.get("status") or "").strip()
     search = request.GET.get("q")
@@ -390,7 +458,7 @@ def hvac_create(request):
             if store_id:
                 defaults = _build_hvac_store_profile_defaults(request.POST)
                 defaults["updated_by"] = request.user
-                profile, created = HVACStoreProfile.objects.update_or_create(
+                profile, created = _tenant_scoped_queryset(request, HVACStoreProfile).update_or_create(
                     store_id=store_id,
                     defaults=defaults,
                 )
@@ -878,7 +946,7 @@ def api_hvac_store_suggestions(request):
     """Return Store ID suggestions for HVAC form autosuggest/autofill."""
     query = (request.GET.get("q") or "").strip()
 
-    qs = HVACStoreProfile.objects.filter(is_active=True)
+    qs = _tenant_scoped_queryset(request, HVACStoreProfile).filter(is_active=True)
     if query:
         qs = qs.filter(store_id__icontains=query)
 
@@ -924,7 +992,7 @@ def api_hvac_store_create(request):
     if not store_id:
         return JsonResponse({"error": "Store ID is required."}, status=400)
 
-    if HVACStoreProfile.objects.filter(store_id=store_id).exists():
+    if _tenant_scoped_queryset(request, HVACStoreProfile).filter(store_id=store_id).exists():
         return JsonResponse({"error": f"Store ID '{store_id}' already exists. Please choose a different ID."},
                             status=409)
 
@@ -932,7 +1000,7 @@ def api_hvac_store_create(request):
         defaults = _build_hvac_store_profile_defaults(data)
         profile = HVACStoreProfile.objects.create(
             store_id=store_id,
-            created_by=request.user,
+            **_tenant_create_kwargs(request, HVACStoreProfile),
             **defaults,
         )
         result = {
@@ -970,7 +1038,7 @@ def api_hvac_store_create(request):
 def request_workspace(request, pk):
     """Full workspace view for a procurement request."""
     proc_request = get_object_or_404(
-        ProcurementRequest.objects.select_related("created_by", "assigned_to"),
+        _tenant_scoped_queryset(request, ProcurementRequest).select_related("created_by", "assigned_to"),
         pk=pk,
     )
     attributes = proc_request.attributes.all()
@@ -1046,7 +1114,11 @@ def request_workspace(request, pk):
     mi_suggestions = (mi_record.suggestions_json or []) if mi_record else []
 
     # Service scopes -- fetch all active rows; filter to match recommended system
-    all_service_scopes = list(HVACServiceScope.objects.filter(is_active=True).order_by("sort_order", "system_type"))
+    all_service_scopes = list(
+        _tenant_scoped_queryset(request, HVACServiceScope)
+        .filter(is_active=True)
+        .order_by("sort_order", "system_type")
+    )
     matched_service_scope = None
 
     # Keyword map: text patterns found in recommended_option or system_code -> HVACServiceScope.system_type
@@ -1110,7 +1182,11 @@ def request_workspace(request, pk):
         all_service_scopes = []
 
     # --- RFQ scope rows from HVACServiceScope (for RFQ modal Step 3 qty table) ---
-    _all_scopes_for_rfq = HVACServiceScope.objects.filter(is_active=True).order_by("sort_order", "system_type")
+    _all_scopes_for_rfq = (
+        _tenant_scoped_queryset(request, HVACServiceScope)
+        .filter(is_active=True)
+        .order_by("sort_order", "system_type")
+    )
     rfq_scope_json = {}
     for _ss in _all_scopes_for_rfq:
         _rows = []
@@ -1152,7 +1228,7 @@ def request_workspace(request, pk):
     # --- Products from DB for RFQ manual product selection (Step 2 cards) ---
     from apps.procurement.models import Product as _HVACProduct
     rfq_db_products = {}
-    for _p in _HVACProduct.objects.filter(is_active=True).values(
+    for _p in _tenant_scoped_queryset(request, _HVACProduct).filter(is_active=True).values(
         "system_type", "manufacturer", "product_name", "capacity_kw", "cop_rating", "sku"
     ).order_by("system_type", "manufacturer", "capacity_kw"):
         _stype = _p["system_type"]
@@ -1288,7 +1364,7 @@ def regenerate_reason_summary(request, pk):
     if request.method != "POST":
         return redirect("procurement:request_workspace", pk=pk)
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
     recommendation = (
         RecommendationResult.objects
         .filter(run__request=proc_request)
@@ -1354,7 +1430,7 @@ def generate_rfq(request, pk):
         rfq_id = request.GET.get("rfq_id", "")
         dl_fmt = request.GET.get("format", "xlsx").strip().lower()
         try:
-            _grfq = _GRFQ.objects.get(pk=int(rfq_id), request__pk=pk)
+            _grfq = _tenant_scoped_queryset(request, _GRFQ).get(pk=int(rfq_id), request__pk=pk)
         except Exception:
             from django.http import Http404
             raise Http404("RFQ record not found.")
@@ -1398,7 +1474,7 @@ def generate_rfq(request, pk):
     product_param = product_param_raw.strip().upper()
 
     proc_request = get_object_or_404(
-        ProcurementRequest.objects.select_related("created_by"),
+        _tenant_scoped_queryset(request, ProcurementRequest).select_related("created_by"),
         pk=pk,
     )
 
@@ -2265,7 +2341,7 @@ def generate_rfq(request, pk):
 def run_detail(request, pk):
     """Detail view for a single analysis run."""
     run = get_object_or_404(
-        AnalysisRun.objects.select_related("request", "triggered_by"),
+        _tenant_scoped_queryset(request, AnalysisRun).select_related("request", "triggered_by"),
         pk=pk,
     )
 
@@ -2309,7 +2385,7 @@ def trigger_analysis(request, pk):
     if request.method != "POST":
         return redirect("procurement:request_workspace", pk=pk)
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
     run_type = request.POST.get("run_type", "RECOMMENDATION")
 
     from apps.procurement.services.analysis_run_service import AnalysisRunService
@@ -2340,7 +2416,7 @@ def mark_ready(request, pk):
     if request.method != "POST":
         return redirect("procurement:request_workspace", pk=pk)
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
     from apps.procurement.services.request_service import ProcurementRequestService
     try:
         ProcurementRequestService.mark_ready(proc_request, user=request.user)
@@ -2357,7 +2433,7 @@ def upload_quotation(request, pk):
     if request.method != "POST":
         return redirect("procurement:request_workspace", pk=pk)
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
     from apps.procurement.services.create_rfq_service import QuotationService
 
     try:
@@ -2384,7 +2460,7 @@ def trigger_validation(request, pk):
     if request.method != "POST":
         return redirect("procurement:request_workspace", pk=pk)
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
 
     from apps.core.enums import AnalysisRunType
     from apps.procurement.services.analysis_run_service import AnalysisRunService
@@ -2419,7 +2495,7 @@ def quotation_prefill_review(request, pk):
     """Review and confirm extracted quotation data from PDF prefill."""
     import json
     quotation = get_object_or_404(
-        SupplierQuotation.objects.select_related("request", "uploaded_document"),
+        _tenant_scoped_queryset(request, SupplierQuotation).select_related("request", "uploaded_document"),
         pk=pk,
     )
     payload = quotation.prefill_payload_json or {}
@@ -2439,10 +2515,13 @@ def procurement_dashboard(request):
     """Bradsol Procurement Manager Dashboard with KPIs, charts, and quick actions."""
     from django.db.models import Count
 
-    qs = ProcurementRequest.objects.filter(is_duplicate=False)
+    qs = _tenant_scoped_queryset(request, ProcurementRequest).filter(is_duplicate=False)
     tenant = get_tenant_or_none(request)
-    if tenant is not None:
-        qs = qs.filter(tenant=tenant)
+    company_name = "Bradsol Group"
+    if tenant is not None and getattr(tenant, "name", None):
+        company_name = tenant.name
+    elif getattr(request.user, "company", None) and getattr(request.user.company, "name", None):
+        company_name = request.user.company.name
 
     # KPI counts
     status_counts = {item["status"]: item["total"] for item in qs.values("status").annotate(total=Count("id"))}
@@ -2483,7 +2562,7 @@ def procurement_dashboard(request):
     }
     from apps.procurement.models import ProcurementRequestAttribute
     hvac_attr_qs = (
-        ProcurementRequestAttribute.objects.filter(
+        _tenant_scoped_queryset(request, ProcurementRequestAttribute).filter(
             request__domain_code="HVAC",
             attribute_code="product_type",
         )
@@ -2510,6 +2589,7 @@ def procurement_dashboard(request):
         "hvac_by_type": hvac_by_type,
         "recent_requests": recent_requests,
         "procurement_timeline": procurement_timeline,
+        "company_name": company_name,
     })
 
 
@@ -2524,7 +2604,7 @@ def procurement_dashboard(request):
 @permission_required_code("procurement.view")
 def hvac_request_list(request):
     """List all HVAC procurement requests with KPIs, search, and filters."""
-    base_qs = ProcurementRequest.objects.filter(domain_code="HVAC", is_duplicate=False)
+    base_qs = _tenant_scoped_queryset(request, ProcurementRequest).filter(domain_code="HVAC", is_duplicate=False)
 
     # KPI totals
     total = base_qs.count()
@@ -2598,7 +2678,7 @@ def hvac_request_list(request):
 def hvac_request_detail(request, pk):
     """Full recommendation workspace for a single HVAC request."""
     proc_request = get_object_or_404(
-        ProcurementRequest.objects.select_related("created_by", "assigned_to"),
+        _tenant_scoped_queryset(request, ProcurementRequest).select_related("created_by", "assigned_to"),
         pk=pk, domain_code="HVAC",
     )
     attributes = proc_request.attributes.order_by("attribute_code")
@@ -2758,7 +2838,7 @@ def hvac_request_form(request):
 @permission_required_code("procurement.view")
 def hvac_cost_list(request):
     """List all HVAC cost-analysis runs."""
-    qs = BenchmarkResult.objects.filter(
+    qs = _tenant_scoped_queryset(request, BenchmarkResult).filter(
         run__request__domain_code="HVAC",
     ).select_related("run", "run__request", "quotation").prefetch_related("lines").order_by("-created_at")
 
@@ -2796,6 +2876,7 @@ def hvac_config(request):
                     allowed_for_compliance=request.POST.get("allowed_for_compliance") == "on",
                     fetch_mode=request.POST.get("fetch_mode", "PAGE"),
                     notes=request.POST.get("notes", ""),
+                    **_tenant_create_kwargs(request, ExternalSourceRegistry),
                 )
                 messages.success(request, "External source added.")
             except Exception as exc:
@@ -2805,7 +2886,7 @@ def hvac_config(request):
             src_id = request.POST.get("source_id")
             if src_id:
                 try:
-                    src = ExternalSourceRegistry.objects.get(pk=src_id)
+                    src = _tenant_scoped_queryset(request, ExternalSourceRegistry).get(pk=src_id)
                     src.is_active = not src.is_active
                     src.save(update_fields=["is_active"])
                     messages.success(request, f"Source '{src.source_name}' toggled.")
@@ -2813,7 +2894,7 @@ def hvac_config(request):
                     messages.error(request, "Source not found.")
         return redirect("procurement:hvac_config")
 
-    sources = ExternalSourceRegistry.objects.all().order_by("priority", "source_name")
+    sources = _tenant_scoped_queryset(request, ExternalSourceRegistry).order_by("priority", "source_name")
 
     return render(request, "procurement/hvac_config.html", {
         "sources": sources,
@@ -2838,21 +2919,29 @@ def proc_configurations(request):
         ExternalSourceClass, ValidationType, HVACSystemType, RoomUsageType,
     )
 
+    source_qs = _tenant_scoped_queryset(request, ExternalSourceRegistry)
+    ruleset_qs = _tenant_scoped_queryset(request, ValidationRuleSet)
+    product_qs = _tenant_scoped_queryset(request, Product)
+    vendor_qs = _tenant_scoped_queryset(request, Vendor)
+    room_qs = _tenant_scoped_queryset(request, Room)
+    hvacrule_qs = _tenant_scoped_queryset(request, HVACRecommendationRule)
+    service_qs = _tenant_scoped_queryset(request, HVACServiceScope)
+
     stats = {
-        "sources_total": ExternalSourceRegistry.objects.count(),
-        "sources_active": ExternalSourceRegistry.objects.filter(is_active=True).count(),
-        "rulesets_total": ValidationRuleSet.objects.count(),
-        "rulesets_active": ValidationRuleSet.objects.filter(is_active=True).count(),
-        "products_total": Product.objects.count(),
-        "products_active": Product.objects.filter(is_active=True).count(),
-        "vendors_total": Vendor.objects.count(),
-        "vendors_active": Vendor.objects.filter(is_active=True).count(),
-        "rooms_total": Room.objects.count(),
-        "rooms_active": Room.objects.filter(is_active=True).count(),
-        "hvacrules_total": HVACRecommendationRule.objects.count(),
-        "hvacrules_active": HVACRecommendationRule.objects.filter(is_active=True).count(),
-        "service_total": HVACServiceScope.objects.count(),
-        "service_active": HVACServiceScope.objects.filter(is_active=True).count(),
+        "sources_total": source_qs.count(),
+        "sources_active": source_qs.filter(is_active=True).count(),
+        "rulesets_total": ruleset_qs.count(),
+        "rulesets_active": ruleset_qs.filter(is_active=True).count(),
+        "products_total": product_qs.count(),
+        "products_active": product_qs.filter(is_active=True).count(),
+        "vendors_total": vendor_qs.count(),
+        "vendors_active": vendor_qs.filter(is_active=True).count(),
+        "rooms_total": room_qs.count(),
+        "rooms_active": room_qs.filter(is_active=True).count(),
+        "hvacrules_total": hvacrule_qs.count(),
+        "hvacrules_active": hvacrule_qs.filter(is_active=True).count(),
+        "service_total": service_qs.count(),
+        "service_active": service_qs.filter(is_active=True).count(),
     }
 
     return render(request, "procurement/configurations.html", {
@@ -2883,7 +2972,7 @@ def api_config_sources(request):
 
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
-        qs = ExternalSourceRegistry.objects.all().order_by("priority", "source_name")
+        qs = _tenant_scoped_queryset(request, ExternalSourceRegistry).order_by("priority", "source_name")
         if q:
             qs = qs.filter(
                 Q(source_name__icontains=q) | Q(domain__icontains=q) | Q(source_type__icontains=q)
@@ -2932,6 +3021,7 @@ def api_config_sources(request):
                 fetch_mode=body.get("fetch_mode", "PAGE"),
                 notes=body.get("notes", ""),
                 is_active=bool(body.get("is_active", True)),
+                **_tenant_create_kwargs(request, ExternalSourceRegistry),
             )
             return JsonResponse({
                 "success": True, "id": src.pk,
@@ -2952,7 +3042,7 @@ def api_config_source_detail(request, pk):
     from django.http import JsonResponse
 
     try:
-        src = ExternalSourceRegistry.objects.get(pk=pk)
+        src = _tenant_scoped_queryset(request, ExternalSourceRegistry).get(pk=pk)
     except ExternalSourceRegistry.DoesNotExist:
         return JsonResponse({"success": False, "message": "Source not found."}, status=404)
 
@@ -3058,7 +3148,7 @@ def api_config_rulesets(request):
 
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
-        qs = ValidationRuleSet.objects.all().order_by("priority", "rule_set_code")
+        qs = _tenant_scoped_queryset(request, ValidationRuleSet).order_by("priority", "rule_set_code")
         if q:
             qs = qs.filter(
                 Q(rule_set_code__icontains=q) | Q(rule_set_name__icontains=q) | Q(domain_code__icontains=q)
@@ -3092,6 +3182,7 @@ def api_config_rulesets(request):
                 priority=int(body.get("priority", 100)),
                 description=body.get("description", ""),
                 is_active=bool(body.get("is_active", True)),
+                **_tenant_create_kwargs(request, ValidationRuleSet),
             )
             return JsonResponse({"success": True, "id": rs.pk,
                                  "message": f"Rule set '{rs.rule_set_code}' created."})
@@ -3110,7 +3201,7 @@ def api_config_ruleset_detail(request, pk):
     from django.http import JsonResponse
 
     try:
-        rs = ValidationRuleSet.objects.get(pk=pk)
+        rs = _tenant_scoped_queryset(request, ValidationRuleSet).get(pk=pk)
     except ValidationRuleSet.DoesNotExist:
         return JsonResponse({"success": False, "message": "Rule set not found."}, status=404)
 
@@ -3173,7 +3264,7 @@ def api_config_products(request):
 
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
-        qs = Product.objects.all().order_by("manufacturer", "system_type", "capacity_kw")
+        qs = _tenant_scoped_queryset(request, Product).order_by("manufacturer", "system_type", "capacity_kw")
         if q:
             qs = qs.filter(
                 Q(manufacturer__icontains=q) | Q(product_name__icontains=q) | Q(sku__icontains=q)
@@ -3219,6 +3310,7 @@ def api_config_products(request):
                 weight_kg=int(body.get("weight_kg")) if body.get("weight_kg") else None,
                 installation_support_required=bool(body.get("installation_support_required", False)),
                 is_active=bool(body.get("is_active", True)),
+                **_tenant_create_kwargs(request, Product),
             )
             return JsonResponse({"success": True, "id": prod.pk,
                                  "message": f"Product '{prod.sku}' created."})
@@ -3237,7 +3329,7 @@ def api_config_product_detail(request, pk):
     from django.http import JsonResponse
 
     try:
-        prod = Product.objects.get(pk=pk)
+        prod = _tenant_scoped_queryset(request, Product).get(pk=pk)
     except Product.DoesNotExist:
         return JsonResponse({"success": False, "message": "Product not found."}, status=404)
 
@@ -3318,7 +3410,7 @@ def api_config_vendors(request):
 
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
-        qs = Vendor.objects.all().order_by("vendor_name")
+        qs = _tenant_scoped_queryset(request, Vendor).order_by("vendor_name")
         if q:
             qs = qs.filter(
                 Q(vendor_name__icontains=q) | Q(country__icontains=q) | Q(city__icontains=q)
@@ -3365,6 +3457,7 @@ def api_config_vendors(request):
                 on_time_delivery_pct=float(body.get("on_time_delivery_pct", 95.0)),
                 notes=body.get("notes", ""),
                 is_active=bool(body.get("is_active", True)),
+                **_tenant_create_kwargs(request, Vendor),
             )
             return JsonResponse({"success": True, "id": vend.pk,
                                  "message": f"Vendor '{vend.vendor_name}' created."})
@@ -3383,7 +3476,7 @@ def api_config_vendor_detail(request, pk):
     from django.http import JsonResponse
 
     try:
-        vend = Vendor.objects.get(pk=pk)
+        vend = _tenant_scoped_queryset(request, Vendor).get(pk=pk)
     except Vendor.DoesNotExist:
         return JsonResponse({"success": False, "message": "Vendor not found."}, status=404)
 
@@ -3460,7 +3553,7 @@ def api_config_rooms(request):
 
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
-        qs = Room.objects.all().order_by("building_name", "floor_number", "room_code")
+        qs = _tenant_scoped_queryset(request, Room).order_by("building_name", "floor_number", "room_code")
         if q:
             qs = qs.filter(
                 Q(room_code__icontains=q) | Q(building_name__icontains=q) | Q(usage_type__icontains=q)
@@ -3507,6 +3600,7 @@ def api_config_rooms(request):
                 contact_name=body.get("contact_name", ""),
                 contact_email=body.get("contact_email", ""),
                 is_active=bool(body.get("is_active", True)),
+                **_tenant_create_kwargs(request, Room),
             )
             return JsonResponse({"success": True, "id": rm.pk,
                                  "message": f"Room '{rm.room_code}' created."})
@@ -3525,7 +3619,7 @@ def api_config_room_detail(request, pk):
     from django.http import JsonResponse
 
     try:
-        rm = Room.objects.get(pk=pk)
+        rm = _tenant_scoped_queryset(request, Room).get(pk=pk)
     except Room.DoesNotExist:
         return JsonResponse({"success": False, "message": "Room not found."}, status=404)
 
@@ -3604,7 +3698,7 @@ def api_config_hvacrules(request):
 
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
-        qs = HVACRecommendationRule.objects.all().order_by("priority", "rule_code")
+        qs = _tenant_scoped_queryset(request, HVACRecommendationRule).order_by("priority", "rule_code")
         if q:
             qs = qs.filter(
                 Q(rule_code__icontains=q) | Q(rule_name__icontains=q)
@@ -3668,6 +3762,7 @@ def api_config_hvacrules(request):
                 priority=int(body.get("priority", 100)),
                 is_active=bool(body.get("is_active", True)),
                 notes=body.get("notes", ""),
+                **_tenant_create_kwargs(request, HVACRecommendationRule),
             )
             return JsonResponse({
                 "success": True, "id": rule.pk,
@@ -3688,7 +3783,7 @@ def api_config_hvacrule_detail(request, pk):
     from django.http import JsonResponse
 
     try:
-        rule = HVACRecommendationRule.objects.get(pk=pk)
+        rule = _tenant_scoped_queryset(request, HVACRecommendationRule).get(pk=pk)
     except HVACRecommendationRule.DoesNotExist:
         return JsonResponse({"success": False, "message": "Rule not found."}, status=404)
 
@@ -3761,30 +3856,132 @@ def api_config_hvacrule_detail(request, pk):
 @login_required
 @permission_required_code("procurement.view")
 def api_config_servicescopes(request):
-    """List all HVACServiceScope rows (GET only -- managed via seed command)."""
+    """List (GET) or Create (POST) HVACServiceScope rows."""
     from apps.procurement.models import HVACServiceScope
     from django.http import JsonResponse
 
-    if request.method != "GET":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = _tenant_scoped_queryset(request, HVACServiceScope).order_by("sort_order", "system_type")
+        if q:
+            qs = qs.filter(
+                Q(system_type__icontains=q)
+                | Q(display_name__icontains=q)
+                | Q(equipment_scope__icontains=q)
+                | Q(installation_services__icontains=q)
+                | Q(piping_ducting__icontains=q)
+                | Q(electrical_works__icontains=q)
+                | Q(controls_accessories__icontains=q)
+                | Q(testing_commissioning__icontains=q)
+            )
+        items = [
+            {
+                "id": s.pk,
+                "system_type": s.system_type,
+                "system_type_display": s.display_name or s.system_type,
+                "equipment_scope": s.equipment_scope,
+                "installation_services": s.installation_services,
+                "piping_ducting": s.piping_ducting,
+                "electrical_works": s.electrical_works,
+                "controls_accessories": s.controls_accessories,
+                "testing_commissioning": s.testing_commissioning,
+                "is_active": s.is_active,
+            }
+            for s in qs
+        ]
+        return JsonResponse({"items": items, "total": len(items)})
 
-    qs = HVACServiceScope.objects.all().order_by("sort_order", "system_type")
-    items = [
-        {
-            "id": s.pk,
-            "system_type": s.system_type,
-            "system_type_display": s.display_name or s.system_type,
-            "equipment_scope": s.equipment_scope,
-            "installation_services": s.installation_services,
-            "piping_ducting": s.piping_ducting,
-            "electrical_works": s.electrical_works,
-            "controls_accessories": s.controls_accessories,
-            "testing_commissioning": s.testing_commissioning,
-            "is_active": s.is_active,
-        }
-        for s in qs
-    ]
-    return JsonResponse({"items": items, "total": len(items)})
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            scope = HVACServiceScope.objects.create(
+                system_type=body.get("system_type", "").strip(),
+                display_name=body.get("display_name", "").strip(),
+                equipment_scope=body.get("equipment_scope", "").strip(),
+                installation_services=body.get("installation_services", "").strip(),
+                piping_ducting=body.get("piping_ducting", "").strip(),
+                electrical_works=body.get("electrical_works", "").strip(),
+                controls_accessories=body.get("controls_accessories", "").strip(),
+                testing_commissioning=body.get("testing_commissioning", "").strip(),
+                is_active=bool(body.get("is_active", True)),
+                **_tenant_create_kwargs(request, HVACServiceScope),
+            )
+            return JsonResponse({
+                "success": True,
+                "id": scope.pk,
+                "message": f"Services scope '{scope.display_name or scope.system_type}' created.",
+            })
+        except Exception as exc:
+            logger.exception("api_config_servicescopes POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_servicescope_detail(request, pk):
+    """Get, Update, Toggle, or Delete an HVACServiceScope row."""
+    from apps.procurement.models import HVACServiceScope
+    from django.http import JsonResponse
+
+    try:
+        scope = _tenant_scoped_queryset(request, HVACServiceScope).get(pk=pk)
+    except HVACServiceScope.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Services scope not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": scope.pk,
+            "system_type": scope.system_type,
+            "system_type_display": scope.display_name or scope.system_type,
+            "equipment_scope": scope.equipment_scope,
+            "installation_services": scope.installation_services,
+            "piping_ducting": scope.piping_ducting,
+            "electrical_works": scope.electrical_works,
+            "controls_accessories": scope.controls_accessories,
+            "testing_commissioning": scope.testing_commissioning,
+            "is_active": scope.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                label = scope.display_name or scope.system_type
+                scope.delete()
+                return JsonResponse({"success": True, "message": f"Services scope '{label}' deleted."})
+
+            if action == "toggle":
+                scope.is_active = not scope.is_active
+                scope.save(update_fields=["is_active"])
+                return JsonResponse({
+                    "success": True,
+                    "is_active": scope.is_active,
+                    "message": f"Services scope '{scope.display_name or scope.system_type}' {'activated' if scope.is_active else 'deactivated'}."
+                })
+
+            scope.system_type = body.get("system_type", scope.system_type).strip()
+            scope.display_name = body.get("display_name", scope.display_name).strip()
+            scope.equipment_scope = body.get("equipment_scope", scope.equipment_scope).strip()
+            scope.installation_services = body.get("installation_services", scope.installation_services).strip()
+            scope.piping_ducting = body.get("piping_ducting", scope.piping_ducting).strip()
+            scope.electrical_works = body.get("electrical_works", scope.electrical_works).strip()
+            scope.controls_accessories = body.get("controls_accessories", scope.controls_accessories).strip()
+            scope.testing_commissioning = body.get("testing_commissioning", scope.testing_commissioning).strip()
+            scope.is_active = bool(body.get("is_active", scope.is_active))
+            scope.save()
+            return JsonResponse({
+                "success": True,
+                "message": f"Services scope '{scope.display_name or scope.system_type}' updated.",
+            })
+        except Exception as exc:
+            logger.exception("api_config_servicescope_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
 
 
 # ---------------------------------------------------------------------------
@@ -3801,7 +3998,7 @@ def api_external_suggestions(request, pk):
     """
     from apps.procurement.services.market_intelligence_service import MarketIntelligenceService
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
 
     try:
         result = MarketIntelligenceService.generate_auto(
@@ -3856,7 +4053,7 @@ def api_rerun_internal_recommendation(request, pk):
     if request.method not in ("POST", "GET"):
         return JsonResponse({"status": "error", "error": "Method not allowed."}, status=405)
 
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
 
     from apps.procurement.services.analysis_run_service import AnalysisRunService
     from apps.procurement.services.recommendation_service import RecommendationService
@@ -3902,14 +4099,14 @@ def market_intelligence_page(request, pk):
     If none exist yet the page auto-triggers the LLM.  A Refresh button re-runs the LLM.
     """
     from apps.procurement.models import MarketIntelligenceSuggestion
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
     attributes = list(
-        ProcurementRequestAttribute.objects
+        _tenant_scoped_queryset(request, ProcurementRequestAttribute)
         .filter(request=proc_request)
         .values("attribute_label", "value_text", "value_number")
     )
     latest = (
-        MarketIntelligenceSuggestion.objects
+        _tenant_scoped_queryset(request, MarketIntelligenceSuggestion)
         .filter(request=proc_request)
         .order_by("-created_at")
         .first()
@@ -3935,12 +4132,12 @@ def market_intelligence_page(request, pk):
 @permission_required_code("procurement.view")
 def api_perplexity_research(request, pk):
     """AJAX: run a live Perplexity sonar-pro web search for market intelligence."""
-    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    proc_request = get_object_or_404(_tenant_scoped_queryset(request, ProcurementRequest), pk=pk)
     custom_query = request.GET.get("query", "").strip()
 
     # Build context blocks from DB
     attributes = list(
-        ProcurementRequestAttribute.objects
+        _tenant_scoped_queryset(request, ProcurementRequestAttribute)
         .filter(request=proc_request)
         .values("attribute_code", "attribute_label", "value_text", "value_number")
     )
@@ -3971,7 +4168,7 @@ def api_perplexity_research(request, pk):
     _approved_sources = []
     if system_code:
         _approved_sources = list(
-            _ESR.objects.filter(
+            _tenant_scoped_queryset(request, _ESR).filter(
                 hvac_system_type=system_code,
                 is_active=True,
                 allowed_for_discovery=True,
@@ -3980,7 +4177,7 @@ def api_perplexity_research(request, pk):
     if not _approved_sources:
         # Fallback: all active discovery-enabled sources (no open-web leak)
         _approved_sources = list(
-            _ESR.objects.filter(
+            _tenant_scoped_queryset(request, _ESR).filter(
                 is_active=True,
                 allowed_for_discovery=True,
             ).values("source_name", "domain", "source_url", "source_class")
@@ -4239,7 +4436,7 @@ def stores_management(request):
     store_type_filter = (request.GET.get("store_type") or "").strip()
     status_filter = (request.GET.get("status") or "").strip()
 
-    qs = HVACStoreProfile.objects.all().order_by("store_id")
+    qs = _tenant_scoped_queryset(request, HVACStoreProfile).order_by("store_id")
     if query:
         qs = qs.filter(
             Q(store_id__icontains=query)
@@ -4256,19 +4453,20 @@ def stores_management(request):
     elif status_filter == "inactive":
         qs = qs.filter(is_active=False)
 
-    total_stores = HVACStoreProfile.objects.count()
-    active_stores = HVACStoreProfile.objects.filter(is_active=True).count()
+    scoped_store_qs = _tenant_scoped_queryset(request, HVACStoreProfile)
+    total_stores = scoped_store_qs.count()
+    active_stores = scoped_store_qs.filter(is_active=True).count()
     inactive_stores = total_stores - active_stores
 
     countries = (
-        HVACStoreProfile.objects
+        scoped_store_qs
         .exclude(country="")
         .values_list("country", flat=True)
         .distinct()
         .order_by("country")
     )
     store_types = (
-        HVACStoreProfile.objects
+        scoped_store_qs
         .exclude(store_type="")
         .values_list("store_type", flat=True)
         .distinct()
@@ -4303,14 +4501,14 @@ def api_store_management_create(request):
     if not store_id:
         return JsonResponse({"error": "Store ID is required."}, status=400)
 
-    if HVACStoreProfile.objects.filter(store_id=store_id).exists():
+    if _tenant_scoped_queryset(request, HVACStoreProfile).filter(store_id=store_id).exists():
         return JsonResponse({"error": f"Store ID '{store_id}' already exists."}, status=409)
 
     try:
         defaults = _build_hvac_store_profile_defaults(request.POST)
         profile = HVACStoreProfile.objects.create(
             store_id=store_id,
-            created_by=request.user,
+            **_tenant_create_kwargs(request, HVACStoreProfile),
             **defaults,
         )
         return JsonResponse({"ok": True, "store_id": profile.store_id, "pk": profile.pk}, status=201)
@@ -4324,6 +4522,7 @@ def api_store_management_create(request):
 def api_store_management_detail(request, pk):
     """AJAX: GET detail, POST update, POST with _action=DELETE to remove."""
     profile = get_object_or_404(HVACStoreProfile, pk=pk)
+    _assert_tenant_object_access(request, profile)
 
     if request.method == "GET":
         return JsonResponse({
@@ -4389,7 +4588,7 @@ def procurement_e2e_timeline(request, pk):
     from apps.procurement.models import ProcurementAgentExecutionRecord  # noqa: F401
 
     proc_request = get_object_or_404(
-        ProcurementRequest.objects.select_related("created_by", "assigned_to", "uploaded_document"),
+        _tenant_scoped_queryset(request, ProcurementRequest).select_related("created_by", "assigned_to", "uploaded_document"),
         pk=pk,
     )
 

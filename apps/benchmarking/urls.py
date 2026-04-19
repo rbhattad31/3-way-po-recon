@@ -5,6 +5,8 @@ from apps.benchmarking import template_views as views
 app_name = "benchmarking"
 
 urlpatterns = [
+    # Dashboard
+    path("dashboard/", views.dashboard, name="dashboard"),
     # All Requests
     path("", views.request_list, name="request_list"),
     path("<int:pk>/delete/", views.request_delete, name="request_delete"),

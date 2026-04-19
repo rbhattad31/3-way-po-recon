@@ -1720,6 +1720,25 @@ def agent_runs_list(request):
     """Browsable agent run log with filtering."""
     procurement_benchmark_type = getattr(AgentType, "PROCUREMENT_BENCHMARK", "PROCUREMENT_BENCHMARK")
     procurement_validation_type = getattr(AgentType, "PROCUREMENT_VALIDATION", "PROCUREMENT_VALIDATION")
+    procurement_agent_types = {
+        AgentType.PROCUREMENT_RECOMMENDATION,
+        procurement_validation_type,
+        AgentType.PROCUREMENT_COMPLIANCE,
+        AgentType.PROCUREMENT_MARKET_INTELLIGENCE,
+        AgentType.PROCUREMENT_REASON_SUMMARY,
+        AgentType.PROCUREMENT_AZURE_DI_EXTRACTION,
+        AgentType.PROCUREMENT_RFQ_GENERATOR,
+    }
+    benchmark_agent_types = {
+        procurement_benchmark_type,
+    }
+
+    def _classify_run_type(agent_type_value: str) -> str:
+        if agent_type_value in benchmark_agent_types or "BENCHMARK" in str(agent_type_value):
+            return "benchmarking"
+        if agent_type_value in procurement_agent_types:
+            return "procurement"
+        return "ap"
 
     tenant = require_tenant(request)
     base_qs = AgentRun.objects.select_related(
@@ -1742,6 +1761,13 @@ def agent_runs_list(request):
     min_conf = request.GET.get("min_confidence", "").strip()
     max_conf = request.GET.get("max_confidence", "").strip()
     invoice_number = request.GET.get("invoice_number", "").strip()
+    domain = request.GET.get("domain", request.GET.get("run_scope", "")).strip().lower()
+    domain_aliases = {
+        "benchmark": "benchmarking",
+        "bench": "benchmarking",
+        "procumrent": "procurement",
+    }
+    domain = domain_aliases.get(domain, domain)
 
     if agent_type:
         qs = qs.filter(agent_type=agent_type)
@@ -1771,6 +1797,16 @@ def agent_runs_list(request):
         qs = qs.filter(
             reconciliation_result__invoice__invoice_number__icontains=invoice_number,
         )
+    if domain:
+        from django.db.models import Q
+        benchmark_q = Q(agent_type__in=benchmark_agent_types) | Q(agent_type__icontains="BENCHMARK")
+        procurement_q = Q(agent_type__in=procurement_agent_types)
+        if domain == "benchmarking":
+            qs = qs.filter(benchmark_q)
+        elif domain == "procurement":
+            qs = qs.filter(procurement_q)
+        elif domain == "ap":
+            qs = qs.exclude(benchmark_q | procurement_q)
 
     paginator = Paginator(qs, 50)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -2210,28 +2246,11 @@ def agent_runs_list(request):
         if row.get("group") in {"AP", "Procurement", "Benchmarking", "Platform"}
     ]
 
-    procurement_agent_types = {
-        AgentType.PROCUREMENT_RECOMMENDATION,
-        procurement_validation_type,
-        AgentType.PROCUREMENT_COMPLIANCE,
-        AgentType.PROCUREMENT_MARKET_INTELLIGENCE,
-        AgentType.PROCUREMENT_REASON_SUMMARY,
-        AgentType.PROCUREMENT_AZURE_DI_EXTRACTION,
-        AgentType.PROCUREMENT_RFQ_GENERATOR,
-    }
-    benchmark_agent_types = {
-        procurement_benchmark_type,
-    }
-
     def _first_nonempty(*values):
         for value in values:
             if value is not None and str(value).strip() != "":
                 return value
         return ""
-
-    ap_runs = []
-    procurement_runs = []
-    benchmark_runs = []
 
     for run in page_obj:
         input_payload = run.input_payload or {}
@@ -2259,28 +2278,22 @@ def agent_runs_list(request):
         run.has_model = bool((run.llm_model_used or "").strip())
         run.has_trigger = bool((run.invocation_reason or "").strip())
         run.missing_mandatory_count = int(not run.has_confidence) + int(not run.has_role) + int(not run.has_model) + int(not run.has_trigger)
-
-        if run.agent_type in benchmark_agent_types or "BENCHMARK" in str(run.agent_type):
-            run.classification = "benchmark"
-            benchmark_runs.append(run)
-        elif run.agent_type in procurement_agent_types:
-            run.classification = "procurement"
-            procurement_runs.append(run)
-        else:
-            run.classification = "ap"
-            ap_runs.append(run)
+        run.classification = _classify_run_type(run.agent_type)
 
     return render(request, "agents/agent_runs_list.html", {
         "page_obj": page_obj,
         "runs": page_obj,
-        "ap_runs": ap_runs,
-        "procurement_runs": procurement_runs,
-        "benchmark_runs": benchmark_runs,
         # Filter choices
         "agent_type_choices": agent_type_choices,
         "status_choices": status_choices,
         "roles": roles,
         "models_used": models_used,
+        "domain_choices": [
+            ("", "All Runs"),
+            ("ap", "AP"),
+            ("procurement", "Procurement"),
+            ("benchmarking", "Benchmarking"),
+        ],
         # Current filter values
         "current_agent_type": agent_type,
         "current_status": status,
@@ -2292,6 +2305,8 @@ def agent_runs_list(request):
         "current_min_confidence": min_conf,
         "current_max_confidence": max_conf,
         "current_invoice_number": invoice_number,
+        "current_domain": domain,
+        "current_run_scope": domain,
         # KPIs
         "total_count": total_count,
         "completed_count": completed_count,
@@ -2301,9 +2316,6 @@ def agent_runs_list(request):
         "llm_agent_catalog": llm_agent_catalog,
         "missing_llm_agents": missing_llm_agents,
         "llm_component_catalog": llm_component_catalog,
-        "ap_count": len(ap_runs),
-        "procurement_count": len(procurement_runs),
-        "benchmark_count": len(benchmark_runs),
     })
 
 

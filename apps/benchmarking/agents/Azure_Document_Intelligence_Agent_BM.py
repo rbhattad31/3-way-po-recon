@@ -19,6 +19,7 @@ class AzureDocumentIntelligenceAgentBM:
 	"""Extract line items from a benchmark quotation using Azure DI."""
 
 	_NUMBER_RE = re.compile(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?")
+	_SUMMARY_ROW_RE = re.compile(r"\b(total|subtotal|grand\s*total|vat|tax|amount\s*due|net\s*amount)\b", re.IGNORECASE)
 
 	@classmethod
 	def extract_quotation(cls, *, quotation: BenchmarkQuotation) -> Dict[str, Any]:
@@ -168,6 +169,8 @@ class AzureDocumentIntelligenceAgentBM:
 		lower = row_text.lower()
 		if any(h in lower for h in ["description", "qty", "quantity", "unit rate", "amount", "total"]):
 			return None
+		if cls._SUMMARY_ROW_RE.search(row_text):
+			return None
 
 		numeric_candidates: List[Decimal] = []
 		for cell in normalized:
@@ -175,6 +178,9 @@ class AzureDocumentIntelligenceAgentBM:
 
 		description = cls._pick_description(normalized)
 		if not description:
+			return None
+
+		if cls._is_noise_description(description):
 			return None
 
 		if not numeric_candidates and len(description) < 8:
@@ -197,6 +203,27 @@ class AzureDocumentIntelligenceAgentBM:
 			"line_amount": amount,
 			"extraction_confidence": 0.7,
 		}
+
+	@staticmethod
+	def _is_noise_description(description: str) -> bool:
+		text = (description or "").strip()
+		if not text:
+			return True
+
+		normalized = re.sub(r"\s+", " ", text).strip()
+		if re.fullmatch(r"(?i)AED\s*[\d,]+(?:\.\d+)?", normalized):
+			return True
+
+		alpha_chars = sum(1 for ch in normalized if ch.isalpha())
+		digit_chars = sum(1 for ch in normalized if ch.isdigit())
+		if alpha_chars <= 3 and digit_chars >= 1:
+			return True
+
+		tokens = [t for t in re.split(r"\s+", normalized) if t]
+		if len(tokens) <= 2 and any(tok.upper() in {"AED", "USD", "QAR", "SAR"} for tok in tokens):
+			return True
+
+		return False
 
 	@classmethod
 	def _extract_numbers(cls, text: str) -> List[Decimal]:

@@ -2,12 +2,109 @@
 
 from __future__ import annotations
 
+import json
+import logging
+
+from apps.agents.services.llm_client import LLMClient, LLMMessage
+
+
+logger = logging.getLogger(__name__)
+
 
 class BenchmarkingAnalystAgentBM:
     """Produce executive benchmark analysis across sub-agent outputs."""
 
     @classmethod
     def summarize(
+        cls,
+        *,
+        result,
+        market_analysis: dict,
+        compliance_assessment: dict,
+        vendor_recommendation: dict,
+        vendor_cards: list[dict],
+    ) -> dict:
+        deterministic = cls._summarize_deterministic(
+            result=result,
+            market_analysis=market_analysis,
+            compliance_assessment=compliance_assessment,
+            vendor_recommendation=vendor_recommendation,
+            vendor_cards=vendor_cards,
+        )
+        llm_output = cls._summarize_with_llm(deterministic=deterministic)
+        if llm_output:
+            return llm_output
+        return deterministic
+
+    @classmethod
+    def _summarize_with_llm(cls, *, deterministic: dict) -> dict | None:
+        payload = {
+            "task": "Produce benchmarking analyst final decision.",
+            "rules": [
+                "Decision must be one of APPROVE_VENDOR_SELECTION, REVIEW_REQUIRED, REQUEST_REQUOTE.",
+                "Use only provided facts.",
+                "Keep summary concise and procurement-ready.",
+                "Return strict JSON only.",
+            ],
+            "input": deterministic,
+            "required_output_schema": {
+                "decision": "APPROVE_VENDOR_SELECTION|REVIEW_REQUIRED|REQUEST_REQUOTE",
+                "confidence": "float_0_to_1",
+                "summary": "string",
+                "recommended_vendor": "string",
+                "recommended": "bool",
+                "next_action": "string",
+            },
+        }
+        try:
+            llm = LLMClient(temperature=0.0, max_tokens=1000)
+            response = llm.chat(
+                messages=[
+                    LLMMessage(
+                        role="system",
+                        content="You are a procurement benchmarking analyst. Return only JSON.",
+                    ),
+                    LLMMessage(role="user", content=json.dumps(payload)),
+                ],
+                response_format={"type": "json_object"},
+            )
+            parsed = json.loads(response.content or "")
+            if not isinstance(parsed, dict):
+                return None
+
+            decision = str(parsed.get("decision") or "").strip().upper()
+            if decision not in {"APPROVE_VENDOR_SELECTION", "REVIEW_REQUIRED", "REQUEST_REQUOTE"}:
+                return None
+
+            try:
+                confidence = float(parsed.get("confidence"))
+            except Exception:
+                confidence = float(deterministic.get("confidence") or 0.7)
+            confidence = max(0.0, min(1.0, confidence))
+
+            summary = str(parsed.get("summary") or "").strip() or str(deterministic.get("summary") or "")
+            recommended_vendor = str(parsed.get("recommended_vendor") or "").strip()
+            if not recommended_vendor:
+                recommended_vendor = str(deterministic.get("recommended_vendor") or "")
+
+            recommended = bool(parsed.get("recommended"))
+            next_action = str(parsed.get("next_action") or "").strip() or str(deterministic.get("next_action") or "")
+
+            return {
+                "decision": decision,
+                "confidence": confidence,
+                "summary": summary,
+                "recommended_vendor": recommended_vendor,
+                "recommended": recommended,
+                "next_action": next_action,
+                "inputs": deterministic.get("inputs") or {},
+            }
+        except Exception:
+            logger.exception("Benchmarking Analyst LLM path failed; using deterministic fallback")
+            return None
+
+    @classmethod
+    def _summarize_deterministic(
         cls,
         *,
         result,

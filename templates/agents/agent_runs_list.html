@@ -169,58 +169,6 @@
             {% for val, label in domain_choices %}<option value="{{ val }}" {% if val == current_domain %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
         </div>
-        <div class="col-lg-2 col-md-4">
-          <label class="form-label form-label-sm mb-0">Agent Type</label>
-          <select name="agent_type" class="form-select form-select-sm">
-            <option value="">All Types</option>
-            {% for val, label in agent_type_choices %}<option value="{{ val }}" {% if val == current_agent_type %}selected{% endif %}>{{ label }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="col-lg-2 col-md-4">
-          <label class="form-label form-label-sm mb-0">Status</label>
-          <select name="status" class="form-select form-select-sm">
-            <option value="">All Statuses</option>
-            {% for val, label in status_choices %}<option value="{{ val }}" {% if val == current_status %}selected{% endif %}>{{ label }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="col-lg-2 col-md-4">
-          <label class="form-label form-label-sm mb-0">Role</label>
-          <select name="role" class="form-select form-select-sm">
-            <option value="">All Roles</option>
-            {% for r in roles %}<option value="{{ r }}" {% if r == current_role %}selected{% endif %}>{{ r }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="col-lg-2 col-md-4">
-          <label class="form-label form-label-sm mb-0">LLM Model</label>
-          <select name="model_used" class="form-select form-select-sm">
-            <option value="">All Models</option>
-            {% for m in models_used %}<option value="{{ m }}" {% if m == current_model_used %}selected{% endif %}>{{ m }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="col-lg-2 col-md-4">
-          <label class="form-label form-label-sm mb-0">Invoice #</label>
-          <input type="text" name="invoice_number" class="form-control form-control-sm" value="{{ current_invoice_number }}" placeholder="Search...">
-        </div>
-        <div class="col-lg-2 col-md-4">
-          <label class="form-label form-label-sm mb-0">Trace ID</label>
-          <input type="text" name="trace_id" class="form-control form-control-sm" value="{{ current_trace_id }}" placeholder="trace-id...">
-        </div>
-        <div class="col-lg-2 col-md-3">
-          <label class="form-label form-label-sm mb-0">Date From</label>
-          <input type="date" name="date_from" class="form-control form-control-sm" value="{{ current_date_from }}">
-        </div>
-        <div class="col-lg-2 col-md-3">
-          <label class="form-label form-label-sm mb-0">Date To</label>
-          <input type="date" name="date_to" class="form-control form-control-sm" value="{{ current_date_to }}">
-        </div>
-        <div class="col-lg-1 col-md-2">
-          <label class="form-label form-label-sm mb-0">Min Conf%</label>
-          <input type="number" name="min_confidence" class="form-control form-control-sm" min="0" max="100" step="1" value="{{ current_min_confidence }}" placeholder="0">
-        </div>
-        <div class="col-lg-1 col-md-2">
-          <label class="form-label form-label-sm mb-0">Max Conf%</label>
-          <input type="number" name="max_confidence" class="form-control form-control-sm" min="0" max="100" step="1" value="{{ current_max_confidence }}" placeholder="100">
-        </div>
         <div class="col-lg-2 col-md-4 d-flex gap-1 align-items-end">
           <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
           <a href="{% url 'agents:agent_runs_list' %}" class="btn btn-sm btn-outline-secondary" title="Clear filters"><i class="bi bi-x-lg"></i></a>

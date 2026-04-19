@@ -113,13 +113,16 @@
       <input type="text" id="room-search" placeholder="Search system type or scope..." autocomplete="off">
     </div>
     <span class="cfg-badge-count" id="room-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('rooms')">
+      <i class="bi bi-plus-circle-fill"></i> Add Services
+    </button>
   </div>
   <p class="mb-2" style="font-size:.78rem;color:#6b7280;">
     <i class="bi bi-info-circle me-1"></i>
     Scope matrix: one row per HVAC system type showing the full installation work breakdown across 6 work categories.
   </p>
-  <div class="cfg-table-wrap" style="overflow-x:auto;">
-    <table class="cfg-table" id="scope-matrix-table" style="min-width:900px;table-layout:auto;">
+  <div class="cfg-table-wrap cfg-table-wrap-scroll-both">
+    <table class="cfg-table" id="scope-matrix-table" style="table-layout:auto;">
       <thead>
         <tr style="background:#f0f9ff;">
           <th style="width:155px;font-weight:700;color:#0369a1;">Product Recommendation</th>
@@ -129,10 +132,11 @@
           <th style="font-weight:700;color:#0369a1;">Electrical Works</th>
           <th style="font-weight:700;color:#0369a1;">Controls &amp; Accessories</th>
           <th style="font-weight:700;color:#0369a1;">Testing &amp; Commissioning</th>
+          <th style="width:120px;font-weight:700;color:#0369a1;text-align:right;">Actions</th>
         </tr>
       </thead>
       <tbody id="room-tbody">
-        <tr><td colspan="7" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+        <tr><td colspan="8" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -149,7 +153,7 @@
       <i class="bi bi-plus-circle-fill"></i> Add Rule
     </button>
   </div>
-  <div class="cfg-table-wrap">
+  <div class="cfg-table-wrap cfg-table-wrap-scroll-both">
     <table class="cfg-table">
       <thead>
         <tr>
@@ -561,84 +565,40 @@
     <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
       <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
         <h5 class="modal-title fw-semibold" style="font-size:.95rem;">
-          <i class="bi bi-door-open modal-title-icon text-primary"></i>
-          <span id="modalRoomTitle">Add Room</span>
+          <i class="bi bi-tools modal-title-icon text-primary"></i>
+          <span id="modalRoomTitle">Add Services</span>
         </h5>
         <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" style="padding:1.1rem 1.25rem;">
         <input type="hidden" id="roomId" value="">
-        <div class="cfg-form-row mb-3">
-          <div>
-            <label class="form-label-cfg">Room Code <span class="text-danger">*</span></label>
-            <input id="roomCode" class="form-control-cfg" type="text" placeholder="e.g. OFF-101">
-          </div>
-          <div>
-            <label class="form-label-cfg">Building Name <span class="text-danger">*</span></label>
-            <input id="roomBuilding" class="form-control-cfg" type="text" placeholder="e.g. Tower A">
-          </div>
-        </div>
-        <div class="cfg-form-row mb-3">
-          <div>
-            <label class="form-label-cfg">Floor Number <small class="text-muted">(0=ground, -1=basement)</small></label>
-            <input id="roomFloor" class="form-control-cfg" type="number" value="0">
-          </div>
-          <div>
-            <label class="form-label-cfg">Usage Type</label>
-            <select id="roomUsage" class="form-control-cfg">
-              {% for val, lbl in room_usage_choices %}
-                <option value="{{ val }}">{{ lbl }}</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
-        <div class="cfg-form-row mb-3">
-          <div>
-            <label class="form-label-cfg">Area (m2) <span class="text-danger">*</span></label>
-            <input id="roomArea" class="form-control-cfg" type="number" step="0.1" min="1" placeholder="120.5">
-          </div>
-          <div>
-            <label class="form-label-cfg">Ceiling Height (m) <span class="text-danger">*</span></label>
-            <input id="roomCeiling" class="form-control-cfg" type="number" step="0.1" min="1" value="3.0">
-          </div>
-        </div>
-        <div class="cfg-form-row mb-3">
-          <div>
-            <label class="form-label-cfg">Design Temp (C)</label>
-            <input id="roomDesignTemp" class="form-control-cfg" type="number" step="0.5" value="22.0">
-          </div>
-          <div>
-            <label class="form-label-cfg">Temp Tolerance (+/- C)</label>
-            <input id="roomTempTol" class="form-control-cfg" type="number" step="0.5" value="1.0">
-          </div>
-        </div>
-        <div class="cfg-form-row mb-3">
-          <div>
-            <label class="form-label-cfg">Cooling Load (kW)</label>
-            <input id="roomCoolingLoad" class="form-control-cfg" type="number" step="0.1" value="5.0">
-          </div>
-          <div>
-            <label class="form-label-cfg">Humidity Target % <small class="text-muted">(optional)</small></label>
-            <input id="roomHumidity" class="form-control-cfg" type="number" min="0" max="100" placeholder="">
-          </div>
-        </div>
-        <div class="cfg-form-row mb-3">
-          <div>
-            <label class="form-label-cfg">Noise Limit (dB) <small class="text-muted">(optional)</small></label>
-            <input id="roomNoise" class="form-control-cfg" type="number" placeholder="">
-          </div>
-          <div>
-            <label class="form-label-cfg">Contact Name</label>
-            <input id="roomContactName" class="form-control-cfg" type="text" placeholder="">
-          </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Product Recommendation <span class="text-danger">*</span></label>
+          <input id="roomSystemType" class="form-control-cfg" type="text" placeholder="e.g. VRF, Chiller, Split AC, Package Unit">
         </div>
         <div class="mb-3">
-          <label class="form-label-cfg">Contact Email</label>
-          <input id="roomContactEmail" class="form-control-cfg" type="email" placeholder="">
+          <label class="form-label-cfg">Equipment Scope <span class="text-danger">*</span></label>
+          <textarea id="roomEquipmentScope" class="form-control-cfg" rows="2" placeholder="Equipment included for this system..."></textarea>
         </div>
         <div class="mb-3">
-          <label class="form-label-cfg">Location Description</label>
-          <textarea id="roomLocationDesc" class="form-control-cfg" placeholder="Physical/spatial constraints, access notes..."></textarea>
+          <label class="form-label-cfg">Installation Services <span class="text-danger">*</span></label>
+          <textarea id="roomInstallationServices" class="form-control-cfg" rows="2" placeholder="Installation work details..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Piping / Ducting <span class="text-danger">*</span></label>
+          <textarea id="roomPipingDucting" class="form-control-cfg" rows="2" placeholder="Piping and ducting scope..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Electrical Works <span class="text-danger">*</span></label>
+          <textarea id="roomElectricalWorks" class="form-control-cfg" rows="2" placeholder="Electrical work scope..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Controls &amp; Accessories <span class="text-danger">*</span></label>
+          <textarea id="roomControlsAccessories" class="form-control-cfg" rows="2" placeholder="Controls and accessories..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Testing &amp; Commissioning <span class="text-danger">*</span></label>
+          <textarea id="roomTestingCommissioning" class="form-control-cfg" rows="2" placeholder="Testing and commissioning scope..."></textarea>
         </div>
         <div>
           <label class="form-check-cfg">
@@ -652,7 +612,7 @@
         <button type="button" class="btn btn-sm"
                 style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
                 onclick="saveRoom()">
-          <i class="bi bi-check-lg me-1"></i> Save Room
+          <i class="bi bi-check-lg me-1"></i> Save Services
         </button>
       </div>
     </div>
@@ -908,15 +868,21 @@ function reloadTab(tab) {
 
 function renderTab(tab, items) {
   var prefix = {sources:'src', rulesets:'rs', products:'prod', vendors:'vend', rooms:'room', hvacrules:'hvac'}[tab];
+  var $tableWrap = $('#' + prefix + '-tbody').closest('.cfg-table-wrap');
+  var $table = $('#' + prefix + '-tbody').closest('.cfg-table');
   $('#' + prefix + '-count').text(items.length + ' record' + (items.length !== 1 ? 's' : ''));
   if (items.length === 0) {
-    var span = {sources:8, rulesets:8, products:9, vendors:9, rooms:7, hvacrules:12}[tab];
+    $tableWrap.addClass('cfg-table-wrap-empty');
+    $table.addClass('cfg-table-empty');
+    var span = {sources:8, rulesets:8, products:9, vendors:9, rooms:8, hvacrules:12}[tab];
     $('#' + prefix + '-tbody').html(
       '<tr><td colspan="' + span + '" class="cfg-empty">' +
       '<i class="bi bi-inbox"></i><p>No records found. Click "Add" to create the first one.</p></td></tr>'
     );
     return;
   }
+  $tableWrap.removeClass('cfg-table-wrap-empty');
+  $table.removeClass('cfg-table-empty');
   var html = '';
   if (tab === 'sources') {
     // Group sources by hvac_system_type then equipment -- 2-level product matrix
@@ -1061,6 +1027,11 @@ function renderTab(tab, items) {
       html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.electrical_works) + '</td>';
       html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.controls_accessories) + '</td>';
       html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.testing_commissioning) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editRoom(' + s.id + ')" title="Edit"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (s.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'rooms\',' + s.id + ')" title="' + (s.is_active ? 'Deactivate' : 'Activate') + '"><i class="bi bi-' + (s.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'rooms\',' + s.id + ',\'' + escJs(s.system_type_display || s.system_type) + '\')" title="Delete"><i class="bi bi-trash3"></i></button>';
+      html += '</td>';
       html += '</tr>';
     });
   } else if (tab === 'hvacrules') {
@@ -1142,15 +1113,16 @@ function openAddModal(tab) {
     $('#vendActive').prop('checked', true);
     $('#modalVendorTitle').text(titleMap[tab]);
   } else if (tab === 'rooms') {
-    $('#roomId').val(''); $('#roomCode').val(''); $('#roomBuilding').val('');
-    $('#roomFloor').val('0'); $('#roomUsage').val('OFFICE');
-    $('#roomArea').val(''); $('#roomCeiling').val('3.0');
-    $('#roomDesignTemp').val('22.0'); $('#roomTempTol').val('1.0');
-    $('#roomCoolingLoad').val('5.0'); $('#roomHumidity').val('');
-    $('#roomNoise').val(''); $('#roomContactName').val('');
-    $('#roomContactEmail').val(''); $('#roomLocationDesc').val('');
+    $('#roomId').val('');
+    $('#roomSystemType').val('');
+    $('#roomEquipmentScope').val('');
+    $('#roomInstallationServices').val('');
+    $('#roomPipingDucting').val('');
+    $('#roomElectricalWorks').val('');
+    $('#roomControlsAccessories').val('');
+    $('#roomTestingCommissioning').val('');
     $('#roomActive').prop('checked', true);
-    $('#modalRoomTitle').text(titleMap[tab]);
+    $('#modalRoomTitle').text('Add Services');
   } else if (tab === 'hvacrules') {
     $('#hrId').val(''); $('#hrCode').val(''); $('#hrName').val('');
     $('#hrStoreType').val(''); $('#hrAreaCondition').val('');
@@ -1226,7 +1198,7 @@ var urlDetailMap = {
   rulesets: '{% url "procurement:api_config_ruleset_detail" pk=0 %}'.replace('/0/', '/'),
   products: '{% url "procurement:api_config_product_detail" pk=0 %}'.replace('/0/', '/'),
   vendors: '{% url "procurement:api_config_vendor_detail" pk=0 %}'.replace('/0/', '/'),
-  rooms: '{% url "procurement:api_config_room_detail" pk=0 %}'.replace('/0/', '/'),
+  rooms: '{% url "procurement:api_config_servicescope_detail" pk=0 %}'.replace('/0/', '/'),
   hvacrules: '{% url "procurement:api_config_hvacrule_detail" pk=0 %}'.replace('/0/', '/')
 };
 
@@ -1303,17 +1275,15 @@ function editVendor(id) {
 function editRoom(id) {
   $.get(urlDetailMap.rooms + id + '/', function(d) {
     $('#roomId').val(d.id);
-    $('#roomCode').val(d.room_code); $('#roomBuilding').val(d.building_name);
-    $('#roomFloor').val(d.floor_number); $('#roomUsage').val(d.usage_type);
-    $('#roomArea').val(d.area_sqm); $('#roomCeiling').val(d.ceiling_height_m);
-    $('#roomDesignTemp').val(d.design_temp_c); $('#roomTempTol').val(d.temp_tolerance_c);
-    $('#roomCoolingLoad').val(d.design_cooling_load_kw);
-    $('#roomHumidity').val(d.design_humidity_pct || '');
-    $('#roomNoise').val(d.noise_limit_db || '');
-    $('#roomContactName').val(d.contact_name); $('#roomContactEmail').val(d.contact_email);
-    $('#roomLocationDesc').val(d.location_description);
+    $('#roomSystemType').val(d.system_type);
+    $('#roomEquipmentScope').val(d.equipment_scope);
+    $('#roomInstallationServices').val(d.installation_services);
+    $('#roomPipingDucting').val(d.piping_ducting);
+    $('#roomElectricalWorks').val(d.electrical_works);
+    $('#roomControlsAccessories').val(d.controls_accessories);
+    $('#roomTestingCommissioning').val(d.testing_commissioning);
     $('#roomActive').prop('checked', d.is_active);
-    $('#modalRoomTitle').text('Edit: ' + d.room_code);
+    $('#modalRoomTitle').text('Edit: ' + (d.system_type_display || d.system_type));
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRoom')).show();
   });
 }
@@ -1466,25 +1436,21 @@ function saveVendor() {
 function saveRoom() {
   var id = $('#roomId').val();
   var payload = {
-    room_code: $('#roomCode').val(), building_name: $('#roomBuilding').val(),
-    floor_number: parseInt($('#roomFloor').val()) || 0,
-    usage_type: $('#roomUsage').val(),
-    area_sqm: parseFloat($('#roomArea').val()) || 50,
-    ceiling_height_m: parseFloat($('#roomCeiling').val()) || 3.0,
-    design_temp_c: parseFloat($('#roomDesignTemp').val()) || 22,
-    temp_tolerance_c: parseFloat($('#roomTempTol').val()) || 1,
-    design_cooling_load_kw: parseFloat($('#roomCoolingLoad').val()) || 5,
-    design_humidity_pct: $('#roomHumidity').val() || null,
-    noise_limit_db: $('#roomNoise').val() || null,
-    contact_name: $('#roomContactName').val(),
-    contact_email: $('#roomContactEmail').val(),
-    location_description: $('#roomLocationDesc').val(),
+    system_type: $('#roomSystemType').val(),
+    equipment_scope: $('#roomEquipmentScope').val(),
+    installation_services: $('#roomInstallationServices').val(),
+    piping_ducting: $('#roomPipingDucting').val(),
+    electrical_works: $('#roomElectricalWorks').val(),
+    controls_accessories: $('#roomControlsAccessories').val(),
+    testing_commissioning: $('#roomTestingCommissioning').val(),
     is_active: $('#roomActive').is(':checked')
   };
-  if (!payload.room_code || !payload.building_name) {
-    toast('Room code and building name are required.', 'error'); return;
+  if (!payload.system_type || !payload.equipment_scope || !payload.installation_services ||
+      !payload.piping_ducting || !payload.electrical_works ||
+      !payload.controls_accessories || !payload.testing_commissioning) {
+    toast('All Services scope fields are required.', 'error'); return;
   }
-  var url = id ? urlDetailMap.rooms + id + '/' : '{% url "procurement:api_config_rooms" %}';
+  var url = id ? urlDetailMap.rooms + id + '/' : '{% url "procurement:api_config_servicescopes" %}';
   if (id) payload._action = 'update';
   ajax(url, payload, function() {
     bootstrap.Modal.getInstance(document.getElementById('modalRoom')).hide();

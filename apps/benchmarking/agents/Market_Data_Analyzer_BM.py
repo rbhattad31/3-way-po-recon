@@ -8,6 +8,7 @@ import re
 from typing import Any, Dict, Optional
 
 from django.conf import settings
+from apps.agents.services.llm_client import LLMClient, LLMMessage
 
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,20 @@ class BenchmarkMarketDataAnalyzerAgentBM:
 			f"{len(needs_review_decisions)} to NEEDS_REVIEW."
 		)
 
+		llm_summary, llm_confidence = cls._llm_synthesize_summary(
+			total_lines=total_lines,
+			coverage_pct=coverage_pct,
+			avg_abs_variance=avg_abs_variance,
+			market_data_count=len(market_data_decisions),
+			db_benchmark_count=len(db_benchmark_decisions),
+			needs_review_count=len(needs_review_decisions),
+			top_risk_lines=top_risk_lines,
+		)
+		if llm_summary:
+			summary = llm_summary
+		if llm_confidence is not None:
+			confidence = llm_confidence
+
 		return {
 			"confidence": confidence,
 			"summary": summary,
@@ -133,6 +148,61 @@ class BenchmarkMarketDataAnalyzerAgentBM:
 			"market_price_updates": market_price_updates,
 			"market_fetch_stats": market_fetch_stats,
 		}
+
+	@classmethod
+	def _llm_synthesize_summary(
+		cls,
+		*,
+		total_lines: int,
+		coverage_pct: float,
+		avg_abs_variance: Optional[float],
+		market_data_count: int,
+		db_benchmark_count: int,
+		needs_review_count: int,
+		top_risk_lines: list,
+	) -> tuple[Optional[str], Optional[float]]:
+		payload = {
+			"task": "Summarize benchmark market analysis for procurement reviewers.",
+			"inputs": {
+				"total_lines": total_lines,
+				"live_coverage_pct": round(coverage_pct, 2),
+				"average_abs_variance_pct": avg_abs_variance,
+				"market_data_lines": market_data_count,
+				"db_benchmark_lines": db_benchmark_count,
+				"needs_review_lines": needs_review_count,
+				"top_risk_lines": top_risk_lines[:3],
+			},
+			"required_output_schema": {
+				"summary": "string",
+				"confidence": "float_0_to_1",
+			},
+		}
+		try:
+			llm = LLMClient(temperature=0.0, max_tokens=500)
+			response = llm.chat(
+				messages=[
+					LLMMessage(
+						role="system",
+						content="You are a procurement market analyst. Return only JSON.",
+					),
+					LLMMessage(role="user", content=json.dumps(payload)),
+				],
+				response_format={"type": "json_object"},
+			)
+			parsed = json.loads(response.content or "")
+			if not isinstance(parsed, dict):
+				return None, None
+			summary = str(parsed.get("summary") or "").strip() or None
+			try:
+				confidence = float(parsed.get("confidence"))
+			except Exception:
+				confidence = None
+			if confidence is not None:
+				confidence = max(0.0, min(1.0, confidence))
+			return summary, confidence
+		except Exception:
+			logger.exception("Market analyzer LLM synthesis failed; using deterministic summary")
+			return None, None
 
 	@classmethod
 	def _collect_market_prices(cls, target_lines_for_market: list) -> tuple[list, dict]:

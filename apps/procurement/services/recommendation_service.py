@@ -13,6 +13,7 @@ from apps.procurement.models import ComplianceResult, RecommendationResult
 from apps.procurement.services.analysis_run_service import AnalysisRunService
 from apps.procurement.services.recommendation_graph_service import RecommendationGraphService
 from apps.procurement.services.request_service import AttributeService, ProcurementRequestService
+from apps.procurement.services.market_intelligence_service import MarketIntelligenceService
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +76,25 @@ class RecommendationService:
         ai_result = {}
         if use_ai:
             try:
-                ai_result = RecommendationGraphService.run(
-                    request=request,
-                    run=run,
-                    attributes=attrs,
-                    rule_result=rule_result,
-                    archetype={},
-                    validation_context={},
+                ai_result = run_procurement_component_with_tracking(
+                    agent_type=AgentType.PROCUREMENT_RECOMMENDATION,
+                    invocation_reason="RecommendationGraphService.run",
+                    tenant=getattr(request, "tenant", None),
+                    actor_user=request_user,
+                    input_payload={
+                        "source": "recommendation_graph",
+                        "procurement_request_id": str(getattr(request, "request_id", "")),
+                        "procurement_request_pk": getattr(request, "pk", None),
+                        "analysis_run_id": getattr(run, "pk", None),
+                    },
+                    execute_fn=lambda: RecommendationGraphService.run(
+                        request=request,
+                        run=run,
+                        attributes=attrs,
+                        rule_result=rule_result,
+                        archetype={},
+                        validation_context={},
+                    ),
                 ) or {}
             except Exception:
                 logger.exception("RecommendationGraphService.run failed; falling back to deterministic rule result")
@@ -131,6 +144,24 @@ class RecommendationService:
                 rule_rd.setdefault("source", "db_rules")
             final_payload["reasoning_details"] = rule_rd
 
+        market_intelligence_output: dict[str, Any] = {}
+        if use_ai:
+            try:
+                market_intelligence_output = MarketIntelligenceService.generate_auto(
+                    request,
+                    generated_by=request_user,
+                    run=run,
+                    request_user=request_user,
+                ) or {}
+            except Exception:
+                logger.exception(
+                    "MarketIntelligenceService.generate_auto failed for request pk=%s",
+                    getattr(request, "pk", None),
+                )
+                market_intelligence_output = {}
+
+        final_payload["market_intelligence_result"] = market_intelligence_output
+
         recommended_option = str(
             final_payload.get("recommended_option")
             or final_payload.get("recommended_system_type")
@@ -155,42 +186,38 @@ class RecommendationService:
 
                 compliance_output = HVACComplianceService.check(attrs, final_payload) or compliance_output
 
-                if (
-                    compliance_output.get("status") in {ComplianceStatus.PARTIAL, ComplianceStatus.FAIL}
-                    or confidence < 0.75
-                ):
-                    _compliance_input = {
+                _compliance_input = {
+                    "recommended_option": recommended_option,
+                    "confidence": confidence,
+                    "estimated_cost": final_payload.get("estimated_cost"),
+                    "reasoning_summary": final_payload.get("reasoning_summary"),
+                    "constraints": final_payload.get("constraints") or [],
+                    "notes": final_payload.get("notes") or [],
+                    "standards_notes": attrs.get("required_standards_local_notes") or "",
+                    "violations": compliance_output.get("violations") or [],
+                }
+                ai_compliance_output = run_procurement_component_with_tracking(
+                    agent_type=AgentType.PROCUREMENT_COMPLIANCE,
+                    invocation_reason="ComplianceAgent.check",
+                    tenant=getattr(request, "tenant", None),
+                    actor_user=request_user,
+                    input_payload={
+                        "source": "compliance_check",
+                        "procurement_request_id": str(getattr(request, "request_id", "")),
+                        "procurement_request_pk": getattr(request, "pk", None),
                         "recommended_option": recommended_option,
                         "confidence": confidence,
-                        "estimated_cost": final_payload.get("estimated_cost"),
-                        "reasoning_summary": final_payload.get("reasoning_summary"),
-                        "constraints": final_payload.get("constraints") or [],
-                        "notes": final_payload.get("notes") or [],
-                        "standards_notes": attrs.get("required_standards_local_notes") or "",
-                        "violations": compliance_output.get("violations") or [],
-                    }
-                    ai_compliance_output = run_procurement_component_with_tracking(
-                        agent_type=AgentType.PROCUREMENT_COMPLIANCE,
-                        invocation_reason="ComplianceAgent.check",
-                        tenant=getattr(request, "tenant", None),
-                        actor_user=request_user,
-                        input_payload={
-                            "source": "compliance_check",
-                            "procurement_request_id": str(getattr(request, "request_id", "")),
-                            "procurement_request_pk": getattr(request, "pk", None),
-                            "recommended_option": recommended_option,
-                            "confidence": confidence,
-                        },
-                        execute_fn=lambda: ComplianceAgent.check(
-                            request,
-                            _compliance_input,
-                            attrs=attrs,
-                        ),
-                    ) or {}
-                    compliance_output = RecommendationService._merge_compliance_outputs(
-                        compliance_output,
-                        ai_compliance_output,
-                    )
+                    },
+                    execute_fn=lambda: ComplianceAgent.check(
+                        request,
+                        _compliance_input,
+                        attrs=attrs,
+                    ),
+                ) or {}
+                compliance_output = RecommendationService._merge_compliance_outputs(
+                    compliance_output,
+                    ai_compliance_output,
+                )
         except Exception:
             logger.exception("Compliance evaluation failed for request pk=%s", getattr(request, "pk", None))
             compliance_output = {

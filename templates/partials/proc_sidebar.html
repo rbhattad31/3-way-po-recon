@@ -8,11 +8,7 @@
 
 <div class="proc-nav-section-label">Procurement</div>
 
-<a class="proc-nav-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}"
-   href="{% url 'procurement:home' %}">
-  <i class="bi bi-house {% if request.resolver_match.url_name != 'home' %}inactive{% endif %}"></i>
-  Home
-</a>
+
 
 {% has_permission "procurement.view_results" as can_view_results %}
 {% if can_view_results %}
@@ -78,6 +74,13 @@
 <div class="collapse {% if current_app == 'benchmarking' %}show{% endif %}"
      id="costMenu"
      data-bs-parent="#procSidebar" style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
+
+  <a class="proc-nav-sublink {% if current_app == 'benchmarking' and current_url == 'dashboard' %}active{% endif %}"
+     href="{% url 'benchmarking:dashboard' %}"
+     style=" text-decoration: none;">
+    <i class="bi bi-grid-1x2 me-2"></i>
+    Dashboard
+  </a>
 
   <a class="proc-nav-sublink {% if current_app == 'benchmarking' and current_url == 'request_list' or current_app == 'benchmarking' and current_url == 'request_create' or current_app == 'benchmarking' and current_url == 'request_detail' or current_app == 'benchmarking' and current_url == 'request_reprocess' or current_app == 'benchmarking' and current_url == 'request_export' or current_app == 'benchmarking' and current_url == 'request_add_quotations' or current_app == 'benchmarking' and current_url == 'request_status' or current_app == 'benchmarking' and current_url == 'request_live_enrich' or current_app == 'benchmarking' and current_url == 'request_live_enrich_ajax' or current_app == 'benchmarking' and current_url == 'e2e_timeline' %}active{% endif %}"
      href="{% url 'benchmarking:request_list' %}"

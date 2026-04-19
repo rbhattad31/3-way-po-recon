@@ -3,11 +3,12 @@ Benchmark orchestration service.
 
 Orchestrates the full benchmarking pipeline following documented flow:
   1. Azure DI Extractor (document extraction)
-  2. Market Data Analyzer (market intelligence)
-  3. Benchmarking Analyst (analysis synthesis)
-  4. Compliance Agent (compliance validation)
-  5. Decision Maker (source selection per line)
-  6. Vendor Recommendation (vendor ranking)
+    2. Line Item Understanding Agent (LLM normalization and cleanup)
+    3. Market Data Analyzer (market intelligence)
+    4. Benchmarking Analyst (analysis synthesis)
+    5. Compliance Agent (compliance validation)
+    6. Decision Maker (source selection per line)
+    7. Vendor Recommendation (vendor ranking)
 
 Each agent is invoked sequentially with prior stage context.
 """
@@ -151,7 +152,7 @@ class BenchmarkEngine:
             logger.debug("BenchmarkEngine: unable to fail AgentRun mirror (non-fatal)", exc_info=True)
 
     @classmethod
-    def run(cls, request_pk: int, user=None, tenant=None) -> dict:
+    def run(cls, request_pk: int, user=None, tenant=None, force_reextract: bool = False) -> dict:
         """
         Orchestrate full benchmarking pipeline via documented agent flow.
         
@@ -190,6 +191,7 @@ class BenchmarkEngine:
                 user=user,
                 trace_id=getattr(trace_ctx, "trace_id", "") if trace_ctx else "",
                 parent_agent_run_id=agent_run_id,
+                force_reextract=force_reextract,
             )
 
             final_line_count = int(outputs.get("line_item_count", 0) or 0)
@@ -242,21 +244,24 @@ class BenchmarkEngine:
         user,
         trace_id: str,
         parent_agent_run_id: Optional[int],
+        force_reextract: bool = False,
     ) -> dict:
         """Execute the documented agent flow sequentially.
         
         CORRECTED FLOW:
           1. Azure DI (extraction) - completed
-          2. Decision Maker - classify & decide: MARKET_DATA vs DB_BENCHMARK per line
-          3. Market Data Analyzer - fetch data based on Decision Maker guidance
-          4. Benchmarking Analyst - analyze with collected data
-          5. Compliance - validate outcomes
-          6. Vendor Recommendation - rank vendors
+                    2. Line Item Understanding - normalize/filter DI rows and infer supplier
+                    3. Decision Maker - classify & decide: MARKET_DATA vs DB_BENCHMARK per line
+                    4. Market Data Analyzer - fetch data based on Decision Maker guidance
+                    5. Benchmarking Analyst - analyze with collected data
+                    6. Compliance - validate outcomes
+                    7. Vendor Recommendation - rank vendors
         """
         from apps.benchmarking.agents import (
             BenchmarkComplianceAgentBM,
             BenchmarkDecisionMakerAgentBM,
             BenchmarkingAnalystAgentBM,
+                        BenchmarkLineItemUnderstandingAgentBM,
             BenchmarkMarketDataAnalyzerAgentBM,
             BenchmarkVendorRecommendationAgent,
         )
@@ -269,8 +274,42 @@ class BenchmarkEngine:
             user=user,
             trace_id=trace_id,
             parent_agent_run_id=parent_agent_run_id,
+            force_reextract=force_reextract,
         )
         outputs["extraction"] = extraction_output
+
+        # Stage 1.5: Line Item Understanding - cleans arbitrary document extraction output.
+        stage_name = "Line_Item_Understanding"
+        stage_run_id = cls._start_agent_run(
+            bench_request,
+            user=user,
+            trace_id=trace_id,
+            invocation_reason=f"{stage_name}:execute",
+            parent_run_id=parent_agent_run_id,
+            input_payload_extra={"agent_stage": stage_name},
+            llm_model_used=cls._configured_llm_model(),
+        )
+        try:
+            quotations = list(
+                BenchmarkQuotation.objects.filter(
+                    request=bench_request,
+                    is_active=True,
+                )
+            )
+            understanding_output = BenchmarkLineItemUnderstandingAgentBM.understand_request(
+                quotations=quotations,
+            )
+            outputs["line_item_understanding"] = understanding_output
+            cls._complete_agent_run(
+                stage_run_id,
+                confidence=float(understanding_output.get("confidence", 0.8) or 0.8),
+                summary=understanding_output.get("summary", "Line item understanding completed"),
+                output=understanding_output,
+            )
+            logger.info("Line Item Understanding: %s", understanding_output.get("summary", "completed"))
+        except Exception as exc:
+            logger.exception("Line Item Understanding failed: %s", exc)
+            cls._fail_agent_run(stage_run_id, error=str(exc))
 
         line_items = list(
             BenchmarkLineItem.objects.filter(
@@ -444,6 +483,7 @@ class BenchmarkEngine:
         user,
         trace_id: str,
         parent_agent_run_id: Optional[int],
+        force_reextract: bool = False,
     ) -> dict:
         """Run Azure DI extraction for all active quotations in a request."""
         stage_name = "Azure_DI_Extraction"
@@ -474,7 +514,7 @@ class BenchmarkEngine:
             for quotation in quotations:
                 # Re-extract when status is not DONE or when line items are missing.
                 active_line_count = quotation.line_items.filter(is_active=True).count()
-                if quotation.extraction_status == "DONE" and active_line_count > 0:
+                if (not force_reextract) and quotation.extraction_status == "DONE" and active_line_count > 0:
                     outputs.append(
                         {
                             "quotation_id": quotation.pk,
@@ -639,37 +679,48 @@ class BenchmarkEngine:
 
             source = decision.get("source", "NEEDS_REVIEW")
             category = decision.get("category", "UNCATEGORIZED")
+            classification_confidence = float(decision.get("classification_confidence", 0.0) or 0.0)
+
+            classification_fields_to_update = []
+            if category and category != line_item.category:
+                line_item.category = category
+                classification_fields_to_update.append("category")
+            if classification_confidence and line_item.classification_confidence != classification_confidence:
+                line_item.classification_confidence = classification_confidence
+                classification_fields_to_update.append("classification_confidence")
+            if line_item.classification_source != "KEYWORD":
+                line_item.classification_source = "KEYWORD"
+                classification_fields_to_update.append("classification_source")
 
             if source == "MARKET_DATA":
+                if line_item.benchmark_source == "PERPLEXITY_LIVE":
+                    if classification_fields_to_update:
+                        line_item.save(update_fields=classification_fields_to_update + ["updated_at"])
+                    continue
+
                 fields_to_reset = []
+                if line_item.benchmark_min is not None:
+                    line_item.benchmark_min = None
+                    fields_to_reset.append("benchmark_min")
+                if line_item.benchmark_mid is not None:
+                    line_item.benchmark_mid = None
+                    fields_to_reset.append("benchmark_mid")
+                if line_item.benchmark_max is not None:
+                    line_item.benchmark_max = None
+                    fields_to_reset.append("benchmark_max")
                 if line_item.corridor_rule_code:
                     line_item.corridor_rule_code = ""
                     fields_to_reset.append("corridor_rule_code")
-
-                has_live_market_benchmark = (
-                    line_item.benchmark_source == "PERPLEXITY_LIVE"
-                    and line_item.benchmark_mid is not None
-                )
-
-                if not has_live_market_benchmark:
-                    if line_item.benchmark_min is not None:
-                        line_item.benchmark_min = None
-                        fields_to_reset.append("benchmark_min")
-                    if line_item.benchmark_mid is not None:
-                        line_item.benchmark_mid = None
-                        fields_to_reset.append("benchmark_mid")
-                    if line_item.benchmark_max is not None:
-                        line_item.benchmark_max = None
-                        fields_to_reset.append("benchmark_max")
-                    if line_item.benchmark_source != "NONE":
-                        line_item.benchmark_source = "NONE"
-                        fields_to_reset.append("benchmark_source")
-                    if line_item.variance_pct is not None:
-                        line_item.variance_pct = None
-                        fields_to_reset.append("variance_pct")
-                    if line_item.variance_status != "NEEDS_REVIEW":
-                        line_item.variance_status = "NEEDS_REVIEW"
-                        fields_to_reset.append("variance_status")
+                if line_item.benchmark_source != "NONE":
+                    line_item.benchmark_source = "NONE"
+                    fields_to_reset.append("benchmark_source")
+                if line_item.variance_pct is not None:
+                    line_item.variance_pct = None
+                    fields_to_reset.append("variance_pct")
+                if line_item.variance_status != "NEEDS_REVIEW":
+                    line_item.variance_status = "NEEDS_REVIEW"
+                    fields_to_reset.append("variance_status")
+                fields_to_reset.extend(classification_fields_to_update)
                 if fields_to_reset:
                     line_item.save(update_fields=fields_to_reset + ["updated_at"])
                 continue
@@ -698,6 +749,7 @@ class BenchmarkEngine:
                 if line_item.variance_status != "NEEDS_REVIEW":
                     line_item.variance_status = "NEEDS_REVIEW"
                     fields_to_reset.append("variance_status")
+                fields_to_reset.extend(classification_fields_to_update)
 
                 if fields_to_reset:
                     line_item.save(update_fields=fields_to_reset + ["updated_at"])
@@ -740,12 +792,16 @@ class BenchmarkEngine:
                 line_item.save(update_fields=[
                     "benchmark_min", "benchmark_mid", "benchmark_max",
                     "corridor_rule_code", "benchmark_source",
-                    "variance_pct", "variance_status", "updated_at"
+                    "variance_pct", "variance_status",
+                    "category", "classification_confidence", "classification_source",
+                    "updated_at"
                 ])
                 logger.info(
                     f"Applied corridor {corridor.rule_code} to line {line_item.line_number}: "
                     f"min={corridor.min_rate}, mid={corridor.mid_rate}, max={corridor.max_rate}"
                 )
+            elif classification_fields_to_update:
+                line_item.save(update_fields=classification_fields_to_update + ["updated_at"])
 
     @classmethod
     def _apply_market_prices(

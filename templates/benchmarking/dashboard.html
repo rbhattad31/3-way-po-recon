@@ -1,0 +1,133 @@
+{% extends "procurement/proc_base.html" %}
+{% block title %}Benchmarking Dashboard | LMG Procurement{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item active">Benchmarking Dashboard</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="lmg-banner mb-4 d-flex align-items-center justify-content-between flex-wrap gap-3" style="padding:1.15rem 1.25rem; border-radius:14px; background:linear-gradient(90deg,#111827,#1f2937); color:#fff;">
+  <div>
+    <div class="fw-bold mb-2 d-flex align-items-center gap-3">
+      <span style="font-size:1.05rem;letter-spacing:.5px;opacity:.95;">Benchmarking Intelligence for {{ company_name }}</span>
+    </div>
+
+    <small style="opacity:.85;">Cost corridors, variance tracking, and supplier benchmark visibility.</small>
+  </div>
+
+  <div class="dropdown">
+    <button class="btn btn-light btn-sm dropdown-toggle d-inline-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M7 16V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 16V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M17 16V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      Dashboard Switch
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width:220px;">
+      <li>
+        <a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'procurement:procurement_dashboard' %}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
+            <rect x="13" y="3" width="8" height="5" rx="1.5" stroke="currentColor" stroke-width="2"/>
+            <rect x="13" y="10" width="8" height="11" rx="1.5" stroke="currentColor" stroke-width="2"/>
+            <rect x="3" y="13" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          Procurement Dashboard
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'benchmarking:dashboard' %}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M4 19H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M7 16V11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M12 16V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M17 16V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Benchmarking Dashboard
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;">Total Requests</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#111827;">{{ total_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#2563eb;text-transform:uppercase;letter-spacing:.04em;">Pending</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#2563eb;">{{ pending_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:.04em;">Completed</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#059669;">{{ completed_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:.04em;">Failed</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;">{{ failed_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+  <div class="card-header bg-white d-flex align-items-center justify-content-between">
+    <span class="fw-semibold" style="color:#111827;">Recent Benchmark Requests</span>
+    <a href="{% url 'benchmarking:request_list' %}" class="btn btn-sm btn-outline-primary">View All Requests</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
+      <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+        <tr>
+          <th class="px-3 py-2 fw-600" style="color:#6b7280;">Title</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Geography</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Status</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Submitted</th>
+          <th class="py-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for req in recent_requests %}
+        <tr>
+          <td class="px-3 py-2">
+            <a href="{% url 'benchmarking:request_detail' req.pk %}" class="fw-600 text-decoration-none" style="color:#1665D8;">{{ req.title }}</a>
+          </td>
+          <td class="py-2"><span class="badge bg-light text-dark border">{{ req.geography }}</span></td>
+          <td class="py-2"><span class="badge bg-{{ req.get_status_badge_class }}">{{ req.status }}</span></td>
+          <td class="py-2 text-muted">{{ req.created_at|date:"M d, Y H:i" }}</td>
+          <td class="py-2 text-end pe-3">
+            <a href="{% url 'benchmarking:request_detail' req.pk %}" class="btn btn-sm btn-outline-secondary">Open</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="5" class="text-center py-4" style="color:#6b7280;">No benchmarking requests available yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

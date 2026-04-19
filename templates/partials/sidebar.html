@@ -88,6 +88,15 @@
       </li>
       {% endif %}
 
+      {% has_permission "email.view" as can_view_email_integration %}
+      {% if can_view_email_integration %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'email_integration' %}active fw-bold{% endif %}" href="{% url 'email_integration:dashboard' %}">
+          <i class="bi bi-envelope me-2"></i>Email Integration
+        </a>
+      </li>
+      {% endif %}
+
       {# ── Operations ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reports</li>
