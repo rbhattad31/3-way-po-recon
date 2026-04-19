@@ -492,12 +492,12 @@
 
   function updateProgressSteps(container, steps) {
     container.innerHTML = steps.map(function (s) {
-      var cls = s.failed ? 'failed' : (s.done ? 'done' : 'pending');
-      var icon = s.failed
-        ? '<i class="bi bi-x-circle-fill"></i>'
-        : (s.done
-          ? '<i class="bi bi-check-circle-fill"></i>'
-          : '<div class="spinner-border spinner-border-sm text-primary"></div>');
+      var cls = s.failed ? 'failed' : (s.done ? 'done' : (s.pending ? 'pending' : 'running'));
+      var icon;
+      if (s.failed) icon = '<i class="bi bi-x-circle-fill"></i>';
+      else if (s.done) icon = '<i class="bi bi-check-circle-fill"></i>';
+      else if (s.pending) icon = '<i class="bi bi-circle"></i>';
+      else icon = '<div class="spinner-border spinner-border-sm text-primary"></div>';
       return '<div class="copilot-progress-step ' + cls + '">'
         + '<span class="step-icon">' + icon + '</span>'
         + '<span>' + esc(s.label) + '</span>'
@@ -553,44 +553,33 @@
     var html = '';
     for (var i = 0; i < steps.length; i++) {
       var s = steps[i];
-      if (s.kind === 'round') {
-        var roundIcon = s.active
-          ? '<div class="spinner-border spinner-border-sm text-primary"></div>'
-          : '<i class="bi bi-lightbulb-fill"></i>';
-        html += '<div class="sv-step sv-round' + (s.active ? ' active' : '') + '">'
-          + '<span class="step-icon">' + roundIcon + '</span>'
-          + '<span>Round ' + s.round + (s.active ? ' -- Thinking...' : '') + '</span>'
+
+      // Skip internal tracking entries that are not tasks
+      if (s.kind === 'round' || s.kind === 'reasoning') continue;
+
+      if (s.kind === 'pipeline') {
+        var pIcon, pCls;
+        if (s.status === 'done')        { pIcon = '<i class="bi bi-check-circle-fill"></i>'; pCls = 'done'; }
+        else if (s.status === 'failed') { pIcon = '<i class="bi bi-x-circle-fill"></i>'; pCls = 'failed'; }
+        else                            { pIcon = '<div class="spinner-border spinner-border-sm"></div>'; pCls = 'running'; }
+        html += '<div class="sv-task sv-task-pipeline ' + pCls + '">'
+          + '<span class="sv-task-icon">' + pIcon + '</span>'
+          + '<span class="sv-task-label">' + esc(s.message || s.stage) + '</span>'
           + '</div>';
-      } else if (s.kind === 'reasoning') {
-        html += '<div class="sv-step sv-reasoning">'
-          + '<span class="step-icon"><i class="bi bi-chat-left-text-fill"></i></span>'
-          + '<div class="sv-reasoning-body">';
-        if (s.tools_planned && s.tools_planned.length) {
-          var toolNames = s.tools_planned.map(function (t) {
-            return TOOL_LABELS[t] || t.replace(/_/g, ' ');
-          });
-          html += '<div class="sv-reasoning-plan"><strong>Plan:</strong> ' + esc(toolNames.join(', ')) + '</div>';
-        }
-        if (s.text) {
-          html += '<div class="sv-reasoning-text">' + esc(s.text) + '</div>';
-        }
-        html += '</div></div>';
+
       } else if (s.kind === 'tool') {
         var toolLabel = TOOL_LABELS[s.tool] || (s.tool || '').replace(/_/g, ' ');
-        var cls = 'running';
-        var icon = '<div class="spinner-border spinner-border-sm text-primary"></div>';
-        if (s.status === 'done') {
-          cls = 'done';
-          icon = '<i class="bi bi-check-circle-fill"></i>';
-        } else if (s.status === 'failed') {
-          cls = 'failed';
-          icon = '<i class="bi bi-x-circle-fill"></i>';
-        }
-        var dur = s.duration_ms != null ? ' (' + (s.duration_ms / 1000).toFixed(1) + 's)' : '';
-        var hasDetail = s.output_summary && s.status !== 'running';
-        html += '<div class="sv-step sv-tool ' + cls + '">'
-          + '<span class="step-icon">' + icon + '</span>'
-          + '<span class="sv-tool-label">' + esc(toolLabel) + dur + '</span>';
+        var tIcon, tCls;
+        if (s.status === 'done')        { tIcon = '<i class="bi bi-check-circle-fill"></i>'; tCls = 'done'; }
+        else if (s.status === 'failed') { tIcon = '<i class="bi bi-x-circle-fill"></i>'; tCls = 'failed'; }
+        else if (s.status === 'running'){ tIcon = '<div class="spinner-border spinner-border-sm"></div>'; tCls = 'running'; }
+        else                            { tIcon = '<i class="bi bi-circle"></i>'; tCls = 'pending'; }
+        var dur = (s.status === 'done' || s.status === 'failed') && s.duration_ms != null
+          ? ' <span class="sv-task-dur">(' + (s.duration_ms / 1000).toFixed(1) + 's)</span>' : '';
+        var hasDetail = s.output_summary && (s.status === 'done' || s.status === 'failed');
+        html += '<div class="sv-task sv-task-tool ' + tCls + '">'
+          + '<span class="sv-task-icon">' + tIcon + '</span>'
+          + '<span class="sv-task-label">' + esc(toolLabel) + dur + '</span>';
         if (hasDetail) {
           html += '<button class="sv-detail-toggle" onclick="this.parentElement.classList.toggle(\'expanded\')" title="Show details">'
             + '<i class="bi bi-chevron-down"></i></button>'
@@ -599,15 +588,17 @@
             + '</div>';
         }
         html += '</div>';
+
       } else if (s.kind === 'complete') {
-        html += '<div class="sv-step sv-complete">'
-          + '<span class="step-icon"><i class="bi bi-check-circle-fill"></i></span>'
-          + '<span>Analysis complete</span>'
+        html += '<div class="sv-task sv-task-complete done">'
+          + '<span class="sv-task-icon"><i class="bi bi-check-circle-fill"></i></span>'
+          + '<span class="sv-task-label">Generating recommendation</span>'
           + '</div>';
+
       } else if (s.kind === 'error') {
-        html += '<div class="sv-step sv-error">'
-          + '<span class="step-icon"><i class="bi bi-exclamation-triangle-fill"></i></span>'
-          + '<span>Error: ' + esc(s.message) + '</span>'
+        html += '<div class="sv-task sv-task-error failed">'
+          + '<span class="sv-task-icon"><i class="bi bi-exclamation-triangle-fill"></i></span>'
+          + '<span class="sv-task-label">' + esc(s.message || 'Error') + '</span>'
           + '</div>';
       }
     }
@@ -748,11 +739,12 @@
 
     appendMessage('user', 'Uploaded invoice: ' + file.name);
 
-    var prog = appendProgressMessage('cloud-arrow-up', 'Processing Invoice');
+    var prog = appendProgressMessage('cloud-arrow-up', 'Uploading Invoice');
     updateProgressSteps(prog.stepsContainer, [{ label: 'Uploading document...', done: false }]);
 
     var formData = new FormData();
     formData.append('file', file);
+    formData.append('supervisor_driven', 'true');
 
     try {
       var res = await fetch(CFG.urls.invoiceUpload, {
@@ -769,7 +761,14 @@
         return;
       }
       updateProgressSteps(prog.stepsContainer, [{ label: 'Document received', done: true }]);
-      pollUploadStatus(data.upload_id, prog.stepsContainer);
+
+      // Supervisor drives the full pipeline: extraction -> reconciliation -> analysis
+      // Store IDs so the supervisor SSE handler can find them
+      if (data.case_id) caseId = data.case_id;
+      CFG._uploadId = data.upload_id;
+      CFG.invoiceId = data.invoice_id || null;
+
+      runSupervisor('Analyze this newly uploaded invoice');
     } catch (err) {
       updateProgressSteps(prog.stepsContainer, [
         { label: 'Upload error: ' + ((err && err.message) || 'Network error'), done: true, failed: true },
@@ -819,32 +818,26 @@
   // WAIT FOR INVOICE (case mode -- poll until invoice is linked)
   // ==================================================================
   function waitForInvoiceThenRunSupervisor() {
-    var attempts = 0;
-    var maxAttempts = 90;
+    // The supervisor SSE endpoint now orchestrates the full pipeline
+    // (extraction -> reconciliation -> analysis) if needed. Just call it.
     hideWelcome();
-    appendMessage('system', 'Waiting for extraction to complete before running analysis...');
-
-    var pollInterval = setInterval(async function () {
-      attempts++;
-      try {
-        var ctx = await apiFetch(CFG.urls.caseContext, { method: 'GET' });
+    // If we have a case_id, the supervisor will figure out the rest
+    if (caseId) {
+      // Resolve invoice_id from case context first (best effort)
+      apiFetch(CFG.urls.caseContext, { method: 'GET' }).then(function (ctx) {
         if (ctx && ctx.invoice && ctx.invoice.id) {
-          clearInterval(pollInterval);
           CFG.invoiceId = ctx.invoice.id;
-          if (ctx.reconciliation && ctx.reconciliation.id) {
-            CFG.reconciliationResultId = ctx.reconciliation.id;
-          }
-          runSupervisor('Analyze this newly uploaded invoice');
-          return;
         }
-      } catch (err) {
-        console.warn('[copilot] polling case context failed', err);
-      }
-      if (attempts >= maxAttempts) {
-        clearInterval(pollInterval);
-        appendMessage('system', 'Extraction is taking longer than expected. Refresh the page and try again.');
-      }
-    }, 2000);
+        if (ctx && ctx.reconciliation && ctx.reconciliation.id) {
+          CFG.reconciliationResultId = ctx.reconciliation.id;
+        }
+        runSupervisor('Analyze this newly uploaded invoice');
+      }).catch(function () {
+        runSupervisor('Analyze this newly uploaded invoice');
+      });
+    } else {
+      runSupervisor('Analyze this newly uploaded invoice');
+    }
   }
 
   // ==================================================================
@@ -877,15 +870,24 @@
         updateStreamingSteps(prog.stepsContainer, steps);
       } else {
         // Plain chat mode: simpler progress steps
-        var simpleSteps = steps.filter(function (s) { return s.kind === 'tool' || s.kind === 'complete' || s.kind === 'error'; });
+        var simpleSteps = steps.filter(function (s) {
+          return s.kind === 'tool' || s.kind === 'complete' || s.kind === 'error' || s.kind === 'pipeline';
+        });
         updateProgressSteps(prog.stepsContainer, simpleSteps.map(function (s) {
           if (s.kind === 'complete') return { label: 'Analysis complete', done: true };
           if (s.kind === 'error') return { label: s.message || 'Error', done: true, failed: true };
+          if (s.kind === 'pipeline') return {
+            label: s.message || s.stage,
+            done: s.status === 'done' || s.status === 'failed',
+            failed: s.status === 'failed',
+            pending: s.status === 'running',
+          };
           var lbl = TOOL_LABELS[s.tool] || (s.tool || '').replace(/_/g, ' ');
           return {
             label: lbl,
             done: s.status === 'done' || s.status === 'failed',
             failed: s.status === 'failed',
+            pending: s.status === 'pending',
           };
         }));
       }
@@ -893,40 +895,79 @@
     }
 
     function handleEvent(evt) {
-      if (evt.type === 'thinking') {
-        currentRound = evt.round || currentRound + 1;
-        steps.push({ kind: 'round', round: currentRound, active: true });
+      if (evt.type === 'pipeline_stage') {
+        // Pipeline orchestration events: extraction, reconciliation, analysis
+        var stageLabel = {
+          extraction: 'Extracting invoice data',
+          reconciliation: 'Matching against PO & receipts',
+          analysis: 'Running AI analysis',
+        }[evt.stage] || evt.stage;
+        var existing = null;
+        for (var ps = steps.length - 1; ps >= 0; ps--) {
+          if (steps[ps].kind === 'pipeline' && steps[ps].stage === evt.stage) {
+            existing = steps[ps]; break;
+          }
+        }
+        if (existing) {
+          existing.status = evt.status;
+          existing.message = evt.message || stageLabel;
+        } else {
+          steps.push({
+            kind: 'pipeline', stage: evt.stage,
+            status: evt.status, message: evt.message || stageLabel,
+          });
+        }
+        // Update CFG IDs if the complete event carries them
+        if (evt.invoice_id) CFG.invoiceId = evt.invoice_id;
+        if (evt.reconciliation_result_id) CFG.reconciliationResultId = evt.reconciliation_result_id;
         renderSteps();
+      } else if (evt.type === 'thinking') {
+        // No-op: rounds are not displayed; tasks are revealed by reasoning
+        currentRound = evt.round || currentRound + 1;
       } else if (evt.type === 'reasoning') {
-        for (var r = steps.length - 1; r >= 0; r--) {
-          if (steps[r].kind === 'round' && steps[r].round === (evt.round || currentRound)) {
-            steps[r].active = false;
+        // Pre-create pending task entries for each planned tool
+        var planned = evt.tools_planned || [];
+        for (var tp = 0; tp < planned.length; tp++) {
+          var toolName = planned[tp];
+          // Only add if no entry exists yet for this tool
+          var alreadyHas = false;
+          for (var ex = 0; ex < steps.length; ex++) {
+            if (steps[ex].kind === 'tool' && steps[ex].tool === toolName) {
+              alreadyHas = true; break;
+            }
+          }
+          if (!alreadyHas) {
+            steps.push({
+              kind: 'tool', tool: toolName,
+              status: 'pending', duration_ms: null, output_summary: '',
+            });
+          }
+        }
+        renderSteps();
+      } else if (evt.type === 'tool_start') {
+        // Find a pending entry for this tool and mark running; create if missing
+        var found = false;
+        for (var ts = 0; ts < steps.length; ts++) {
+          if (steps[ts].kind === 'tool' && steps[ts].tool === evt.tool && steps[ts].status === 'pending') {
+            steps[ts].status = 'running';
+            found = true;
             break;
           }
         }
-        steps.push({
-          kind: 'reasoning', round: evt.round || currentRound,
-          text: evt.text || '', tools_planned: evt.tools_planned || [],
-        });
-        renderSteps();
-      } else if (evt.type === 'tool_start') {
-        steps.push({
-          kind: 'tool', tool: evt.tool, round: evt.round || currentRound,
-          status: 'running', duration_ms: null, output_summary: '',
-        });
+        if (!found) {
+          steps.push({
+            kind: 'tool', tool: evt.tool,
+            status: 'running', duration_ms: null, output_summary: '',
+          });
+        }
         renderSteps();
       } else if (evt.type === 'tool_complete') {
         for (var i = steps.length - 1; i >= 0; i--) {
-          if (steps[i].kind === 'tool' && steps[i].tool === evt.tool && steps[i].status === 'running') {
+          if (steps[i].kind === 'tool' && steps[i].tool === evt.tool
+              && (steps[i].status === 'running' || steps[i].status === 'pending')) {
             steps[i].status = evt.status === 'SUCCESS' ? 'done' : 'failed';
             steps[i].duration_ms = evt.duration_ms;
             steps[i].output_summary = evt.output_summary || '';
-            break;
-          }
-        }
-        for (var j = steps.length - 1; j >= 0; j--) {
-          if (steps[j].kind === 'round' && steps[j].round === (evt.round || currentRound)) {
-            steps[j].active = false;
             break;
           }
         }
@@ -934,6 +975,9 @@
       } else if (evt.type === 'complete') {
         steps.push({ kind: 'complete' });
         renderSteps();
+        // Capture IDs from the complete event
+        if (evt.invoice_id) CFG.invoiceId = evt.invoice_id;
+        if (evt.reconciliation_result_id) CFG.reconciliationResultId = evt.reconciliation_result_id;
         var s = evt.summary || {};
         if (typeof s === 'string') {
           appendMessage('assistant', s || 'Supervisor analysis completed.');
@@ -946,6 +990,13 @@
           if (s.analysis_text) summary += '\n\n' + s.analysis_text;
           if (!summary) summary = 'Supervisor analysis completed.';
           appendMessage('assistant', summary);
+        }
+        // Redirect to case workspace (if we have a case_id and are not already in case mode)
+        if (!IS_CASE && caseId && CFG.urls.caseBase) {
+          appendMessage('system', 'Opening case workspace...');
+          setTimeout(function () {
+            window.location.href = CFG.urls.caseBase + caseId + '/';
+          }, 1500);
         }
         // Refresh page in case mode so header/tabs reflect updated data
         if (IS_CASE) {
@@ -973,6 +1024,7 @@
           credentials: 'same-origin',
           body: JSON.stringify({
             invoice_id: CFG.invoiceId || null,
+            upload_id: CFG._uploadId || null,
             reconciliation_result_id: CFG.reconciliationResultId || null,
             case_id: caseId,
             session_id: sid || sessionId || null,
@@ -1022,6 +1074,7 @@
         method: 'POST',
         body: {
           invoice_id: CFG.invoiceId || null,
+          upload_id: CFG._uploadId || null,
           reconciliation_result_id: CFG.reconciliationResultId || null,
           case_id: caseId,
           session_id: sid || sessionId || null,

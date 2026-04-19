@@ -28,7 +28,7 @@ class ERPConnection(BaseModel):
         db_index=True,
         related_name="+",
     )
-    name = models.CharField(max_length=200, unique=True)
+    name = models.CharField(max_length=200, db_index=True)
     connector_type = models.CharField(
         max_length=20,
         choices=ERPConnectorType.choices,
@@ -117,6 +117,12 @@ class ERPConnection(BaseModel):
         ordering = ["-is_default", "name"]
         verbose_name = "ERP Connection"
         verbose_name_plural = "ERP Connections"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name", "tenant"],
+                name="uq_erp_connection_name_tenant",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.name} [{self.connector_type}] ({self.status})"

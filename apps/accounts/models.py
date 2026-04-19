@@ -88,6 +88,17 @@ class CompanyProfile(TimestampMixin):
         return self.name
 
     def save(self, *args, **kwargs):
+        # Auto-generate slug from name if blank
+        if not self.slug and self.name:
+            from django.utils.text import slugify
+            base = slugify(self.name)[:80] or f"company-{self.pk or 'new'}"
+            slug = base
+            n = 1
+            while CompanyProfile.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                suffix = f"-{n}"
+                slug = base[: 80 - len(suffix)] + suffix
+                n += 1
+            self.slug = slug
         # Ensure only one default profile
         if self.is_default:
             CompanyProfile.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)

@@ -1,3 +1,217 @@
+# Copilot Instructions -- 3-Way PO Reconciliation Platform
+
+## Project Identity
+
+Django 4.2+ enterprise AP finance application for 3-way Purchase Order reconciliation
+(Invoice vs PO vs GRN). MySQL, Celery+Redis, Azure OpenAI (GPT-4o), Bootstrap 5.
+17+ Django apps under `apps/`. `apps/reviews` is a migrations-only stub (merged into `apps/cases`).
+
+Read `PROJECT.md` for full architecture. Read `docs/AGENT_ARCHITECTURE.md` for the agentic layer.
+Read the `docs/current_system_review/` folder for the latest code-first system analysis.
+
+---
+
+## Non-Negotiable Engineering Rules
+
+### ASCII Only
+
+Do not use Unicode arrows, fancy quotes, em/en dashes, ellipsis, or any non-ASCII character
+in Python source, string literals, comments, docstrings, or LLM-generated text persisted to DB.
+Use `->`, `--`, `...`, straight quotes. Apply `_sanitise_text()` before `.save()` on any
+agent-generated content written to `AgentRun.summarized_reasoning`,
+`ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, `DecisionLog.rationale`.
+
+### Soft Delete
+
+Never hard-delete business entities. Use `SoftDeleteMixin` (`is_active` flag).
+
+### Enum Placement
+
+All enums go in `apps/core/enums.py`. Never inline string choices on model fields.
+Exception: ERP connector enums live in `apps/erp_integration/enums.py`.
+
+### Constants and Utilities
+
+Constants in `apps/core/constants.py`. Shared utilities in `apps/core/utils.py`.
+
+---
+
+## Architecture Rules
+
+### Service-Layer Pattern
+
+- Business logic goes in **service classes** under `apps/<app>/services/`, never in views or serializers.
+- Services are stateless. Accept model instances or IDs as arguments.
+- Views/tasks call services; services call the ORM.
+- Keep views thin: request parsing, permission checking, response formatting only.
+
+### Model Inheritance
+
+All models inherit from `apps.core.models.BaseModel` (includes `TimestampMixin` + `AuditMixin`),
+unless they are lightweight join/log tables that use `TimestampMixin` only.
+
+### API Design
+
+- All APIs under `/api/v1/` using Django REST Framework.
+- `ModelViewSet` or `ReadOnlyModelViewSet` with `permission_classes`.
+- Default pagination: 25 per page (`PageNumberPagination`).
+- Filtering: `DjangoFilterBackend`, `SearchFilter`, `OrderingFilter`.
+- Serializers in `serializers.py` per app. Separate List/Detail serializers when needed.
+- API routes in `api_urls.py`; template routes in `urls.py`.
+
+### Celery Tasks
+
+- Tasks in `tasks.py` per app. Use `@shared_task(bind=True)` with `max_retries` and `default_retry_delay`.
+- Tasks call service classes. Never put business logic in task functions.
+- Use `acks_late=True` for important tasks. JSON serialization.
+- Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis.
+
+---
+
+## Multi-Tenant Isolation
+
+Shared-database row-level isolation via `CompanyProfile` as tenant entity.
+Every business model has a `tenant` FK to `CompanyProfile`.
+
+- `TenantMiddleware` sets `request.tenant` from `user.company`.
+- `TenantQuerysetMixin` on all ViewSets/CBVs.
+- `require_tenant()` decorator for FBVs.
+- `scoped_queryset()` for service-layer queries.
+- `BaseTool._scoped()` for agent tools.
+- Platform admins (`is_platform_admin=True`) bypass tenant scoping.
+- Celery tasks accept `tenant_id` argument.
+
+Reference: `apps/core/tenant_utils.py`, `docs/MULTI_TENANT.md`.
+
+---
+
+## RBAC
+
+Custom User model uses email login. `AUTH_USER_MODEL = "accounts.User"`.
+`User.company` FK to `CompanyProfile`. `User.is_platform_admin` for cross-tenant access.
+
+- RBAC models: `apps/accounts/rbac_models.py` (Role, Permission, RolePermission, UserRole, UserPermissionOverride).
+- Permission classes: `apps/core/permissions.py` (`HasPermissionCode`, `HasAnyPermission`, `HasRole` for DRF; `PermissionRequiredMixin` for CBV; `@permission_required_code` for FBV).
+- Template tags: `apps/core/templatetags/rbac_tags.py` (`{% has_permission %}`, `{% has_role %}`, `{% if_can %}`).
+- Permission convention: `{module}.{action}` (e.g. `invoices.view`, `agents.run_reconciliation`).
+- 10 system roles (incl. SUPER_ADMIN rank 1, SYSTEM_AGENT rank 100). 65+ permissions across 18 modules.
+- `UserRole.scope_json`: per-assignment scope restrictions (`allowed_business_units`, `allowed_vendor_ids`). Null means unrestricted. ADMIN and SYSTEM_AGENT bypass.
+- Permission precedence: ADMIN bypass -> user DENY override -> user ALLOW override -> role permissions.
+
+---
+
+## Agent System Summary
+
+- 14 agents: 9 LLM (extend `BaseAgent`, ReAct loop, max 6 iterations; SupervisorAgent uses 15 rounds) + 5 deterministic (extend `DeterministicSystemAgent`).
+- `AgentOrchestrator` -> `ReasoningPlanner` (LLM) -> fallback `PolicyEngine` (deterministic).
+- `SupervisorAgent`: full AP lifecycle orchestrator with 5-phase skill-based composition, 30+ tools, smart query routing (CASE_ANALYSIS / AP_INSIGHTS / HYBRID).
+- `AgentGuardrailsService`: central RBAC enforcement (orchestration, per-agent, per-tool, recommendation, data-scope authorization).
+- `SYSTEM_AGENT` identity (`system-agent@internal`) for Celery/system-triggered runs.
+- Tools registered in `apps/tools/registry/` via `@register_tool`. Each declares `required_permission`.
+- OpenAI-compliant tool-calling format.
+- `AgentOutputSchema` (Pydantic v2) validates all agent JSON output.
+- Every run, step, tool call, decision persisted via `AgentTraceService`.
+- Prompt resolution chain: in-process cache -> Langfuse (label="production") -> DB (PromptTemplate) -> hardcoded fallback.
+
+---
+
+## Observability and Audit
+
+### Internal Tracing
+
+- `TraceContext` (`apps/core/trace.py`): distributed tracing with `trace_id`, `span_id`, RBAC snapshot.
+- Decorators: `@observed_service`, `@observed_action`, `@observed_task` on all entry-point methods.
+- `RequestTraceMiddleware`: root `TraceContext` per request.
+
+### Langfuse
+
+- All calls fail-silent. Import from `apps.core.langfuse_client`.
+- Always pass `span=` to `score_trace()` / `score_trace_safe()` (OTel trace_id extraction).
+- Guard every Langfuse call in `try/except Exception: pass`. Never let tracing errors propagate.
+- Score keys centralized in `apps/core/evaluation_constants.py`.
+- See `docs/LANGFUSE_INTEGRATION.md` for trace ID conventions, score conventions, and code patterns.
+
+### Audit
+
+- `AuditEvent` model: 20+ fields, RBAC snapshot, trace IDs, cross-references. 38+ event types.
+- `ProcessingLog`: operational observability (durations, retries, failures). Not for compliance.
+- `DecisionLog`: every key decision (agent, deterministic, policy, human) with full rationale.
+- `CaseTimelineService`: unified chronological timeline per invoice (8 event categories).
+
+---
+
+## File Placement
+
+| What | Where |
+|---|---|
+| Models | `apps/<app>/models.py` |
+| Serializers | `apps/<app>/serializers.py` |
+| API Views | `apps/<app>/views.py` |
+| Template Views | `apps/<app>/template_views.py` |
+| API URLs | `apps/<app>/api_urls.py` (under `/api/v1/<app>/`) |
+| Template URLs | `apps/<app>/urls.py` (top level) |
+| Tasks | `apps/<app>/tasks.py` |
+| Services | `apps/<app>/services/` directory |
+| Enums | `apps/core/enums.py` |
+| Templates | `templates/<app>/` |
+| Static files | `static/css/`, `static/js/` |
+| Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
+
+Specialized locations:
+
+| What | Where |
+|---|---|
+| RBAC models | `apps/accounts/rbac_models.py` |
+| Permissions | `apps/core/permissions.py` |
+| Agent guardrails | `apps/agents/services/guardrails_service.py` |
+| LLM agent classes | `apps/agents/services/agent_classes.py` |
+| System agent classes | `apps/agents/services/system_agent_classes.py` |
+| Supervisor agent | `apps/agents/services/supervisor_agent.py` |
+| Supervisor skills | `apps/agents/skills/` |
+| Tool classes (base) | `apps/tools/registry/tools.py` |
+| Supervisor tools | `apps/tools/registry/supervisor_tools.py` |
+| AP insights tools | `apps/tools/registry/ap_insights_tools.py` |
+| ERP connectors | `apps/erp_integration/services/connectors/` |
+| ERP resolvers | `apps/erp_integration/services/resolution/` |
+| ERP DB fallbacks | `apps/erp_integration/services/db_fallback/` |
+| Posting pipeline | `apps/posting_core/services/` |
+| Posting business | `apps/posting/services/` |
+| Eval/Learning | `apps/core_eval/services/` |
+| Observability | `apps/core/trace.py`, `logging_utils.py`, `metrics.py`, `decorators.py` |
+| Prompt registry | `apps/core/prompt_registry.py` |
+| Evaluation constants | `apps/core/evaluation_constants.py` |
+
+---
+
+## Code Generation Expectations
+
+- Python 3.8+. Type hints on public functions.
+- New services: decorate entry points with `@observed_service`.
+- New views: decorate with `@observed_action` (FBV) or ensure `@observed_service` on called service.
+- New tasks: decorate with `@observed_task`. Add Langfuse root trace and scores.
+- New models: inherit `BaseModel`, add `tenant` FK, add admin registration.
+- New API endpoints: enforce RBAC via `permission_classes`, apply `TenantQuerysetMixin`.
+- New templates: extend `base.html`, gate with `{% has_permission %}`.
+- Tests: tenant isolation, RBAC denial, status transitions.
+
+---
+
+## Key References
+
+| Document | Content |
+|---|---|
+| `PROJECT.md` | Full architecture, models, data flow |
+| `docs/AGENT_ARCHITECTURE.md` | Agent layer, policy engine, guardrails, tool registry |
+| `docs/current_system_review/` | Latest code-first system analysis (19 documents) |
+| `docs/MULTI_TENANT.md` | Tenant isolation patterns |
+| `docs/LANGFUSE_INTEGRATION.md` | Observability patterns, trace/score conventions |
+| `docs/POSTING_AGENT.md` | Posting pipeline details |
+| `docs/ERP_INTEGRATION.md` | ERP connector and resolution architecture |
+| `docs/EVAL_LEARNING.md` | Evaluation and learning framework |
+| `docs/RECON_AGENT.md` | Reconciliation + agent pipeline reference |
+| `docs/EXTRACTION_AGENT.md` | Extraction pipeline reference |
+| `docs/REASONING_PLANNER.md` | LLM planner architecture |
+| `docs/PROCUREMENT.md` | Procurement module reference |
 # Copilot Instructions — 3-Way PO Reconciliation Platform
 
 ## Project Context

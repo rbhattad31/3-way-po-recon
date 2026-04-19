@@ -17,7 +17,7 @@ class Vendor(BaseModel, SoftDeleteMixin):
         db_index=True,
         related_name="+",
     )
-    code = models.CharField(max_length=50, unique=True, help_text="Unique vendor code from ERP")
+    code = models.CharField(max_length=50, db_index=True, help_text="Vendor code from ERP")
     name = models.CharField(max_length=255, db_index=True)
     normalized_name = models.CharField(max_length=255, blank=True, db_index=True)
     tax_id = models.CharField(max_length=50, blank=True, default="")
@@ -35,6 +35,12 @@ class Vendor(BaseModel, SoftDeleteMixin):
         indexes = [
             models.Index(fields=["code"], name="idx_vendor_code"),
             models.Index(fields=["normalized_name"], name="idx_vendor_norm_name"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["code", "tenant"],
+                name="uq_vendor_code_tenant",
+            ),
         ]
 
     def save(self, *args, **kwargs):

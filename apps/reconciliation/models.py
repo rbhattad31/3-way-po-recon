@@ -27,7 +27,7 @@ class ReconciliationConfig(BaseModel):
         db_index=True,
         related_name="+",
     )
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100, db_index=True)
     quantity_tolerance_pct = models.FloatField(default=2.0)
     price_tolerance_pct = models.FloatField(default=1.0)
     amount_tolerance_pct = models.FloatField(default=1.0)
@@ -73,9 +73,53 @@ class ReconciliationConfig(BaseModel):
         ordering = ["name"]
         verbose_name = "Reconciliation Config"
         verbose_name_plural = "Reconciliation Configs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name", "tenant"],
+                name="uq_reconconfig_name_tenant",
+            ),
+            models.UniqueConstraint(
+                fields=["name"],
+                condition=models.Q(tenant__isnull=True),
+                name="uq_reconconfig_name_global",
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.name
+
+    @staticmethod
+    def get_or_create_default(tenant=None):
+        """Return the default config for *tenant*, creating one if needed.
+
+        Lookup order:
+          1. is_default=True for the given tenant
+          2. is_default=True with tenant=NULL (global fallback)
+          3. Create a new default using get_or_create (race-safe)
+        """
+        config = ReconciliationConfig.objects.filter(
+            is_default=True, tenant=tenant,
+        ).first()
+        if config:
+            return config
+
+        config = ReconciliationConfig.objects.filter(
+            is_default=True, tenant__isnull=True,
+        ).first()
+        if config:
+            return config
+
+        config, _created = ReconciliationConfig.objects.get_or_create(
+            name="Default",
+            tenant=tenant,
+            defaults={
+                "quantity_tolerance_pct": 2.0,
+                "price_tolerance_pct": 1.0,
+                "amount_tolerance_pct": 1.0,
+                "is_default": True,
+            },
+        )
+        return config
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +132,7 @@ class ReconciliationPolicy(BaseModel):
     (lower = higher precedence) and returns the first match.
     """
 
-    policy_code = models.CharField(max_length=50, unique=True, db_index=True)
+    policy_code = models.CharField(max_length=50, db_index=True)
     tenant = models.ForeignKey(
         "accounts.CompanyProfile",
         on_delete=models.CASCADE,
@@ -132,6 +176,12 @@ class ReconciliationPolicy(BaseModel):
         indexes = [
             models.Index(fields=["priority"], name="idx_recon_pol_priority"),
             models.Index(fields=["reconciliation_mode"], name="idx_recon_pol_mode"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["policy_code", "tenant"],
+                name="uq_recon_policy_code_tenant",
+            ),
         ]
 
     def __str__(self) -> str:

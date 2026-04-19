@@ -224,7 +224,7 @@ class PurchaseOrder(BaseModel, NotesMixin):
         db_index=True,
         related_name="+",
     )
-    po_number = models.CharField(max_length=100, unique=True, db_index=True)
+    po_number = models.CharField(max_length=100, db_index=True)
     normalized_po_number = models.CharField(max_length=100, blank=True, db_index=True)
     vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True, related_name="purchase_orders")
     po_date = models.DateField(null=True, blank=True)
@@ -258,6 +258,12 @@ class PurchaseOrder(BaseModel, NotesMixin):
             models.Index(fields=["normalized_po_number"], name="idx_po_norm_number"),
             models.Index(fields=["vendor"], name="idx_po_vendor"),
             models.Index(fields=["status"], name="idx_po_status"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["po_number", "tenant"],
+                name="uq_po_number_tenant",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -332,7 +338,7 @@ class GoodsReceiptNote(BaseModel, NotesMixin):
         db_index=True,
         related_name="+",
     )
-    grn_number = models.CharField(max_length=100, unique=True, db_index=True)
+    grn_number = models.CharField(max_length=100, db_index=True)
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="grns")
     vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True, related_name="grns")
     receipt_date = models.DateField(null=True, blank=True)
@@ -349,6 +355,12 @@ class GoodsReceiptNote(BaseModel, NotesMixin):
             models.Index(fields=["grn_number"], name="idx_grn_number"),
             models.Index(fields=["purchase_order"], name="idx_grn_po"),
             models.Index(fields=["status"], name="idx_grn_status"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["grn_number", "tenant"],
+                name="uq_grn_number_tenant",
+            ),
         ]
 
     def __str__(self) -> str:

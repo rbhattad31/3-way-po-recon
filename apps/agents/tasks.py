@@ -430,6 +430,8 @@ def run_supervisor_pipeline_task(
         actor_primary_role=(
             getattr(request_user, "role", "") if request_user else "SYSTEM_AGENT"
         ),
+        permission_source="task:run_supervisor_pipeline_task",
+        access_granted=True,
         trace_id=self.request.id or "",
         tenant=tenant,
         langfuse_trace=_lf_trace,

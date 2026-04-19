@@ -835,13 +835,14 @@ body:has(.copilot-app) #sidebar.show {
 /* =================================================================
    STREAMING SUPERVISOR STEPS (case mode)
    ================================================================= */
-.sv-step {
+/* ── Supervisor task list ── */
+.sv-task {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 0.82rem;
   color: var(--ap-text-secondary, #475569);
-  padding: 3px 0;
+  padding: 4px 0;
   position: relative;
   flex-wrap: wrap;
   animation: svStepFadeIn 0.25s ease;
@@ -850,75 +851,63 @@ body:has(.copilot-app) #sidebar.show {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.sv-step .step-icon {
+.sv-task-icon {
   flex-shrink: 0;
   width: 18px;
   text-align: center;
+  font-size: 0.85rem;
 }
-.sv-step .step-icon .spinner-border {
+.sv-task-icon .spinner-border {
   width: 14px;
   height: 14px;
   border-width: 2px;
 }
-.sv-round {
-  font-weight: 600;
-  color: var(--ap-text, #0f172a);
-  padding-top: 6px;
-  font-size: 0.78rem;
-}
-.sv-round .step-icon { color: var(--ap-primary, #2563eb); font-size: 0.78rem; }
-.sv-round.active .step-icon { color: var(--ap-primary, #2563eb); }
-.sv-reasoning {
-  padding-left: 10px;
-  align-items: flex-start;
-}
-.sv-reasoning .step-icon { color: var(--ap-primary, #2563eb); font-size: 0.78rem; margin-top: 2px; }
-.sv-reasoning-body { flex: 1; min-width: 0; }
-.sv-reasoning-plan { font-size: 0.78rem; color: var(--ap-primary, #2563eb); margin-bottom: 3px; }
-.sv-reasoning-text {
-  font-size: 0.78rem;
-  color: var(--ap-text-secondary, #475569);
-  background: rgba(37, 99, 235, 0.04);
-  border-left: 2px solid var(--ap-primary, #2563eb);
-  border-radius: 0 6px 6px 0;
-  padding: 6px 10px;
-  line-height: 1.55;
-  word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-}
-.sv-tool { padding-left: 10px; }
-.sv-tool.done .step-icon { color: #16a34a; }
-.sv-tool.failed .step-icon { color: #dc2626; }
-.sv-tool.running .step-icon { color: var(--ap-primary, #2563eb); }
-.sv-tool-label {
+.sv-task-label {
   flex: 1; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+.sv-task-dur { color: var(--ap-text-muted, #94a3b8); font-size: 0.75rem; }
+
+/* Status colors */
+.sv-task.done .sv-task-icon { color: #16a34a; }
+.sv-task.done .sv-task-label { color: var(--ap-text-secondary, #475569); }
+.sv-task.failed .sv-task-icon { color: #dc2626; }
+.sv-task.failed .sv-task-label { color: #dc2626; }
+.sv-task.running .sv-task-icon { color: var(--ap-primary, #2563eb); }
+.sv-task.running .sv-task-label { color: var(--ap-text, #0f172a); font-weight: 500; }
+.sv-task.pending .sv-task-icon { color: var(--ap-text-muted, #94a3b8); font-size: 0.7rem; }
+.sv-task.pending .sv-task-label { color: var(--ap-text-muted, #94a3b8); }
+
+/* Pipeline stage emphasis */
+.sv-task-pipeline { font-weight: 500; }
+.sv-task-pipeline.running .sv-task-label { color: var(--ap-primary, #2563eb); }
+.sv-task-pipeline.done .sv-task-label { color: #16a34a; }
+
+/* Complete & error */
+.sv-task-complete {
+  font-weight: 600; color: #16a34a;
+  padding-top: 6px; border-top: 1px solid var(--ap-bg-muted, #e2e8f0); margin-top: 4px;
+}
+.sv-task-complete .sv-task-icon { color: #16a34a; }
+.sv-task-error { font-weight: 500; }
+
+/* Detail toggle */
 .sv-detail-toggle {
   flex-shrink: 0; background: none; border: none; padding: 0 4px;
   color: var(--ap-text-muted, #94a3b8); cursor: pointer;
   font-size: 0.72rem; transition: transform 0.2s, color 0.15s; line-height: 1;
 }
 .sv-detail-toggle:hover { color: var(--ap-primary, #2563eb); }
-.sv-step.expanded .sv-detail-toggle { transform: rotate(180deg); }
+.sv-task.expanded .sv-detail-toggle { transform: rotate(180deg); }
 .sv-detail {
   display: none; width: 100%; padding: 4px 0 4px 26px;
   font-size: 0.75rem; color: var(--ap-text-muted, #94a3b8); line-height: 1.5;
 }
-.sv-step.expanded .sv-detail { display: block; }
+.sv-task.expanded .sv-detail { display: block; }
 .sv-detail-text {
   display: block; background: rgba(0,0,0,0.02); border-radius: 6px;
   padding: 4px 8px; word-break: break-word; max-height: 120px; overflow-y: auto;
 }
-.sv-complete {
-  font-weight: 600; color: #16a34a;
-  padding-top: 6px; border-top: 1px solid var(--ap-bg-muted, #e2e8f0); margin-top: 4px;
-}
-.sv-complete .step-icon { color: #16a34a; }
-.sv-error { color: #dc2626; font-weight: 500; }
-.sv-error .step-icon { color: #dc2626; }
 
 /* =================================================================
    SUPERVISOR SUMMARY CARD
