@@ -123,6 +123,7 @@ class LoginRequiredMiddleware:
         "/accounts/invite/",
         "/api/",
         "/health/",
+        "/email/webhook/",
     ]
 
     def __init__(self, get_response):
