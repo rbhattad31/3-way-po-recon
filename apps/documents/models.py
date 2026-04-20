@@ -44,6 +44,13 @@ class DocumentUpload(BaseModel):
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="uploads"
     )
+    source_message = models.ForeignKey(
+        "email_integration.EmailMessage",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_document_uploads",
+        help_text="Email message that triggered this document upload when source is EMAIL.",
+    )
 
     class Meta:
         db_table = "documents_upload"

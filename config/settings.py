@@ -261,6 +261,11 @@ ERP_POSTING_USE_MIRROR_AS_PRIMARY = (
 )
 
 # ---------------------------------------------------------------------------
+# Email Integration
+# ---------------------------------------------------------------------------
+EMAIL_WEBHOOK_SHARED_SECRET = os.getenv("EMAIL_WEBHOOK_SHARED_SECRET", "")
+
+# ---------------------------------------------------------------------------
 # LLM / AI service configuration
 # ---------------------------------------------------------------------------
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "azure_openai")

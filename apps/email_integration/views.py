@@ -1,8 +1,14 @@
 """Template and webhook-facing views for email integration."""
 from __future__ import annotations
 
+import json
+from hmac import compare_digest
+
+from django.conf import settings
 from django.http import JsonResponse
+from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 
 from apps.core.permissions import PermissionRequiredMixin
 from apps.email_integration.models import MailboxConfig
@@ -30,10 +36,39 @@ class EmailIntegrationStatusView(PermissionRequiredMixin, View):
 class EmailWebhookIngestView(View):
     """Webhook endpoint for provider push events (webhook-first ingestion)."""
 
-    def post(self, request, mailbox_id: int, *args, **kwargs):
-        import json
+    @staticmethod
+    def _resolve_expected_token(mailbox) -> str:
+        mailbox_token = ""
+        if isinstance(mailbox.config_json, dict):
+            mailbox_token = str(mailbox.config_json.get("webhook_token") or "").strip()
+        if mailbox_token:
+            return mailbox_token
+        return str(getattr(settings, "EMAIL_WEBHOOK_SHARED_SECRET", "") or "").strip()
 
-        payload = json.loads((request.body or b"{}").decode("utf-8"))
+    @method_decorator(csrf_exempt)
+    def post(self, request, mailbox_id: int, *args, **kwargs):
+        mailbox = MailboxConfig.objects.filter(
+            pk=mailbox_id,
+            is_active=True,
+            is_inbound_enabled=True,
+            webhook_enabled=True,
+        ).first()
+        if mailbox is None:
+            return JsonResponse({"accepted": False, "error": "mailbox_not_found"}, status=404)
+
+        expected_token = self._resolve_expected_token(mailbox)
+        if not expected_token:
+            return JsonResponse({"accepted": False, "error": "webhook_token_not_configured"}, status=403)
+
+        received_token = str(request.headers.get("X-Webhook-Token") or "").strip()
+        if not compare_digest(received_token, expected_token):
+            return JsonResponse({"accepted": False, "error": "invalid_webhook_token"}, status=403)
+
+        try:
+            payload = json.loads((request.body or b"{}").decode("utf-8"))
+        except (ValueError, TypeError):
+            return JsonResponse({"accepted": False, "error": "invalid_json_payload"}, status=400)
+
         ingest_webhook_payload_task.delay(mailbox_id=mailbox_id, payload=payload)
         return JsonResponse({"accepted": True})
 

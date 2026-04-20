@@ -97,6 +97,22 @@ class APCase(BaseModel, SoftDeleteMixin):
         related_name="ap_cases",
     )
 
+    # --- Email integration linkage (optional) ---
+    primary_email_thread = models.ForeignKey(
+        "email_integration.EmailThread",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="primary_ap_cases",
+        help_text="Primary inbound email thread that triggered or enriched this case.",
+    )
+    last_email_message = models.ForeignKey(
+        "email_integration.EmailMessage",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="last_email_ap_cases",
+        help_text="Most recent email message linked to this case.",
+    )
+
     # --- Classification ---
     source_channel = models.CharField(
         max_length=30,
