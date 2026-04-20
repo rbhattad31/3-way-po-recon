@@ -310,7 +310,7 @@ EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHO
 # Extraction approval — human-in-the-loop gate
 # Set to 1.1 (above max confidence) to require human approval for ALL extractions.
 # Lower to e.g. 0.95 once confidence in the system grows, to auto-approve high-confidence results.
-EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "0.85"))
+EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "0.80"))
 EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "true").lower() == "true"
 
 LOKI_ENABLED = os.getenv("LOKI_ENABLED", "false").lower() == "true"

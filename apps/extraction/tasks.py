@@ -15,6 +15,7 @@ import logging
 import uuid
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -507,14 +508,34 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
 
         # 7b. Recovery lane invocation (deferred from step 4c -- now invoice is persisted)
         try:
-            if recovery_decision and recovery_decision.should_invoke:
+            _force_understanding_routing = getattr(
+                settings,
+                "EXTRACTION_FORCE_UNDERSTANDING_ROUTING",
+                True,
+            )
+            _should_invoke_recovery = bool(recovery_decision and recovery_decision.should_invoke)
+            _should_force_routing = bool(_force_understanding_routing and not _should_invoke_recovery)
+
+            if _should_invoke_recovery or _should_force_routing:
                 logger.info(
-                    "Recovery lane triggered for upload %s -- codes: %s",
-                    upload_id, recovery_decision.trigger_codes,
+                    "Recovery lane/understanding routing triggered for upload %s -- codes: %s",
+                    upload_id,
+                    recovery_decision.trigger_codes if recovery_decision else ["FORCED_ROUTING_DECISION"],
                 )
                 from apps.extraction.services.recovery_lane_service import RecoveryLaneService
+                from apps.extraction.services.recovery_lane_service import RecoveryDecision
+
+                _invoke_decision = recovery_decision
+                if _invoke_decision is None and _should_force_routing:
+                    _invoke_decision = RecoveryDecision(
+                        should_invoke=True,
+                        trigger_codes=["FORCED_ROUTING_DECISION"],
+                        recovery_actions=["determine_workflow_route"],
+                        reason="Forced understanding-agent routing decision",
+                    )
+
                 recovery_result = RecoveryLaneService.invoke(
-                    recovery_decision,
+                    _invoke_decision,
                     invoice_id=invoice.pk,
                     validation_result=validation_result,
                     field_conf_result=field_conf_result,

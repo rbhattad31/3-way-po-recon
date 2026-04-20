@@ -111,7 +111,18 @@ class PromptRegistry:
         """Like ``get()`` but returns *default* instead of raising on missing slug."""
         try:
             return cls.get(slug, **variables)
-        except KeyError:
+        except Exception as exc:
+            logger.warning(
+                "PromptRegistry.get_or_default fallback for slug '%s' due to %s",
+                slug,
+                exc,
+            )
+            if variables and default:
+                try:
+                    safe = defaultdict(lambda: "", variables)
+                    return default.format_map(safe)
+                except Exception:
+                    return default
             return default
 
     @classmethod
@@ -660,7 +671,9 @@ register_default(
     "- tax_percentage = VAT rate shown on the invoice (e.g. 5, 15, 20).\n"
     "- tax_amount = total VAT charged.\n"
     "- subtotal = net amount before VAT.\n"
-    "- total_amount = subtotal + tax_amount.\n",
+    "- total_amount = subtotal + tax_amount.\n"
+    "- Do NOT coerce VAT rates into Indian GST slabs. Keep the exact VAT rate from the invoice.\n"
+    "- Populate tax_breakdown.vat for VAT invoices. Keep tax_breakdown.cgst, tax_breakdown.sgst, and tax_breakdown.igst as 0 unless the document explicitly shows Indian GST components.\n",
 )
 
 # ---------------------------------------------------------------------------

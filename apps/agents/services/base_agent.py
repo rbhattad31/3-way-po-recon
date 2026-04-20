@@ -834,7 +834,16 @@ class BaseAgent(ABC):
         agent_run.save()
 
         # Persist decisions
-        for d in output.decisions:
+        decisions_to_persist = list(output.decisions or [])
+        if not decisions_to_persist and (output.recommendation_type or output.reasoning):
+            decisions_to_persist.append({
+                "decision": (output.reasoning or output.recommendation_type or "")[:500],
+                "rationale": output.reasoning or "",
+                "confidence": output.confidence,
+                "evidence": output.evidence or {},
+            })
+
+        for d in decisions_to_persist:
             evidence = d.get("evidence") or {}
             decision_conf = d.get("confidence")
 

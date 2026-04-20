@@ -59,6 +59,8 @@ _PRECIOUS_STONE_PATTERN = _re.compile(
     _re.IGNORECASE,
 )
 
+_GSTIN_PATTERN = _re.compile(r"^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$", _re.IGNORECASE)
+
 
 def _is_precious_stone_invoice(inv: NormalizedInvoice) -> bool:
     """Return True if any line item description or vendor name contains
@@ -70,6 +72,40 @@ def _is_precious_stone_invoice(inv: NormalizedInvoice) -> bool:
         texts.append(getattr(li, "raw_description", "") or "")
     combined = " ".join(t for t in texts if t)
     return bool(_PRECIOUS_STONE_PATTERN.search(combined))
+
+
+def _looks_like_indian_gst_invoice(inv: NormalizedInvoice) -> bool:
+    """Return True only when invoice context indicates Indian GST.
+
+    We do not infer GST just because tax_breakdown contains cgst/sgst/igst keys,
+    since normalization always materializes those keys with zero values.
+    """
+    tax_breakdown = inv.tax_breakdown or {}
+
+    def _to_float(value) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    has_nonzero_gst_component = any(
+        _to_float(tax_breakdown.get(key)) > 0.0 for key in ("cgst", "sgst", "igst")
+    )
+    has_nonzero_vat_component = _to_float(tax_breakdown.get("vat")) > 0.0
+
+    currency = (inv.currency or "").upper()
+    vendor_tax_id = (inv.vendor_tax_id or "").strip().upper()
+    has_gstin = bool(_GSTIN_PATTERN.match(vendor_tax_id))
+
+    if has_nonzero_gst_component:
+        return True
+    if has_nonzero_vat_component:
+        return False
+    if has_gstin:
+        return True
+    if currency == "INR":
+        return True
+    return False
 
 
 class ValidationService:
@@ -117,8 +153,7 @@ class ValidationService:
         # Special case: 0.25% is valid for precious/semi-precious stones and
         # diamonds (GST Schedule I, Chapter 71 HSN headings 7102-7104).
         _GST_VALID_RATES = {0, 3, 5, 12, 18, 28}
-        tax_breakdown = inv.tax_breakdown or {}
-        _is_gst_invoice = any(k in tax_breakdown for k in ("cgst", "sgst", "igst"))
+        _is_gst_invoice = _looks_like_indian_gst_invoice(inv)
         if _is_gst_invoice and inv.tax_percentage is not None:
             _rate = float(inv.tax_percentage)
             _effective_valid = set(_GST_VALID_RATES)

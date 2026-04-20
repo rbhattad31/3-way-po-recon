@@ -298,7 +298,7 @@ class ExtractionResultPersistenceService:
             from apps.extraction_core.models import ExtractionRun
             extraction_run = (
                 ExtractionRun.objects
-                .filter(document__document_upload=upload)
+                .filter(document_upload=upload)
                 .order_by("-created_at")
                 .first()
             )

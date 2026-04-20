@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -197,6 +199,7 @@ class RecoveryLaneService:
         tenant: Any = None,
     ) -> RecoveryResult:
         from apps.agents.services.agent_classes import InvoiceUnderstandingAgent
+        from apps.agents.services.supervisor_agent import SupervisorAgent
         from apps.agents.services.base_agent import AgentContext
 
         # Build ctx.extra with enough context for the agent prompt to focus on
@@ -205,6 +208,12 @@ class RecoveryLaneService:
             "recovery_trigger_codes": decision.trigger_codes,
             "recovery_actions": decision.recovery_actions,
             "invocation_reason": "RECOVERY_LANE",
+            "user_query": (
+                "Extraction is already complete. Validate extracted invoice data, "
+                "verify vendor and PO context, then provide a routing recommendation."
+            ),
+            "extraction_done": True,
+            "reconciliation_done": False,
         }
 
         # Surface validation warnings if available
@@ -257,8 +266,40 @@ class RecoveryLaneService:
             tenant=tenant,
         )
 
-        agent = InvoiceUnderstandingAgent()
-        agent_run = agent.run(ctx)
+        _primary_agent = str(
+            getattr(settings, "EXTRACTION_ROUTING_PRIMARY_AGENT", "SUPERVISOR")
+        ).strip().upper()
+        _fallback_agent = "INVOICE_UNDERSTANDING"
+
+        if _primary_agent == "SUPERVISOR":
+            try:
+                agent = SupervisorAgent(query_mode="CASE_ANALYSIS")
+                agent_run = agent.run(ctx)
+                _output = getattr(agent_run, "output_payload", None) or {}
+                _has_recommendation = bool(
+                    isinstance(_output, dict) and _output.get("recommendation_type")
+                )
+                _is_completed = str(getattr(agent_run, "status", "")).upper() == "COMPLETED"
+                if not _is_completed or not _has_recommendation:
+                    logger.warning(
+                        "RecoveryLaneService: supervisor run %s not usable (status=%s, has_recommendation=%s), "
+                        "fallback to understanding agent",
+                        getattr(agent_run, "pk", "?"),
+                        getattr(agent_run, "status", ""),
+                        _has_recommendation,
+                    )
+                    agent = InvoiceUnderstandingAgent()
+                    agent_run = agent.run(ctx)
+            except Exception as sup_exc:
+                logger.warning(
+                    "RecoveryLaneService: supervisor invocation failed, fallback to understanding agent: %s",
+                    sup_exc,
+                )
+                agent = InvoiceUnderstandingAgent()
+                agent_run = agent.run(ctx)
+        else:
+            agent = InvoiceUnderstandingAgent()
+            agent_run = agent.run(ctx)
 
         # Stamp the run as a recovery invocation via input_payload
         try:
@@ -266,8 +307,10 @@ class RecoveryLaneService:
             agent_run.input_payload["_recovery_meta"] = {
                 "trigger_codes": decision.trigger_codes,
                 "recovery_actions": decision.recovery_actions,
+                "primary_agent": _primary_agent,
+                "fallback_agent": _fallback_agent,
             }
-            agent_run.invocation_reason = "RECOVERY_LANE"
+            agent_run.invocation_reason = f"RECOVERY_LANE:{_primary_agent}"
             agent_run.save(update_fields=["input_payload", "invocation_reason"])
         except Exception as stamp_exc:
             logger.warning(

@@ -72,7 +72,7 @@ def get_execution_context(extraction_result) -> ExecutionContext:
             run = (
                 ExtractionRun.objects
                 .select_related("jurisdiction", "schema")
-                .filter(document__document_upload_id=doc_upload_id)
+                .filter(document_upload_id=doc_upload_id)
                 .order_by("-created_at")
                 .first()
             )
