@@ -138,6 +138,56 @@ Purpose:  Process approved LearningAction records from core_eval framework
           → apply learned improvements to configuration or prompts
 ```
 
+### `procurement.tasks.run_analysis_task`
+
+```
+Trigger:  POST /api/v1/procurement/requests/{id}/runs/
+Retries:  max_retries=2, default_retry_delay=30s
+
+Signature: (tenant_id, run_id)
+
+Flow:
+  1. Tenant-scoped AnalysisRun lookup via request__tenant
+  2. Request status moved to PENDING_RFQ while analysis executes
+  3. Dispatch by run_type:
+       - RECOMMENDATION → RecommendationService.run_recommendation(...)
+       - BENCHMARK      → apps.benchmarking.services.procurement_cost_service.ProcurementCostService.run_cost_analysis(...)
+       - VALIDATION     → ValidationOrchestratorService.run_validation(...)
+  4. Langfuse root trace: procurement_analysis_task
+  5. Eval sync via ProcurementEvalAdapter
+```
+
+Important runtime note: BENCHMARK currently resolves to a compatibility bridge service in the `benchmarking` app rather than a full corridor-analysis engine.
+
+### `procurement.tasks.run_validation_task`
+
+```
+Trigger:  POST /api/v1/procurement/requests/{id}/validate/
+Retries:  max_retries=2, default_retry_delay=30s
+
+Flow:
+  1. Tenant-scoped AnalysisRun lookup
+  2. ValidationOrchestratorService.run_validation(..., agent_enabled=...)
+  3. Request status updated from ValidationOverallStatus:
+       PASS / PASS_WITH_WARNINGS / REVIEW_REQUIRED -> PENDING_RFQ
+       FAIL -> FAILED
+  4. Langfuse root trace: procurement_validation_task
+```
+
+### Procurement Prefill and Market-Intelligence Tasks
+
+```
+run_request_prefill_task(tenant_id, request_id)
+  -> RequestDocumentPrefillService.run_prefill()
+
+run_quotation_prefill_task(tenant_id, quotation_id)
+  -> QuotationDocumentPrefillService.run_prefill()
+
+generate_market_intelligence_task(tenant_id, request_id)
+  -> MarketIntelligenceService.generate_auto()
+  -> Langfuse root trace: procurement_market_intelligence_task
+```
+
 ---
 
 ## 3. Task Chain / Workflow
@@ -153,6 +203,14 @@ run_reconciliation_task (Celery, retries=5)
      ↓ (for each non-MATCHED result)
 run_agent_pipeline_task (Celery, retries=1)
      [end of automatic chain]
+
+[User creates procurement request / quotation]
+  ↓
+run_request_prefill_task OR run_quotation_prefill_task (optional)
+  ↓
+run_analysis_task (recommendation / benchmark) OR run_validation_task
+  ↓
+generate_market_intelligence_task (manual or auto for HVAC requests)
 ```
 
 **Note**: The chain is triggered via `dispatch_task()` helper (in `core/utils.py`) which wraps `.delay()` with tenant propagation.

@@ -67,10 +67,10 @@ Result: procurement is partially aligned and requires full convergence.
 
 ## 3.1 Blocking Fixes
 
-1. **Broken benchmark agent reference**  
-   File: `apps/procurement/services/benchmark_service.py`  
-   Issue: references `apps.procurement.agents.benchmark_agent.BenchmarkAgent`, which does not exist in current package inventory.  
-   Required fix: replace with valid implementation path or add benchmark agent module with tests.
+1. **Benchmark runtime downgraded to compatibility bridge**  
+   Files: `apps/procurement/tasks.py`, `apps/benchmarking/services/procurement_cost_service.py`, `apps/benchmarking/services/procurement_benchmark_service.py`  
+   Issue: current BENCHMARK execution no longer calls a procurement-local benchmark service. It dispatches to a compatibility bridge that creates a `BenchmarkResult` with `total_benchmark_amount = total_quoted_amount`, `variance_pct = 0`, `risk_level = LOW`, and a `summary_json` note indicating compatibility mode.  
+   Required fix: restore or replace the full should-cost benchmark engine with corridor resolution, variance classification, and per-line evidence.
 
 2. **Inconsistent AI-path orchestration coverage**  
    Files:
@@ -110,15 +110,16 @@ Eliminate immediate runtime hazards and establish baseline confidence before str
 ### Workstream A - Runtime Integrity
 
 Files:
-1. `apps/procurement/services/benchmark_service.py`
-2. Any selected benchmark agent implementation module.
+1. `apps/procurement/tasks.py`
+2. `apps/benchmarking/services/procurement_cost_service.py`
+3. Any selected full benchmark implementation module.
 
 Tasks:
-1. Resolve missing import/reference.
+1. Replace compatibility-bridge benchmark execution with the intended full runtime.
 2. Preserve deterministic-first benchmark fallback behavior.
 
 Acceptance criteria:
-1. Benchmark flow has no import/runtime failure.
+1. Benchmark flow executes full corridor comparison instead of zero-variance placeholder output.
 2. Functional behavior remains stable.
 
 ### Workstream B - Baseline Test Coverage

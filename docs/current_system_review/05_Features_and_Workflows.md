@@ -1,7 +1,7 @@
 # 05 — Features and Workflows
 
 **Generated**: 2026-04-09 | **Method**: Code-first inspection of services, tasks, state machine, orchestrators  
-**Confidence**: High for core workflows; Medium for posting/procurement (less code read)
+**Confidence**: High for core workflows and procurement request/recommendation/validation flows; Medium for posting and dedicated benchmarking internals
 
 ---
 
@@ -247,3 +247,101 @@ PO_NOT_FOUND
 | Escalation resolution | FINANCE_MANAGER | No (requires human decision) |
 | Agent recommendation acceptance | System (auto) or REVIEWER | Agent can auto-close if guardrail permits |
 | ERP posting approval (REVIEW_REQUIRED state) | Finance role (inferred) | Unknown — needs validation |
+
+---
+
+## 11. Procurement Intelligence Workflows
+
+### Request Intake and PDF-Led Prefill
+
+`ProcurementRequestViewSet` supports both manual creation and document-led request intake:
+
+```
+POST /api/v1/procurement/requests/
+  └── ProcurementRequestService.create_request()
+
+POST /api/v1/procurement/requests/prefill/
+  ├── DocumentUpload created via extraction upload service
+  ├── draft ProcurementRequest created with tenant + source_document_type
+  └── run_request_prefill_task.delay(...)
+         └── RequestDocumentPrefillService.run_prefill()
+              ├── OCR / text extraction
+              ├── LLM extraction into core_fields + attributes
+              └── prefill payload saved for user confirmation
+```
+
+Request lifecycle in current code is:
+- `PENDING_RFQ` -> `READY_RFQ` -> `COMPLETED` or `FAILED`
+- There is no `DRAFT` / `PROCESSING` request status in the current enum set
+
+### Recommendation Workflow
+
+```
+AnalysisRun(type=RECOMMENDATION)
+  └── run_analysis_task
+       ├── AnalysisRunService.start_run()
+       ├── AttributeService.get_attributes_dict()
+       ├── HVACRulesEngine.evaluate()
+       ├── RecommendationGraphService.run() via run_procurement_component_with_tracking()
+       │    └── direct HVACRecommendationAgent fallback on graph failure
+       ├── MarketIntelligenceService.generate_auto()
+       ├── HVAC compliance check + ComplianceAgent augmentation
+       ├── RecommendationResult + ComplianceResult upserted
+       └── ProcurementRequestService.update_status(... -> PENDING_RFQ or FAILED)
+```
+
+Key behaviors verified from code:
+- Deterministic HVAC rules run before AI augmentation
+- Recommendation path is agent-first but fallbacks to deterministic rule output safely
+- Market intelligence is auto-generated for HVAC requests after recommendation runs
+- Output is sanitized through `BaseAgent._sanitise_text()` before DB persistence
+
+### Validation Workflow
+
+`ValidationOrchestratorService.run_validation()` executes six deterministic dimensions:
+1. Attribute completeness
+2. Document completeness
+3. Scope coverage
+4. Ambiguity detection
+5. Commercial completeness
+6. Compliance readiness
+
+If `agent_enabled=True` and ambiguity count is at least 3, the ambiguity subset is routed through the procurement agent bridge for augmentation before `ValidationResult` and `ValidationResultItem` records are persisted.
+
+### Quotation Prefill Workflow
+
+```
+POST /api/v1/procurement/quotations/prefill/
+  └── run_quotation_prefill_task
+       └── QuotationDocumentPrefillService.run_prefill()
+            ├── OCR / extraction adapter
+            ├── GPT-based structured extraction
+            ├── AttributeMappingService.map_quotation_fields()
+            ├── confidence classification
+            └── prefill_payload_json stored with REVIEW_PENDING status
+
+User confirmation
+  └── PrefillReviewService.confirm_quotation_prefill()
+       ├── SupplierQuotation header fields updated
+       └── QuotationLineItem rows bulk-created
+```
+
+This is a true two-phase persistence flow: extracted line items are not committed until the user confirms the prefill payload.
+
+### Benchmark Workflow (Current Runtime)
+
+Current BENCHMARK execution is intentionally shallow:
+
+```
+AnalysisRun(type=BENCHMARK)
+  └── run_analysis_task
+       ├── first quotation selected from request.quotations
+       └── apps.benchmarking.services.procurement_cost_service.ProcurementCostService.run_cost_analysis()
+            ├── creates BenchmarkResult
+            ├── sets total_benchmark_amount = total_quoted_amount
+            ├── variance_pct = 0
+            ├── risk_level = LOW
+            └── summary_json = {source: "procurement_cost_service", note: "compatibility bridge"}
+```
+
+Implication: benchmark result persistence is wired and the UI/API surface exists, but the live runtime is currently a compatibility placeholder rather than the full should-cost corridor design documented elsewhere.

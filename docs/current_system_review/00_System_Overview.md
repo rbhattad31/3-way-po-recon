@@ -184,7 +184,7 @@ The platform supports **configurable reconciliation mode selection** (2-way vs 3
 | Observability | Strong (Langfuse, AuditEvent, DecisionLog, ProcessingLog, OpenTelemetry) |
 | Operations | Partial (no email, no scheduled ERP sync, no Docker/CI-CD) |
 | Report exports | Stub only |
-| Procurement intelligence | Present but not deeply reviewed |
+| Procurement intelligence | Implemented; request/recommendation/validation/prefill flows verified, benchmark execution currently uses a compatibility bridge |
 
 ---
 
@@ -195,3 +195,4 @@ The platform supports **configurable reconciliation mode selection** (2-way vs 3
 3. **Copilot**: Registered with `api/v1/copilot/` and `copilot/` URLs — full feature scope not inspected
 4. **Celery Beat**: Only one beat task (`process_approved_learning_actions`) — scheduled reconciliation is triggered on-demand only
 5. **ReasoningPlanner**: Available behind `AGENT_REASONING_ENGINE_ENABLED` env flag — not tested in production per README silence
+6. **Procurement benchmarking depth**: Procurement request, validation, prefill, and recommendation flows are implemented and verified, but the active BENCHMARK execution path currently routes through `apps.benchmarking.services.procurement_cost_service` as a compatibility bridge rather than a full should-cost corridor engine

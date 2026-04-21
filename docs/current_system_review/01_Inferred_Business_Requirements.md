@@ -148,5 +148,5 @@
 2. **Saudi Arabia seed data**: Seed data references "Saudi McD" — is this a demo tenant or indicative of actual deployment?
 3. **Non-PO invoice approval authority**: Who approves non-PO invoices? Finance Manager? Policy unclear from code alone.
 4. **Credit system**: Per-user credit accounts for extraction — what is the business model? SaaS billing or internal cost allocation?
-5. **Procurement intelligence**: Module exists (benchmarking, compliance, quotations) but not deeply inspected — scope to validate.
+5. **Procurement intelligence**: Standalone procurement workflow exists for request intake, PDF-led prefill, quotation management, validation, HVAC recommendation, market intelligence, and benchmark result persistence. Current BENCHMARK runtime is a compatibility bridge that writes `BenchmarkResult` with zero variance rather than a full market-corridor comparison.
 6. **ERP posting approval**: Posting has a REVIEW_REQUIRED state — who approves, and what are the approval rules?

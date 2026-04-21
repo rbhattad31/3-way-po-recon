@@ -28,11 +28,12 @@
 | 17 | `erp_integration` | Integration | 6 ERP connectors, ERPResolutionService, CacheService, secrets resolver, audit service |
 | 18 | `posting` | Domain | Invoice posting workflow, posting views, posting tasks |
 | 19 | `posting_core` | Platform | VendorAliasMapping, reference import tables (vendor/item/tax/cost-center) |
-| 20 | `procurement` | Domain | Should-cost benchmarking, compliance validation, quotation management |
-| 21 | `core_eval` | Platform/AI | Generic evaluation framework: EvalRun, EvalMetric, LearningSignal, LearningAction, learning engine |
-| 22 | `reviews` | Stub | INSTALLED_APPS note: "migrations-only stub; models moved to apps.cases" |
+| 20 | `benchmarking` | Domain | Dedicated benchmark request/quotation domain plus procurement compatibility benchmark services |
+| 21 | `procurement` | Domain | Procurement request intake, quotation prefill, validation, HVAC recommendation, market intelligence, result persistence |
+| 22 | `core_eval` | Platform/AI | Generic evaluation framework: EvalRun, EvalMetric, LearningSignal, LearningAction, learning engine |
+| 23 | `reviews` | Stub | INSTALLED_APPS note: "migrations-only stub; models moved to apps.cases" |
 
-**Total registered in INSTALLED_APPS**: 21 (plus `reviews` stub = 22)  
+**Total registered in INSTALLED_APPS**: 22 (plus `reviews` stub = 23)  
 **Note**: `extraction_documents` referenced in migration history (migration 0006 dropped FK constraint before dropping table) but not in INSTALLED_APPS — indicates a superseded app.
 
 ---
@@ -40,7 +41,7 @@
 ## 2. App Classifications
 
 ### Domain Apps (own business entities and rules)
-- `vendors`, `documents`, `extraction`, `reconciliation`, `cases`, `procurement`, `posting`
+- `vendors`, `documents`, `extraction`, `reconciliation`, `cases`, `benchmarking`, `procurement`, `posting`
 
 ### Platform/Shared Apps (infrastructure, no unique business domain)
 - `core`, `accounts`, `extraction_core`, `extraction_configs`, `posting_core`, `core_eval`
@@ -100,6 +101,9 @@ erp_integration (ERPResolutionService, connector factory)
 
 posting_core (VendorAliasMapping)
   └── consumed by: tools (vendor_search uses VendorAliasMapping)
+
+benchmarking (BenchmarkRequest, ProcurementCostService)
+  └── consumed by: procurement.tasks (BENCHMARK runs dispatch to compatibility service)
 
 core_eval (EvalRun, EvalMetric, LearningAction)
   └── consumed by: extraction, reconciliation, agents (eval_adapter modules)

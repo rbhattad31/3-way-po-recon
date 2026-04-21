@@ -69,7 +69,8 @@
 | `erp_integration` | Integration | Active | 6 connector types, resolution service, cache service |
 | `posting` | Domain | Active | Invoice posting workflow (PROPOSED → SUBMITTED) |
 | `posting_core` | Platform | Active | VendorAliasMapping, reference import tables |
-| `procurement` | Domain | Active | Should-cost benchmarking, compliance, quotation management |
+| `benchmarking` | Domain | Active | Dedicated benchmark request/quotation domain plus procurement compatibility benchmark services |
+| `procurement` | Domain | Active | Procurement request intake, quotation prefill, validation, HVAC recommendation, market intelligence, result persistence |
 | `core_eval` | Platform/AI | Active | Generic eval framework: EvalRun, EvalMetric, LearningSignal, LearningAction |
 | `reviews` | Stub | Legacy | Comment in settings: "migrations-only stub; models moved to apps.cases" |
 
@@ -242,7 +243,7 @@ Seed data references "Saudi McD" (McDonald's Saudi Arabia), suggesting hospitali
 | `docs/LANGFUSE_INTEGRATION.md` | Integration details; should verify Langfuse 4.x SDK quirks |
 | `docs/CELERY.md` | Task docs; beat schedule is minimal (only learning actions) |
 | `docs/POSTING_AGENT.md` | Posting workflow; needs code verification |
-| `docs/PROCUREMENT.md` | Procurement intelligence; needs verification |
+| `docs/PROCUREMENT.md` | Procurement intelligence; mostly aligned for request/recommendation/validation/prefill flows, but benchmark runtime differs from full should-cost design |
 | `docs/ERP_INTEGRATION.md` | ERP connectors; aligns with code structure |
 | `docs/DATABASE.md` | DB model reference; likely has some drift |
 | `docs/MULTI_TENANT.md` | Tenancy model; aligns with CompanyProfile FK pattern |
@@ -294,6 +295,6 @@ All files in `docs/current_system_review/`:
 | Celery tasks | High | All tasks.py files read |
 | ERP connectors | Medium | Structure confirmed; connector internals not read |
 | Posting workflow states | Medium | Inferred from README + model glimpse |
-| Procurement module | Low | Not inspected in detail |
+| Procurement module | Medium | Request, prefill, recommendation, validation, and task flows verified; benchmark path currently confirmed as a compatibility bridge |
 | Core_eval learning engine | Medium | Model and services confirmed; business rules not read |
 | Test coverage claims (124+) | Unverified | Stated in README; not counted from code |

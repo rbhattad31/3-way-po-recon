@@ -117,8 +117,8 @@
 **Question**: Is there a use case where multiple invoices reference the same PO (progress billing, partial delivery)? How are these reconciled?
 
 ### E4. `procurement` Module Scope
-**Code**: App registered with URLs; services for benchmarking, compliance, quotations  
-**Question**: Is the procurement module a standalone feature or integrated with the reconciliation workflow? Are procurement outcomes fed back into PO validation?
+**Code**: Standalone procurement stack with `ProcurementRequest`, quotation prefill, validation, recommendation, market-intelligence flows, plus BENCHMARK dispatch via `apps.benchmarking.services.procurement_cost_service`  
+**Current finding**: Procurement is currently a standalone feature area, not part of the reconciliation or PO-validation feedback loop. It has its own request/run/result hierarchy and its own APIs/tasks. The active BENCHMARK runtime is a compatibility bridge rather than a full should-cost engine.
 
 ### E5. `core_eval` Learning Actions
 **Code**: `LearningAction` model, `process_approved_learning_actions` beat task  

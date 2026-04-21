@@ -21,7 +21,7 @@
 | `docs/EVAL_LEARNING.md` | core_eval framework | Active; likely current |
 | `docs/RECON_AGENT.md` | Reconciliation agent | Needs verification against agent feedback loop |
 | `docs/POSTING_AGENT.md` | Posting workflow | Needs verification |
-| `docs/PROCUREMENT.md` | Procurement intelligence | Needs verification (module not deeply inspected) |
+| `docs/PROCUREMENT.md` | Procurement intelligence | Largely aligned for request intake, validation, recommendation, prefill, and market intelligence; benchmark runtime currently drifts from the full should-cost design |
 | `docs/OBSERVABILITY_UPGRADE_SUMMARY.md` | Observability work | Likely current (recent work) |
 | `deploy/DEPLOYMENT.md` | Production deployment guide | Likely valid |
 | `deploy/MONITORING_OPS.md` | Monitoring and operations | Valid, needs Celery Beat section |
@@ -101,7 +101,7 @@
 | `ERP_ENABLE_LIVE_REFRESH_ON_MISS/STALE` flags | `config/settings.py` | ERP live refresh policy not in ERP_INTEGRATION.md |
 | `line_match_llm_fallback.py` | `reconciliation/services/` | Unknown if active; not documented |
 | `copilot` app scope | `apps/copilot/` | Not documented beyond URL registration |
-| `procurement` module detail | `apps/procurement/` | Only high-level mention in README |
+| `procurement` and `benchmarking` module detail | `apps/procurement/`, `apps/benchmarking/` | Split implementation exists; BENCHMARK runs currently route through a compatibility bridge in `apps.benchmarking` |
 | `core_eval` beat task | `config/celery.py` | Beat schedule not in CELERY.md |
 | `safe_retry()` utility | `core/utils.py` | Used in all tasks; not documented |
 | `dispatch_task()` utility | `core/utils.py` | Task dispatch with tenant propagation; not documented |
@@ -129,7 +129,7 @@
 ### Low Priority (nice-to-have)
 
 9. **`docs/COPILOT.md`** — Document the copilot feature scope
-10. **`docs/PROCUREMENT.md`** — Verify and update procurement module details
+10. **`docs/PROCUREMENT.md`** — Align benchmark sections with the current compatibility-bridge runtime and the split between `apps/procurement` and `apps/benchmarking`
 11. **Update `docs/LANGFUSE_INTEGRATION.md`** — Document Langfuse 4.x SDK specifics and score key catalog
 12. **Operations runbook** — Document how to run Celery Beat, handle task failures, ERP cache invalidation
 

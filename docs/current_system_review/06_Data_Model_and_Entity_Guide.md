@@ -1,7 +1,7 @@
 # 06 — Data Model and Entity Guide
 
 **Generated**: 2026-04-09 | **Method**: Code-first inspection of all major models.py files  
-**Confidence**: High for inspected models; Medium for procurement/copilot (not inspected)
+**Confidence**: High for inspected models including procurement core entities; Medium for copilot and benchmarking-only internals not fully traversed
 
 ---
 
@@ -194,6 +194,101 @@ Extends `AbstractBaseUser`:
 
 ---
 
+### `procurement.ProcurementRequest` — Procurement Workspace Root
+| Field | Type | Notes |
+|-------|------|-------|
+| tenant | FK to CompanyProfile | Explicit multi-tenant scope |
+| request_id | UUIDField | Public identifier |
+| title / description | CharField / TextField | Request summary |
+| domain_code / schema_code | CharField | Domain-specific routing and form schema |
+| request_type | CharField | RECOMMENDATION / BENCHMARK / BOTH |
+| status | CharField | `PENDING_RFQ` / `READY_RFQ` / `COMPLETED` / `FAILED` |
+| geography_country / geography_city | CharField | Regional context for recommendation and market intelligence |
+| currency | CharField(3) | |
+| assigned_to | FK to User | Optional procurement owner |
+| trace_id | CharField | Trace correlation |
+| uploaded_document | FK to DocumentUpload | Source RFQ / requirement document for prefill |
+| source_document_type | CharField | RFQ / BOQ / PROPOSAL / etc. |
+| prefill_status / prefill_confidence | CharField / FloatField | PDF-led intake state |
+| prefill_payload_json | JSONField | Extracted request payload awaiting confirmation |
+| duplicate_of / is_duplicate | FK / BooleanField | Duplicate request detection |
+
+Related entities:
+- `ProcurementRequestAttribute` — dynamic typed attributes with normalized value, extraction source, confidence
+- `SupplierQuotation` — vendor quotation linked to the request
+- `AnalysisRun` — recommendation / benchmark / validation execution history
+
+### `procurement.SupplierQuotation` — Procurement Quotation Header
+| Field | Type | Notes |
+|-------|------|-------|
+| tenant | FK to CompanyProfile | |
+| request | FK to ProcurementRequest | Parent request |
+| vendor_name / quotation_number | CharField | Supplier identifier |
+| quotation_date | DateField | |
+| total_amount / currency | Decimal / CharField | |
+| uploaded_document | FK to DocumentUpload | Uploaded quotation source |
+| extraction_status / extraction_confidence | CharField / FloatField | OCR/LLM extraction state |
+| prefill_status | CharField | NOT_STARTED / IN_PROGRESS / COMPLETED / FAILED / REVIEW_PENDING |
+| prefill_payload_json | JSONField | Extracted payload before user confirmation |
+
+### `procurement.QuotationLineItem` — Quotation Detail Row
+| Field | Type | Notes |
+|-------|------|-------|
+| quotation | FK to SupplierQuotation | Parent quotation |
+| line_number | PositiveIntegerField | Unique per quotation |
+| description / normalized_description | TextField | Raw and normalized text |
+| category_code | CharField | Category for validation / benchmark grouping |
+| quantity / unit / unit_rate / total_amount | Decimal / CharField | Commercial fields |
+| brand / model | CharField | Product detail |
+| extraction_confidence / extraction_source | Float / CharField | Prefill provenance |
+
+### `procurement.AnalysisRun` — Procurement Execution Record
+| Field | Type | Notes |
+|-------|------|-------|
+| run_id | UUIDField | Public identifier |
+| request | FK to ProcurementRequest | Parent request |
+| run_type | CharField | RECOMMENDATION / BENCHMARK / VALIDATION |
+| status | CharField | QUEUED / RUNNING / COMPLETED / FAILED |
+| started_at / completed_at | DateTimeField | Lifecycle timing |
+| triggered_by | FK to User | Human actor if present |
+| input_snapshot_json | JSONField | Frozen run input |
+| output_summary | TextField | Human-readable result summary |
+| confidence_score | FloatField | |
+| trace_id / error_message | CharField / TextField | Trace and failure metadata |
+| thought_process_log | JSONField | Validation flow persists staged reasoning here |
+
+### `procurement.RecommendationResult` / `ComplianceResult`
+- `RecommendationResult` stores recommended option, reasoning summary/details, constraints, compliance status, and full output payload
+- `ComplianceResult` stores rules checked, violations, and remediation recommendations for a run
+
+### `procurement.BenchmarkResult`
+Current production-facing benchmark persistence is header-level:
+- `run`, `quotation`
+- `total_quoted_amount`, `total_benchmark_amount`
+- `variance_pct`, `risk_level`
+- `summary_json`
+
+Live BENCHMARK task execution currently writes this model via `apps.benchmarking.services.procurement_cost_service`, which acts as a compatibility bridge and does not yet populate a full corridor-analysis result set.
+
+### `procurement.ValidationRuleSet` / `ValidationRule` / `ValidationResult`
+- `ValidationRuleSet` and `ValidationRule` define domain/schema-scoped deterministic checks
+- `ValidationResult` stores overall status, completeness score, readiness flags, next action, and structured missing/warning/ambiguous lists
+- `ValidationResultItem` stores each individual finding with category, severity, source type, and structured details
+
+### `procurement.ProcurementAgentExecutionRecord`
+Procurement-specific execution log for the Phase 1 compatibility bridge:
+- `run`, `agent_type`, `status`
+- `confidence_score`, `reasoning_summary`
+- `input_snapshot`, `output_snapshot`, `error_message`
+- `trace_id`, `span_id`
+- `actor_user_id`, `actor_primary_role`
+
+### `procurement.MarketIntelligenceSuggestion` / `ExternalSourceRegistry`
+- `MarketIntelligenceSuggestion` stores provider/model metadata, structured suggestion payload, citations, AI summary, and trace linkage
+- `ExternalSourceRegistry` is the allow-list and priority registry used to constrain discovery sources for procurement market-intelligence flows
+
+---
+
 ### `agents.AgentRun` — Agent Execution Record
 Key fields (full model in 03_Agent_Architecture doc):
 - `agent_type`, `agent_definition`, `reconciliation_result`, `document_upload`
@@ -257,6 +352,9 @@ Key fields (full model in 03_Agent_Architecture doc):
 | APCase | status | (full state machine — see 05_Features_and_Workflows.md) |
 | ExtractionApproval | (approval status) | PENDING / APPROVED / REJECTED |
 | ERP Posting | (posting status) | PROPOSED → REVIEW_REQUIRED → READY_TO_SUBMIT → SUBMITTED |
+| ProcurementRequest | status | PENDING_RFQ → READY_RFQ → COMPLETED / FAILED |
+| Procurement AnalysisRun | status | QUEUED → RUNNING → COMPLETED / FAILED |
+| SupplierQuotation | prefill_status | NOT_STARTED → IN_PROGRESS → REVIEW_PENDING / COMPLETED / FAILED |
 
 ---
 
