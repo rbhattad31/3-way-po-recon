@@ -258,6 +258,8 @@ class AuditEventType(models.TextChoices):
     COPILOT_SESSION_VIEWED = "COPILOT_SESSION_VIEWED", "Copilot Session Viewed"
     COPILOT_SESSION_RESUMED = "COPILOT_SESSION_RESUMED", "Copilot Session Resumed"
     COPILOT_SESSION_ARCHIVED = "COPILOT_SESSION_ARCHIVED", "Copilot Session Archived"
+    # Admin hard-delete
+    INVOICE_HARD_DELETED = "INVOICE_HARD_DELETED", "Invoice Hard Deleted by Admin"
     COPILOT_SESSION_PINNED = "COPILOT_SESSION_PINNED", "Copilot Session Pinned"
     COPILOT_CASE_LINKED = "COPILOT_CASE_LINKED", "Copilot Case Linked"
     COPILOT_CASE_UNLINKED = "COPILOT_CASE_UNLINKED", "Copilot Case Unlinked"

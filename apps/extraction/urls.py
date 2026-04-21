@@ -16,6 +16,7 @@ from apps.extraction.template_views import (
     extraction_upload,
     extraction_view_pdf,
     extraction_workbench,
+    invoice_admin_delete,
 )
 from apps.extraction.credit_views import (
     credit_account_adjust,
@@ -46,6 +47,7 @@ urlpatterns = [
     path("result/<int:pk>/pdf/", extraction_view_pdf, name="view_pdf"),
     path("result/<int:pk>/rerun/", extraction_rerun, name="rerun"),
     path("result/<int:pk>/edit/", extraction_edit_values, name="edit_values"),
+    path("result/<int:pk>/admin-delete/", invoice_admin_delete, name="admin_delete"),
     path("console/<int:pk>/", extraction_console, name="console"),
     # Extraction approval
     path("approvals/", extraction_approval_queue, name="approval_queue"),

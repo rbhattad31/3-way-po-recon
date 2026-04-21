@@ -281,6 +281,13 @@ def extraction_workbench(request):
         "failed_uploads_count": failed_uploads_count,
         "pending_uploads": pending_uploads,
         "pending_uploads_count": pending_uploads_count,
+        "is_admin_user": (
+            getattr(request.user, "is_platform_admin", False)
+            or (
+                request.user.userrole_set.filter(role__code="ADMIN", is_active=True).exists()
+                if hasattr(request.user, "userrole_set") else False
+            )
+        ),
     })
 
 
@@ -739,6 +746,123 @@ def extraction_rerun(request, pk):
         request,
         "Re-extraction started. The agent is processing — refresh to see results."
     )
+    return redirect("extraction:workbench")
+
+
+# ────────────────────────────────────────────────────────────────
+# Admin hard-delete invoice (all related data)
+# ────────────────────────────────────────────────────────────────
+@login_required
+@require_POST
+def invoice_admin_delete(request, pk):
+    """Hard-delete an invoice and all its associated data (admin only).
+
+    Accessible only to platform admins or users with the ADMIN role.
+    Requires POST with ``reason`` and ``confirm=yes`` fields.
+    """
+    # --- Access guard: platform admin OR ADMIN role ---
+    is_platform_admin = getattr(request.user, "is_platform_admin", False)
+    has_admin_role = (
+        request.user.userrole_set.filter(role__code="ADMIN", is_active=True).exists()
+        if hasattr(request.user, "userrole_set") else False
+    )
+    if not is_platform_admin and not has_admin_role:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden("Admin access required to delete invoices.")
+
+    confirm = request.POST.get("confirm", "").strip().lower()
+    reason = request.POST.get("reason", "").strip()
+
+    if confirm != "yes":
+        messages.error(request, "Deletion not confirmed. Please type YES to confirm.")
+        return redirect("extraction:console", pk=pk)
+
+    if not reason:
+        messages.error(request, "A deletion reason is required.")
+        return redirect("extraction:console", pk=pk)
+
+    # --- Load the extraction result ---
+    ext = get_object_or_404(
+        ExtractionResult.objects.select_related("document_upload", "invoice"),
+        pk=pk,
+    )
+    document_upload = ext.document_upload
+    invoice = ext.invoice
+
+    # Capture identifiers for audit log BEFORE deletion
+    invoice_id = invoice.pk if invoice else None
+    invoice_number = getattr(invoice, "invoice_number", None) or "N/A"
+    upload_id = document_upload.pk if document_upload else None
+    filename = (document_upload.original_filename if document_upload else None) or "Unknown"
+    actor_email = request.user.email
+
+    from apps.auditlog.services import AuditService
+    from apps.core.enums import AuditEventType
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    # --- Log the deletion audit event BEFORE deleting ---
+    try:
+        AuditService.log_event(
+            entity_type="DocumentUpload",
+            entity_id=upload_id,
+            event_type=AuditEventType.INVOICE_HARD_DELETED,
+            description=(
+                f"Admin hard-delete: invoice #{invoice_number} "
+                f"(upload_id={upload_id}, extraction_id={ext.pk}) "
+                f"by {actor_email}. Reason: {reason}"
+            ),
+            user=request.user,
+            invoice_id=invoice_id,
+            metadata={
+                "reason": reason,
+                "invoice_number": invoice_number,
+                "invoice_id": invoice_id,
+                "upload_id": upload_id,
+                "extraction_result_id": ext.pk,
+                "filename": filename,
+                "deleted_by": actor_email,
+            },
+        )
+    except Exception as _e:
+        _log.warning("Could not write audit log for invoice hard-delete: %s", _e)
+
+    # --- Hard-delete in safe order (children first, then parents) ---
+    try:
+        from django.db import transaction
+        with transaction.atomic():
+            # 1. Cases linked to invoice
+            if invoice_id:
+                try:
+                    from apps.cases.models import APCase
+                    APCase.objects.filter(invoice_id=invoice_id).delete()
+                except Exception as _e:
+                    _log.debug("APCase delete skipped: %s", _e)
+
+            # 2. Invoice (cascades InvoiceLineItem, ExtractionApproval,
+            #    ReconciliationResult, ReviewAssignment, InvoicePosting, etc.)
+            if invoice:
+                invoice.delete()
+
+            # 3. DocumentUpload (cascades ExtractionResult, AgentRun,
+            #    AgentStep, AgentMessage, DecisionLog, ExtractionOCRText, etc.)
+            if document_upload:
+                document_upload.delete()
+
+        _invalidate_extraction_caches(request.user)
+        messages.success(
+            request,
+            f"Invoice #{invoice_number} and all associated data have been permanently deleted. "
+            f"Reason: {reason}",
+        )
+        _log.info(
+            "Admin hard-delete completed: invoice=%s upload=%s ext=%s by=%s reason=%s",
+            invoice_id, upload_id, pk, actor_email, reason,
+        )
+    except Exception as exc:
+        _log.exception("Admin hard-delete failed for extraction %s: %s", pk, exc)
+        messages.error(request, f"Deletion failed: {exc}")
+
     return redirect("extraction:workbench")
 
 
@@ -1995,6 +2119,13 @@ def extraction_console(request, pk):
             status__in=[_EAS.APPROVED, _EAS.AUTO_APPROVED],
         ).exists()
 
+    _is_platform_admin = getattr(request.user, "is_platform_admin", False)
+    _has_admin_role = (
+        request.user.userrole_set.filter(role__code="ADMIN", is_active=True).exists()
+        if hasattr(request.user, "userrole_set") else False
+    )
+    is_admin_user = _is_platform_admin or _has_admin_role
+
     permissions = {
         "can_approve": (
             request.user.has_permission("extraction.approve")
@@ -2002,6 +2133,7 @@ def extraction_console(request, pk):
         ) and not duplicate_blocks_approval,
         "can_reprocess": request.user.has_permission("extraction.reprocess") if hasattr(request.user, "has_permission") else False,
         "can_escalate": request.user.has_permission("cases.escalate") if hasattr(request.user, "has_permission") else False,
+        "can_hard_delete": is_admin_user,
     }
 
     # Assignable users for escalation
@@ -2338,6 +2470,7 @@ def extraction_console(request, pk):
         "duplicate_blocks_approval": duplicate_blocks_approval,
         "invoice_status": invoice.status if invoice else None,
         "permissions": permissions,
+        "is_admin_user": is_admin_user,
         "assignable_users": assignable_users,
         "corrections": corrections,
         "correction_count": correction_count,
