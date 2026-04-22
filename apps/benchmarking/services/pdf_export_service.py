@@ -1,16 +1,7 @@
 """
 BenchmarkPDFExportService
---------------------------
-Generates a professional ReportLab PDF report for a BenchmarkRequest.
-
-Sections:
-  1. Cover header -- title, metadata badges
-  2. Executive summary KPIs
-  3. Vendor comparison table
-  4. Itemised cost analysis (line items, capped at 200 rows)
-  5. AI insights & negotiation talking points
-  6. Category summary table
-  7. Footer on every page
+-------------------------
+Generates a BOQ-style PDF document for a BenchmarkRequest.
 """
 from __future__ import annotations
 
@@ -70,6 +61,16 @@ def _fmt_pct(value: Any, default: str = "--") -> str:
             return default
         sign = "+" if float(value) > 0 else ""
         return f"{sign}{float(value):.1f}%"
+    except (TypeError, ValueError):
+        return default
+
+
+def _fmt_number(value: Any, decimals: int = 2, default: str = "--") -> str:
+    try:
+        if value is None:
+            return default
+        fmt = f"{{:,.{decimals}f}}"
+        return fmt.format(float(value))
     except (TypeError, ValueError):
         return default
 
@@ -218,9 +219,212 @@ def _footer_callback(canvas, doc):
     canvas.rect(0, 0, w, 18, fill=1, stroke=0)
     canvas.setFont("Helvetica", 7)
     canvas.setFillColor(GREY)
-    canvas.drawString(20, 5, "Confidential -- Should-Cost Benchmarking Report")
+    canvas.drawString(20, 5, "Confidential -- Bill of Quantities (BOQ)")
     canvas.drawRightString(w - 20, 5, f"Page {doc.page}")
     canvas.restoreState()
+
+
+def _boq_header_section(bench_request, styles, page_width) -> list:
+    story = []
+    story.append(Paragraph("Bill of Quantities (BOQ)", ParagraphStyle(
+        "boq_title",
+        fontSize=16,
+        leading=20,
+        fontName="Helvetica-Bold",
+        textColor=BLACK,
+        alignment=TA_LEFT,
+        spaceAfter=4,
+    )))
+    story.append(Paragraph(
+        f"Request: {bench_request.title or '--'}",
+        ParagraphStyle("boq_subtitle", fontSize=10, leading=14, fontName="Helvetica", textColor=GREY),
+    ))
+    story.append(Spacer(1, 6))
+
+    submitted_by = "--"
+    if bench_request.submitted_by:
+        submitted_by = getattr(bench_request.submitted_by, "get_full_name", lambda: "")() or str(bench_request.submitted_by)
+
+    info_rows = [
+        ["Project", bench_request.project_name or "--", "Document No", f"BOQ-{bench_request.pk}"],
+        ["Geography", bench_request.geography or "--", "Scope", bench_request.scope_type or "--"],
+        ["Store Type", bench_request.store_type or "--", "Status", bench_request.status or "--"],
+        [
+            "Created On",
+            bench_request.created_at.strftime("%d %b %Y") if bench_request.created_at else "--",
+            "Submitted By",
+            submitted_by,
+        ],
+    ]
+
+    table = Table(info_rows, colWidths=[page_width * 0.14, page_width * 0.36, page_width * 0.14, page_width * 0.36])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, DIVIDER),
+        ("BACKGROUND", (0, 0), (0, -1), GREY_BG),
+        ("BACKGROUND", (2, 0), (2, -1), GREY_BG),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 10))
+    return story
+
+
+def _boq_items_section(vendor_cards, styles, page_width) -> list:
+    story = []
+    story.append(Paragraph("BOQ Schedule", ParagraphStyle(
+        "boq_section",
+        fontSize=11,
+        leading=14,
+        fontName="Helvetica-Bold",
+        textColor=BLACK,
+        spaceAfter=6,
+    )))
+
+    header_style = ParagraphStyle("boq_th", fontSize=7, leading=10, fontName="Helvetica-Bold", textColor=BLACK)
+    cell_style = ParagraphStyle("boq_td", fontSize=7, leading=10, fontName="Helvetica", textColor=BLACK)
+    cell_style_r = ParagraphStyle("boq_td_r", parent=cell_style, alignment=TA_RIGHT)
+
+    col_widths = [
+        page_width * 0.04,
+        page_width * 0.28,
+        page_width * 0.06,
+        page_width * 0.07,
+        page_width * 0.12,
+        page_width * 0.10,
+        page_width * 0.11,
+        page_width * 0.10,
+        page_width * 0.12,
+    ]
+
+    rows = [[
+        Paragraph("Item", header_style),
+        Paragraph("Description", header_style),
+        Paragraph("UOM", header_style),
+        Paragraph("Qty", ParagraphStyle("boq_th_r1", parent=header_style, alignment=TA_RIGHT)),
+        Paragraph("Vendor", header_style),
+        Paragraph("Unit Rate (AED)", ParagraphStyle("boq_th_r2", parent=header_style, alignment=TA_RIGHT)),
+        Paragraph("Line Amount (AED)", ParagraphStyle("boq_th_r3", parent=header_style, alignment=TA_RIGHT)),
+        Paragraph("Benchmark (AED)", ParagraphStyle("boq_th_r4", parent=header_style, alignment=TA_RIGHT)),
+        Paragraph("Variance", ParagraphStyle("boq_th_r5", parent=header_style, alignment=TA_RIGHT)),
+    ]]
+
+    line_no = 1
+    line_cap = 350
+    truncated = False
+    for card in vendor_cards:
+        vendor_name = card.get("supplier_name", "--")
+        for li in card.get("line_items", []):
+            if line_no > line_cap:
+                truncated = True
+                break
+            qty = getattr(li, "quantity", None)
+            benchmark_mid = getattr(li, "benchmark_mid", None)
+            benchmark_amount = None
+            try:
+                if qty is not None and benchmark_mid is not None:
+                    benchmark_amount = float(qty) * float(benchmark_mid)
+            except (TypeError, ValueError):
+                benchmark_amount = None
+
+            rows.append([
+                Paragraph(str(line_no), cell_style),
+                Paragraph((getattr(li, "description", "") or "")[:110], cell_style),
+                Paragraph((getattr(li, "uom", "") or "--")[:12], cell_style),
+                Paragraph(_fmt_number(qty, 3), cell_style_r),
+                Paragraph((vendor_name or "--")[:24], cell_style),
+                Paragraph(_fmt_number(getattr(li, "quoted_unit_rate", None), 2), cell_style_r),
+                Paragraph(_fmt_number(getattr(li, "line_amount", None), 2), cell_style_r),
+                Paragraph(_fmt_number(benchmark_amount, 2), cell_style_r),
+                Paragraph(_fmt_pct(getattr(li, "variance_pct", None), "--"), cell_style_r),
+            ])
+            line_no += 1
+        if truncated:
+            break
+
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
+    style_cmds = [
+        ("GRID", (0, 0), (-1, -1), 0.35, DIVIDER),
+        ("BACKGROUND", (0, 0), (-1, 0), GREY_BG),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, DIVIDER),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for idx in range(1, len(rows)):
+        if idx % 2 == 0:
+            style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#fcfcfc")))
+    table.setStyle(TableStyle(style_cmds))
+    story.append(table)
+
+    if truncated:
+        story.append(Spacer(1, 5))
+        story.append(Paragraph(
+            f"Note: BOQ schedule truncated at {line_cap} rows in PDF.",
+            ParagraphStyle("boq_note", fontSize=7, leading=10, fontName="Helvetica-Oblique", textColor=GREY),
+        ))
+    story.append(Spacer(1, 10))
+    return story
+
+
+def _boq_totals_section(vendor_cards, result, styles, page_width) -> list:
+    story = []
+    story.append(Paragraph("BOQ Totals", ParagraphStyle(
+        "boq_totals_title",
+        fontSize=11,
+        leading=14,
+        fontName="Helvetica-Bold",
+        textColor=BLACK,
+        spaceAfter=6,
+    )))
+
+    total_quoted = 0.0
+    total_benchmark = 0.0
+    for card in vendor_cards:
+        try:
+            total_quoted += float(card.get("total_quoted") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            total_benchmark += float(card.get("total_benchmark") or 0)
+        except (TypeError, ValueError):
+            pass
+
+    deviation_pct = None
+    if result is not None and getattr(result, "overall_deviation_pct", None) is not None:
+        deviation_pct = result.overall_deviation_pct
+    elif total_benchmark > 0:
+        deviation_pct = ((total_quoted - total_benchmark) / total_benchmark) * 100
+
+    rows = [
+        ["Total Quoted Amount (AED)", _fmt_number(total_quoted, 2)],
+        ["Total Benchmark Amount (AED)", _fmt_number(total_benchmark, 2)],
+        ["Overall Deviation", _fmt_pct(deviation_pct)],
+    ]
+    table = Table(rows, colWidths=[page_width * 0.35, page_width * 0.20])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, DIVIDER),
+        ("BACKGROUND", (0, 0), (0, -1), GREY_BG),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+    return story
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +433,6 @@ def _footer_callback(canvas, doc):
 
 def _cover_section(bench_request, styles, page_width) -> list:
     """Blue gradient-style header block."""
-    from reportlab.platypus import InlineImage
-    from datetime import date
-
     story = []
 
     # Header table (simulates the blue gradient card)
@@ -652,13 +853,11 @@ class BenchmarkPDFExportService:
             bench_request.quotations.filter(is_active=True).prefetch_related("line_items")
         )
         vendor_cards = []
-        all_line_items = []
 
         for idx, q in enumerate(quotations, start=1):
             fallback = f"Vendor {chr(64 + idx)}" if idx <= 26 else f"Vendor {idx}"
             supplier_name = (q.supplier_name or "").strip() or fallback
             q_items = list(q.line_items.filter(is_active=True))
-            all_line_items.extend(q_items)
 
             q_total = sum(float(li.line_amount or 0) for li in q_items)
             q_bench = 0.0
@@ -687,22 +886,17 @@ class BenchmarkPDFExportService:
             })
 
         result = None
-        category_summary = {}
         try:
             result = bench_request.result
-            category_summary = result.category_summary_json or {}
         except Exception:
             pass
 
         # -- Assemble story ---------------------------------------------------
         story: list = []
 
-        story.extend(_cover_section(bench_request, styles, page_width))
-        story.extend(_kpi_section(vendor_cards, all_line_items, result, styles, page_width))
-        story.extend(_vendor_table_section(vendor_cards, styles, page_width))
-        story.extend(_line_items_section(vendor_cards, styles, page_width))
-        story.extend(_insights_section(result, styles, page_width))
-        story.extend(_category_section(category_summary, styles, page_width))
+        story.extend(_boq_header_section(bench_request, styles, page_width))
+        story.extend(_boq_items_section(vendor_cards, styles, page_width))
+        story.extend(_boq_totals_section(vendor_cards, result, styles, page_width))
 
         try:
             doc.build(story, onFirstPage=_footer_callback, onLaterPages=_footer_callback)

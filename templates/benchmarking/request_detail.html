@@ -210,6 +210,26 @@
   .action-cell {
     text-align: right;
   }
+  .document-preview-btn {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .document-preview-btn svg {
+    width: 18px;
+    height: 22px;
+    display: block;
+  }
+  .document-preview-btn.is-disabled {
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #94a3b8;
+    cursor: not-allowed;
+  }
   .status-badge {
     padding: 6px 12px;
     border-radius: 999px;
@@ -316,6 +336,21 @@
     padding: 12px 14px;
     font-size: 0.8rem;
     margin-top: 0;
+  }
+  .negotiation-chat-response {
+    border: 1px solid #dbeafe;
+    background: #f8fbff;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    color: #1e293b;
+    white-space: pre-wrap;
+    min-height: 72px;
+  }
+  .negotiation-chat-meta {
+    font-size: 0.72rem;
+    color: #475569;
+    margin-top: 8px;
   }
   @media (max-width: 1400px) {
     .summary-row {
@@ -516,11 +551,39 @@
                 </td>
                 <td class="action-cell">
                   {% if card.quotation_document_url %}
-                  <button type="button" class="btn btn-sm btn-outline-primary" onclick="openQuotationPreview('{{ card.quotation_document_url|escapejs }}', '{{ card.supplier_name|escapejs }}')">
-                    View
-                  </button>
+                  <a
+                    href="{{ card.quotation_document_url }}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="btn btn-sm btn-outline-danger document-preview-btn"
+                    title="Open quotation PDF in new tab"
+                    aria-label="Open quotation PDF in new tab for {{ card.supplier_name|default:'vendor' }}"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M14 2H7C5.89543 2 5 2.89543 5 4V20C5 21.1046 5.89543 22 7 22H17C18.1046 22 19 21.1046 19 20V7L14 2Z" fill="currentColor" opacity="0.12"/>
+                      <path d="M14 2V7H19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M9 13.25H10.2C11.1941 13.25 12 14.0559 12 15.05C12 16.0441 11.1941 16.85 10.2 16.85H9V13.25Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M13 16.85V13.25H14.1C15.0941 13.25 15.9 14.0559 15.9 15.05C15.9 16.0441 15.0941 16.85 14.1 16.85H13Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M17.5 13.25H15.9V16.85" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M14 2H7C5.89543 2 5 2.89543 5 4V20C5 21.1046 5.89543 22 7 22H17C18.1046 22 19 21.1046 19 20V7L14 2Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="visually-hidden">Open quotation PDF in new tab</span>
+                  </a>
                   {% else %}
-                  <span class="text-muted">--</span>
+                  <span
+                    class="document-preview-btn is-disabled"
+                    title="Quotation PDF is not available"
+                    aria-hidden="true"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M14 2H7C5.89543 2 5 2.89543 5 4V20C5 21.1046 5.89543 22 7 22H17C18.1046 22 19 21.1046 19 20V7L14 2Z" fill="currentColor" opacity="0.12"/>
+                      <path d="M14 2V7H19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M9 13.25H10.2C11.1941 13.25 12 14.0559 12 15.05C12 16.0441 11.1941 16.85 10.2 16.85H9V13.25Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M13 16.85V13.25H14.1C15.0941 13.25 15.9 14.0559 15.9 15.05C15.9 16.0441 15.0941 16.85 14.1 16.85H13Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M17.5 13.25H15.9V16.85" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M14 2H7C5.89543 2 5 2.89543 5 4V20C5 21.1046 5.89543 22 7 22H17C18.1046 22 19 21.1046 19 20V7L14 2Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </span>
                   {% endif %}
                 </td>
               </tr>
@@ -656,7 +719,45 @@
       </div>
 
       <div class="side-card">
-        <h2 class="card-title mb-3">Upload Quotations</h2>
+        {% if benchmark_flow_summary.rfq_present %}
+        <h2 class="card-title mb-2">RFQ Extracted Content</h2>
+        <p class="empty-text mb-2">{{ benchmark_flow_summary.rfq_label }}: {{ benchmark_flow_summary.rfq_ref|default:"N/A" }}</p>
+        {% if rfq_scope_rows %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:44px;">#</th>
+                <th>Category</th>
+                <th>Description</th>
+                <th style="width:60px;">Unit</th>
+                <th style="width:70px;">Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rfq_scope_rows %}
+              <tr>
+                <td>{{ row.line_no }}</td>
+                <td>{{ row.category }}</td>
+                <td>{{ row.description }}</td>
+                <td>{{ row.unit }}</td>
+                <td>{{ row.quantity }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty-text mb-0">RFQ is already linked, but extracted scope rows are not available for this RFQ source.</p>
+        {% endif %}
+        {% else %}
+        <h2 class="card-title mb-2">RFQ Not Uploaded</h2>
+        <p class="empty-text mb-0">RFQ is missing for this request. Upload RFQ while creating the request to enable RFQ scope comparison.</p>
+        {% endif %}
+      </div>
+
+      <div class="side-card">
+        <h2 class="card-title mb-3">Upload Vendor Quotations</h2>
         <form method="post" action="{% url 'benchmarking:request_add_quotations' bench_request.pk %}" enctype="multipart/form-data">
           {% csrf_token %}
           <div class="mb-2">
@@ -664,8 +765,9 @@
             <input type="text" name="quotation_ref" class="form-control form-control-sm" placeholder="Quote reference">
           </div>
           <div class="mb-2">
-            <label class="form-label small mb-1">PDF or ZIP</label>
-            <input type="file" name="quotation_pdf" accept=".pdf,.zip" class="form-control form-control-sm" required>
+            <label class="form-label small mb-1">PDFs or ZIP</label>
+            <input type="file" name="quotation_pdfs" accept=".pdf,.zip" class="form-control form-control-sm" multiple required>
+            <div class="form-text" style="font-size:.72rem;">You can select multiple files in one upload.</div>
           </div>
           <button type="submit" class="btn btn-primary btn-sm w-100">
             <i class="bi bi-cloud-upload me-1"></i>Analyze Upload
@@ -685,6 +787,20 @@
     </ul>
   </div>
   {% endif %}
+
+  <!-- <div class="side-card mt-2" id="negotiationAssistantCard" data-endpoint="{{ negotiation_assistant_url }}">
+    <h2 class="card-title mb-2">Negotiation Talking Agent</h2>
+    <p class="empty-text mb-2">Ask for dynamic counter-offers, vendor strategy, and risk checks based on live benchmark data.</p>
+    <div class="mb-2">
+      <textarea id="negotiationQuestion" class="form-control form-control-sm" rows="3" placeholder="Example: What should I ask Vendor A to reduce cost on high variance lines?"></textarea>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      <button id="negotiationAskBtn" type="button" class="btn btn-primary btn-sm">Ask Agent</button>
+      <span id="negotiationStatus" class="text-muted small"></span>
+    </div>
+    <div id="negotiationAnswer" class="negotiation-chat-response mt-2">Submit a question to get a dynamic response.</div>
+    <div id="negotiationMeta" class="negotiation-chat-meta"></div>
+  </div> -->
 
   <div class="table-card mt-2 mb-1">
     <div class="accordion" id="downloadHistoryAccordion">
@@ -787,7 +903,8 @@
         >
           <i class="bi bi-cpu me-2" style="color:#a5b4fc;font-size:1.1rem;"></i>
           Developer Options &mdash; Full Pipeline Trace
-          <span class="badge ms-2" style="background:#4f46e5;font-size:.7rem;">{{ dev_pipeline_stages|length }} agents</span>
+          <span class="badge ms-2" style="background:#4f46e5;font-size:.7rem;">{{ dev_timeline_events|length }} events</span>
+          <span class="badge ms-1" style="background:#1d4ed8;font-size:.7rem;">{{ dev_agent_runs|length }} observed runs</span>
           <span class="badge ms-1" style="background:#0891b2;font-size:.7rem;">{{ bench_request.geography }}</span>
           <span class="badge ms-1" style="background:{% if bench_request.status == 'COMPLETED' %}#166534{% elif bench_request.status == 'FAILED' %}#991b1b{% elif bench_request.status == 'PROCESSING' %}#92400e{% else %}#374151{% endif %};font-size:.7rem;">{{ bench_request.status }}</span>
         </button>
@@ -817,75 +934,140 @@
             </div>
           </div>
 
-          <!-- ============================================================ REAL AGENT RUN TIMELINE -->
+          <!-- ============================================================ OBSERVED BACKEND TIMELINE -->
           <div class="p-3 border-bottom" style="border-color:#1e293b!important;">
-            <div class="d-flex align-items-center gap-2 mb-3">
-              <span style="background:#065f46;border-radius:5px;padding:2px 8px;font-size:.65rem;font-weight:800;color:#6ee7b7;letter-spacing:.1em;font-family:sans-serif;">AGENTS</span>
-              <span style="color:#6ee7b7;font-weight:700;font-size:.82rem;font-family:sans-serif;">Live Agent Run Records (from AgentRun table)</span>
+            <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+              <div class="d-flex align-items-center gap-2">
+                <span style="background:#065f46;border-radius:5px;padding:2px 8px;font-size:.65rem;font-weight:800;color:#6ee7b7;letter-spacing:.1em;font-family:sans-serif;">TIMELINE</span>
+                <span style="color:#6ee7b7;font-weight:700;font-size:.82rem;font-family:sans-serif;">Observed backend events for this request</span>
+              </div>
+              <a href="{% url 'benchmarking:e2e_timeline' bench_request.pk %}" class="btn btn-sm btn-outline-info">
+                <i class="bi bi-diagram-3 me-1"></i>Open full lifecycle page
+              </a>
             </div>
-            {% for stage in dev_pipeline_stages %}
-            <div class="mb-2" style="background:#111827;border-radius:8px;overflow:hidden;border-left:3px solid {{ stage.color }};">
-              <!-- Stage header -->
-              <div class="d-flex align-items-center justify-content-between px-3 py-2" style="background:#1a2233;">
-                <div class="d-flex align-items-center gap-2 flex-wrap">
-                  <i class="bi {{ stage.icon }}" style="color:{{ stage.color }};font-size:.9rem;"></i>
-                  <span style="color:#e2e8f0;font-weight:700;font-size:.78rem;font-family:sans-serif;">{{ forloop.counter }}. {{ stage.display_name }}</span>
-                  <span style="background:{{ stage.badge_bg }};color:{{ stage.badge_fg }};font-size:.6rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">{{ stage.short_name }}</span>
-                  {% if stage.run %}
-                    {% if stage.run.status == "COMPLETED" %}
-                      <span style="background:#14532d;color:#86efac;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">COMPLETED</span>
-                    {% elif stage.run.status == "FAILED" %}
-                      <span style="background:#450a0a;color:#fca5a5;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">FAILED</span>
-                    {% elif stage.run.status == "RUNNING" %}
-                      <span style="background:#164e63;color:#67e8f9;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">RUNNING</span>
-                    {% else %}
-                      <span style="background:#374151;color:#9ca3af;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">{{ stage.run.status }}</span>
+
+            <div class="mb-3" style="background:#111827;border:1px solid #1f2937;border-radius:8px;padding:10px 12px;">
+              <div style="color:#cbd5e1;font-size:.75rem;font-family:sans-serif;line-height:1.6;">
+                This block is built from real rows in <code style="color:#93c5fd;">BenchmarkRequest</code>,
+                <code style="color:#93c5fd;">BenchmarkQuotation</code>,
+                <code style="color:#93c5fd;">BenchmarkRunLog</code>,
+                <code style="color:#93c5fd;">AgentRun</code>, and
+                <code style="color:#93c5fd;">BenchmarkResult</code>.
+                The list below is ordered by actual timestamps, so you can understand what really happened without opening logs or terminal output.
+              </div>
+              <div class="row g-2 mt-2" style="font-size:.68rem;">
+                <div class="col-6 col-md-3"><div style="background:#0f172a;border-radius:6px;padding:8px 10px;"><div style="color:#64748b;font-size:.58rem;text-transform:uppercase;font-family:sans-serif;">Expected stages</div><code style="color:#c4b5fd;">{{ dev_pipeline_summary.expected_stages }}</code></div></div>
+                <div class="col-6 col-md-3"><div style="background:#0f172a;border-radius:6px;padding:8px 10px;"><div style="color:#64748b;font-size:.58rem;text-transform:uppercase;font-family:sans-serif;">Observed runs</div><code style="color:#93c5fd;">{{ dev_pipeline_summary.observed_runs }}</code></div></div>
+                <div class="col-6 col-md-3"><div style="background:#0f172a;border-radius:6px;padding:8px 10px;"><div style="color:#64748b;font-size:.58rem;text-transform:uppercase;font-family:sans-serif;">Completed</div><code style="color:#86efac;">{{ dev_pipeline_summary.completed_runs }}</code></div></div>
+                <div class="col-6 col-md-3"><div style="background:#0f172a;border-radius:6px;padding:8px 10px;"><div style="color:#64748b;font-size:.58rem;text-transform:uppercase;font-family:sans-serif;">Waiting / missing</div><code style="color:#fbbf24;">{{ dev_pipeline_summary.pending_runs }}</code></div></div>
+              </div>
+            </div>
+
+            {% if dev_timeline_events %}
+              {% for event in dev_timeline_events %}
+              <div class="mb-2" style="background:#111827;border-radius:8px;overflow:hidden;border-left:3px solid {% if event.tone == 'success' %}#22c55e{% elif event.tone == 'danger' %}#ef4444{% elif event.tone == 'warning' %}#f59e0b{% elif event.tone == 'primary' %}#3b82f6{% else %}#64748b{% endif %};">
+                <div class="d-flex align-items-start justify-content-between px-3 py-2" style="background:#172033;">
+                  <div class="d-flex align-items-start gap-2 flex-wrap">
+                    <i class="bi {{ event.icon }}" style="color:{% if event.tone == 'success' %}#86efac{% elif event.tone == 'danger' %}#fca5a5{% elif event.tone == 'warning' %}#fcd34d{% elif event.tone == 'primary' %}#93c5fd{% else %}#cbd5e1{% endif %};font-size:.9rem;"></i>
+                    <span style="color:#e2e8f0;font-weight:700;font-size:.76rem;font-family:sans-serif;">{{ forloop.counter }}. {{ event.title }}</span>
+                    <span style="background:#0f172a;color:#94a3b8;font-size:.58rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">{{ event.source }}</span>
+                    {% if event.badge %}
+                    <span style="background:#1e293b;color:#cbd5e1;font-size:.58rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">{{ event.badge }}</span>
                     {% endif %}
-                  {% else %}
-                    <span style="background:#374151;color:#6b7280;font-size:.6rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">NO RUN RECORD</span>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="color:#94a3b8;font-size:.66rem;">{% if event.timestamp %}{{ event.timestamp|date:"Y-m-d H:i:s" }}{% else %}no timestamp{% endif %}</div>
+                    <div style="color:#64748b;font-size:.62rem;">{{ event.actor }}</div>
+                  </div>
+                </div>
+                <div class="px-3 py-2" style="font-size:.69rem;">
+                  <div style="color:#cbd5e1;font-family:sans-serif;line-height:1.5;">{{ event.detail }}</div>
+                  {% if event.extra %}
+                  <details style="margin-top:5px;">
+                    <summary style="color:#64748b;cursor:pointer;font-family:sans-serif;font-size:.65rem;">Show technical details</summary>
+                    <div class="row g-1 mt-1">
+                      {% for key, value in event.extra.items %}
+                      {% if value %}
+                      <div class="col-12 col-md-6"><span style="color:#475569;font-family:sans-serif;">{{ key }}:</span> <code style="color:#93c5fd;word-break:break-all;">{{ value }}</code></div>
+                      {% endif %}
+                      {% endfor %}
+                    </div>
+                  </details>
                   {% endif %}
                 </div>
-                {% if stage.run and stage.run.duration_display %}
-                <span style="color:#64748b;font-size:.68rem;">{{ stage.run.duration_display }}</span>
-                {% endif %}
               </div>
-              <!-- Stage body -->
-              <div class="px-3 py-2" style="font-size:.7rem;">
-                <div style="color:#64748b;font-family:sans-serif;margin-bottom:6px;font-size:.68rem;">{{ stage.description }}</div>
-                <div class="mb-1"><span style="color:#475569;font-family:sans-serif;">API / Service:</span> <code style="color:#7dd3fc;font-size:.67rem;">{{ stage.api_call }}</code></div>
-                {% if stage.run %}
-                <div class="row g-1 mt-1" style="font-size:.68rem;">
-                  <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">AgentRun PK:</span> <code style="color:#a5b4fc;">{{ stage.run.pk }}</code></div>
-                  <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Model:</span> <code style="color:#fcd34d;">{{ stage.run.llm_model_used }}</code></div>
-                  <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Confidence:</span> <code style="color:{% if stage.run.confidence >= 0.8 %}#4ade80{% elif stage.run.confidence >= 0.5 %}#fbbf24{% else %}#f87171{% endif %};">{{ stage.run.confidence|floatformat:2 }}</code></div>
-                  {% if stage.run.started_at %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Started:</span> <code style="color:#94a3b8;">{{ stage.run.started_at|date:"H:i:s" }}</code></div>{% endif %}
-                  {% if stage.run.completed_at %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Completed:</span> <code style="color:#94a3b8;">{{ stage.run.completed_at|date:"H:i:s" }}</code></div>{% endif %}
-                  {% if stage.run.trace_id %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Trace ID:</span> <code style="color:#64748b;">{{ stage.run.trace_id }}</code></div>{% endif %}
+              {% endfor %}
+            {% else %}
+            <div style="color:#64748b;font-size:.72rem;font-family:sans-serif;">No backend events found yet for this request.</div>
+            {% endif %}
+          </div>
+
+          <!-- ============================================================ OBSERVED AGENT RUNS -->
+          <div class="p-3 border-bottom" style="border-color:#1e293b!important;">
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span style="background:#1e3a8a;border-radius:5px;padding:2px 8px;font-size:.65rem;font-weight:800;color:#93c5fd;letter-spacing:.1em;font-family:sans-serif;">AGENTS</span>
+              <span style="color:#93c5fd;font-weight:700;font-size:.82rem;font-family:sans-serif;">Observed agent executions only</span>
+            </div>
+
+            {% if dev_agent_runs %}
+              {% for run in dev_agent_runs %}
+              <div class="mb-2" style="background:#111827;border-radius:8px;overflow:hidden;border-left:3px solid {{ run.color }};">
+                <div class="d-flex align-items-center justify-content-between px-3 py-2" style="background:#1a2233;">
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <i class="bi {{ run.icon }}" style="color:{{ run.color }};font-size:.9rem;"></i>
+                    <span style="color:#e2e8f0;font-weight:700;font-size:.78rem;font-family:sans-serif;">{{ run.sequence }}. {{ run.display_name }}</span>
+                    <span style="background:{{ run.badge_bg }};color:{{ run.badge_fg }};font-size:.6rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">{{ run.short_name }}</span>
+                    <span style="background:{% if run.tone == 'success' %}#14532d{% elif run.tone == 'danger' %}#450a0a{% elif run.tone == 'warning' %}#78350f{% else %}#374151{% endif %};color:{% if run.tone == 'success' %}#86efac{% elif run.tone == 'danger' %}#fca5a5{% elif run.tone == 'warning' %}#fcd34d{% else %}#d1d5db{% endif %};font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">{{ run.status }}</span>
+                  </div>
+                  <span style="color:#64748b;font-size:.68rem;">{{ run.duration_display|default:"n/a" }}</span>
                 </div>
-                {% if stage.run.output_summary %}
-                <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">Output Summary:</span> <code style="color:#86efac;font-size:.68rem;">{{ stage.run.output_summary|truncatechars:200 }}</code></div>
-                {% endif %}
-                {% if stage.run.error_message %}
-                <div class="mt-1" style="background:#1a0505;border-radius:4px;padding:4px 8px;"><span style="color:#fca5a5;font-family:sans-serif;font-size:.67rem;">Error: {{ stage.run.error_message|truncatechars:300 }}</span></div>
-                {% endif %}
-                <!-- Input payload -->
-                <details style="margin-top:5px;">
-                  <summary style="color:#475569;cursor:pointer;font-family:sans-serif;font-size:.67rem;user-select:none;">&#9656; Input payload</summary>
-                  <pre style="background:#0a0f1e;color:#6ee7b7;font-size:.62rem;padding:6px 8px;border-radius:4px;margin-top:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{{ stage.run.input_payload }}</pre>
-                </details>
-                <!-- Output payload -->
-                <details style="margin-top:3px;">
-                  <summary style="color:#475569;cursor:pointer;font-family:sans-serif;font-size:.67rem;user-select:none;">&#9656; Output payload</summary>
-                  <pre style="background:#0a0f1e;color:#93c5fd;font-size:.62rem;padding:6px 8px;border-radius:4px;margin-top:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{{ stage.run.output_payload }}</pre>
-                </details>
-                {% else %}
-                <div style="color:#475569;font-family:sans-serif;font-size:.68rem;margin-top:4px;">
-                  No AgentRun record found for this stage. Run analysis to generate records.
+                <div class="px-3 py-2" style="font-size:.7rem;">
+                  <div style="color:#64748b;font-family:sans-serif;margin-bottom:6px;font-size:.68rem;">{{ run.description }}</div>
+                  <div class="mb-1"><span style="color:#475569;font-family:sans-serif;">API / Service:</span> <code style="color:#7dd3fc;font-size:.67rem;">{{ run.api_call }}</code></div>
+                  <div class="row g-1 mt-1" style="font-size:.68rem;">
+                    <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">AgentRun PK:</span> <code style="color:#a5b4fc;">{{ run.pk }}</code></div>
+                    <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Model:</span> <code style="color:#fcd34d;">{{ run.llm_model_used }}</code></div>
+                    {% if run.confidence is not None %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Confidence:</span> <code style="color:{% if run.confidence >= 0.8 %}#4ade80{% elif run.confidence >= 0.5 %}#fbbf24{% else %}#f87171{% endif %};">{{ run.confidence|floatformat:2 }}</code></div>{% endif %}
+                    {% if run.started_at %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Started:</span> <code style="color:#94a3b8;">{{ run.started_at|date:"H:i:s" }}</code></div>{% endif %}
+                    {% if run.completed_at %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Completed:</span> <code style="color:#94a3b8;">{{ run.completed_at|date:"H:i:s" }}</code></div>{% endif %}
+                    {% if run.trace_id %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Trace ID:</span> <code style="color:#64748b;">{{ run.trace_id }}</code></div>{% endif %}
+                  </div>
+                  {% if run.output_summary %}
+                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">Output Summary:</span> <code style="color:#86efac;font-size:.68rem;">{{ run.output_summary|truncatechars:200 }}</code></div>
+                  {% endif %}
+                  {% if run.error_message %}
+                  <div class="mt-1" style="background:#1a0505;border-radius:4px;padding:4px 8px;"><span style="color:#fca5a5;font-family:sans-serif;font-size:.67rem;">Error: {{ run.error_message|truncatechars:300 }}</span></div>
+                  {% endif %}
+                  <details style="margin-top:5px;">
+                    <summary style="color:#475569;cursor:pointer;font-family:sans-serif;font-size:.67rem;user-select:none;">Input payload</summary>
+                    <pre style="background:#0a0f1e;color:#6ee7b7;font-size:.62rem;padding:6px 8px;border-radius:4px;margin-top:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{{ run.input_payload }}</pre>
+                  </details>
+                  <details style="margin-top:3px;">
+                    <summary style="color:#475569;cursor:pointer;font-family:sans-serif;font-size:.67rem;user-select:none;">Output payload</summary>
+                    <pre style="background:#0a0f1e;color:#93c5fd;font-size:.62rem;padding:6px 8px;border-radius:4px;margin-top:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{{ run.output_payload }}</pre>
+                  </details>
                 </div>
-                {% endif %}
+              </div>
+              {% endfor %}
+            {% else %}
+            <div style="color:#64748b;font-size:.72rem;font-family:sans-serif;">No AgentRun rows found yet for this request.</div>
+            {% endif %}
+
+            {% if dev_expected_stages %}
+            <div class="mt-3" style="background:#111827;border:1px solid #1f2937;border-radius:8px;padding:10px 12px;">
+              <div style="color:#fbbf24;font-weight:700;font-size:.74rem;font-family:sans-serif;margin-bottom:6px;">Expected steps not yet observed</div>
+              <div class="row g-2">
+                {% for stage in dev_expected_stages %}
+                <div class="col-12 col-md-6">
+                  <div style="background:#0f172a;border-radius:6px;padding:8px 10px;border-left:3px solid {{ stage.color }};">
+                    <div style="color:#e2e8f0;font-size:.7rem;font-weight:700;font-family:sans-serif;">{{ stage.display_name }}</div>
+                    <div style="color:#64748b;font-size:.64rem;font-family:sans-serif;">{{ stage.description }}</div>
+                  </div>
+                </div>
+                {% endfor %}
               </div>
             </div>
-            {% endfor %}
+            {% endif %}
           </div>
 
           <!-- ============================================================ PER-VENDOR TRACE -->
@@ -926,8 +1108,8 @@
                   {% if qtrace.blob_missing_reason %}
                   <div class="mt-1" style="color:#f59e0b;font-size:.66rem;font-family:sans-serif;">{{ qtrace.blob_missing_reason }}</div>
                   {% endif %}
-                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">HTTP call (upload):</span> <code style="background:#0a0f1e;color:#86efac;padding:1px 5px;border-radius:3px;font-size:.62rem;">POST /api/v1/benchmarking/requests/{{ bench_request.pk }}/add_quotations/</code></div>
-                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">HTTP call (run):</span> <code style="background:#0a0f1e;color:#86efac;padding:1px 5px;border-radius:3px;font-size:.62rem;">POST /benchmarking/{{ bench_request.pk }}/run/</code></div>
+                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">HTTP call (upload):</span> <code style="background:#0a0f1e;color:#86efac;padding:1px 5px;border-radius:3px;font-size:.62rem;">POST {% url 'benchmarking:request_add_quotations' bench_request.pk %}</code></div>
+                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">HTTP call (run):</span> <code style="background:#0a0f1e;color:#86efac;padding:1px 5px;border-radius:3px;font-size:.62rem;">POST {% url 'benchmarking:request_reprocess' bench_request.pk %}</code></div>
                 </div>
               </div>
 
@@ -1094,6 +1276,21 @@
 
 <script>
 // Vendor column filter for pivot table (client-side show/hide)
+function getCookie(name) {
+  var cookieValue = null;
+  if (document.cookie && document.cookie !== "") {
+    var cookies = document.cookie.split(";");
+    for (var i = 0; i < cookies.length; i += 1) {
+      var cookie = cookies[i].trim();
+      if (cookie.substring(0, name.length + 1) === (name + "=")) {
+        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+        break;
+      }
+    }
+  }
+  return cookieValue;
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   var vendorSel = document.getElementById("pivot-vendor-filter");
   if (!vendorSel) return;
@@ -1114,14 +1311,93 @@ document.addEventListener("DOMContentLoaded", function () {
   applyVendorFilter(); // run on load in case of page-back state
 });
 
+document.addEventListener("DOMContentLoaded", function () {
+  var cardEl = document.getElementById("negotiationAssistantCard");
+  var questionEl = document.getElementById("negotiationQuestion");
+  var askBtn = document.getElementById("negotiationAskBtn");
+  var statusEl = document.getElementById("negotiationStatus");
+  var answerEl = document.getElementById("negotiationAnswer");
+  var metaEl = document.getElementById("negotiationMeta");
+
+  if (!cardEl || !questionEl || !askBtn || !answerEl) {
+    return;
+  }
+
+  askBtn.addEventListener("click", function () {
+    var endpoint = cardEl.getAttribute("data-endpoint") || "";
+    var question = (questionEl.value || "").trim();
+    if (!endpoint) {
+      return;
+    }
+    if (!question) {
+      answerEl.textContent = "Enter a negotiation question first.";
+      return;
+    }
+
+    askBtn.disabled = true;
+    statusEl.textContent = "Generating answer...";
+
+    fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCookie("csrftoken") || "",
+      },
+      body: JSON.stringify({ question: question }),
+    })
+      .then(function (response) {
+        return response.json().then(function (data) {
+          return { ok: response.ok, data: data };
+        });
+      })
+      .then(function (result) {
+        if (!result.ok || !result.data || result.data.success === false) {
+          var message = (result.data && result.data.message) || "Unable to generate negotiation response.";
+          answerEl.textContent = message;
+          metaEl.textContent = "";
+          return;
+        }
+
+        answerEl.textContent = result.data.answer || "No answer returned.";
+
+        var metaParts = [];
+        if (result.data.recommended_vendor) {
+          metaParts.push("Recommended vendor: " + result.data.recommended_vendor);
+        }
+        if (typeof result.data.confidence === "number") {
+          metaParts.push("Confidence: " + (result.data.confidence * 100).toFixed(0) + "%");
+        }
+        if (result.data.next_best_question) {
+          metaParts.push("Next ask: " + result.data.next_best_question);
+        }
+        if (result.data.risk_flags && result.data.risk_flags.length) {
+          metaParts.push("Risk flags: " + result.data.risk_flags.join(" | "));
+        }
+        metaEl.textContent = metaParts.join(" -- ");
+      })
+      .catch(function () {
+        answerEl.textContent = "Network or server error while generating negotiation response.";
+        metaEl.textContent = "";
+      })
+      .finally(function () {
+        askBtn.disabled = false;
+        statusEl.textContent = "";
+      });
+  });
+});
+
 function openQuotationPreview(documentUrl, vendorName) {
   var titleEl = document.getElementById('quotationPreviewTitle');
   var iframeEl = document.getElementById('quotationPreviewFrame');
+  var openNewTabEl = document.getElementById('quotationPreviewOpenNewTab');
   if (titleEl) {
     titleEl.textContent = 'Quotation Document - ' + (vendorName || 'Vendor');
   }
   if (iframeEl) {
     iframeEl.src = documentUrl || '';
+  }
+  if (openNewTabEl) {
+    openNewTabEl.href = documentUrl || '#';
   }
   var modalEl = document.getElementById('quotationPreviewModal');
   if (modalEl && window.bootstrap && window.bootstrap.Modal) {
@@ -1133,8 +1409,12 @@ function openQuotationPreview(documentUrl, vendorName) {
 document.addEventListener('hidden.bs.modal', function (event) {
   if (event.target && event.target.id === 'quotationPreviewModal') {
     var iframeEl = document.getElementById('quotationPreviewFrame');
+    var openNewTabEl = document.getElementById('quotationPreviewOpenNewTab');
     if (iframeEl) {
       iframeEl.src = '';
+    }
+    if (openNewTabEl) {
+      openNewTabEl.href = '#';
     }
   }
 });
@@ -1159,8 +1439,22 @@ document.addEventListener("DOMContentLoaded", function () {
   <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width:90vw;">
     <div class="modal-content">
       <div class="modal-header py-2">
-        <h5 class="modal-title" id="quotationPreviewTitle" style="font-size:.95rem;">Quotation Document</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <div>
+          <h5 class="modal-title" id="quotationPreviewTitle" style="font-size:.95rem;">Quotation Document</h5>
+          <div class="text-muted" style="font-size:.72rem;">Fetched from the application preview endpoint backed by Azure Blob Storage.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <a
+            id="quotationPreviewOpenNewTab"
+            href="#"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-sm btn-outline-primary"
+          >
+            Open in new tab
+          </a>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
       </div>
       <div class="modal-body p-0" style="height:75vh;">
         <iframe id="quotationPreviewFrame" src="" title="Quotation Preview" style="width:100%;height:100%;border:0;"></iframe>

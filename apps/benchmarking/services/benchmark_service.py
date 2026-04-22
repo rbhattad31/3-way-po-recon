@@ -15,6 +15,7 @@ Each agent is invoked sequentially with prior stage context.
 import logging
 import json
 from decimal import Decimal
+from collections import defaultdict
 from typing import Optional
 
 from django.conf import settings
@@ -29,7 +30,6 @@ from apps.benchmarking.models import (
     BenchmarkQuotation,
     BenchmarkRequest,
     BenchmarkResult,
-    VarianceThresholdConfig,
     VarianceStatus,
 )
 
@@ -53,6 +53,116 @@ class BenchmarkEngine:
             return deployment
         model = str(getattr(settings, "LLM_MODEL_NAME", "") or "").strip()
         return model or "unknown"
+
+    @classmethod
+    def _persist_result_snapshot(cls, *, bench_request: BenchmarkRequest) -> Optional[BenchmarkResult]:
+        line_items = list(
+            BenchmarkLineItem.objects.filter(
+                quotation__request=bench_request,
+                quotation__is_active=True,
+                is_active=True,
+            ).select_related("quotation")
+        )
+        if not line_items:
+            return None
+
+        totals_by_category = defaultdict(lambda: {"quoted": 0.0, "benchmark": 0.0, "line_count": 0})
+        total_quoted = 0.0
+        total_quoted_benchmark_covered = 0.0
+        total_benchmark_mid = 0.0
+        counts = {
+            "WITHIN_RANGE": 0,
+            "MODERATE": 0,
+            "HIGH": 0,
+            "NEEDS_REVIEW": 0,
+        }
+
+        for item in line_items:
+            quoted_amount = 0.0
+            if item.line_amount is not None:
+                quoted_amount = float(item.line_amount)
+            elif item.quoted_unit_rate is not None and item.quantity is not None:
+                quoted_amount = float(item.quoted_unit_rate) * float(item.quantity)
+
+            benchmark_amount = 0.0
+            has_benchmark = item.benchmark_mid is not None
+            if has_benchmark and item.quantity is not None:
+                benchmark_amount = float(item.benchmark_mid) * float(item.quantity)
+            elif has_benchmark:
+                benchmark_amount = float(item.benchmark_mid)
+
+            total_quoted += quoted_amount
+            if has_benchmark:
+                total_quoted_benchmark_covered += quoted_amount
+                total_benchmark_mid += benchmark_amount
+
+            status_key = (item.variance_status or "NEEDS_REVIEW").upper()
+            if status_key not in counts:
+                status_key = "NEEDS_REVIEW"
+            counts[status_key] += 1
+
+            category_key = (item.category or "UNCATEGORIZED").strip() or "UNCATEGORIZED"
+            totals_by_category[category_key]["quoted"] += quoted_amount
+            totals_by_category[category_key]["benchmark"] += benchmark_amount
+            totals_by_category[category_key]["line_count"] += 1
+
+        overall_deviation_pct = None
+        if total_benchmark_mid > 0:
+            overall_deviation_pct = round(
+                ((total_quoted_benchmark_covered - total_benchmark_mid) / total_benchmark_mid) * 100.0,
+                2,
+            )
+
+        if counts["HIGH"] > 0:
+            overall_status = VarianceStatus.HIGH
+        elif counts["MODERATE"] > 0:
+            overall_status = VarianceStatus.MODERATE
+        elif counts["WITHIN_RANGE"] > 0 and counts["NEEDS_REVIEW"] == 0:
+            overall_status = VarianceStatus.WITHIN_RANGE
+        else:
+            overall_status = VarianceStatus.NEEDS_REVIEW
+
+        category_summary = {}
+        for category, bucket in totals_by_category.items():
+            cat_quoted = bucket["quoted"]
+            cat_benchmark = bucket["benchmark"]
+            cat_variance_pct = None
+            if cat_benchmark > 0:
+                cat_variance_pct = round(((cat_quoted - cat_benchmark) / cat_benchmark) * 100.0, 2)
+            category_summary[category] = {
+                "quoted": round(cat_quoted, 2),
+                "benchmark": round(cat_benchmark, 2),
+                "variance_pct": cat_variance_pct,
+                "line_count": int(bucket["line_count"]),
+            }
+
+        existing_result = BenchmarkResult.objects.filter(request=bench_request).first()
+        negotiation_notes = []
+        if existing_result and isinstance(existing_result.negotiation_notes_json, list):
+            negotiation_notes = [
+                str(item).strip()
+                for item in existing_result.negotiation_notes_json
+                if str(item).strip()
+            ][:20]
+
+        result, _ = BenchmarkResult.objects.update_or_create(
+            request=bench_request,
+            defaults={
+                "tenant": getattr(bench_request, "tenant", None),
+                "total_quoted": Decimal(str(round(total_quoted, 2))),
+                "total_benchmark_mid": Decimal(str(round(total_benchmark_mid, 2))) if total_benchmark_mid > 0 else None,
+                "overall_deviation_pct": overall_deviation_pct,
+                "overall_status": overall_status,
+                "category_summary_json": category_summary,
+                "negotiation_notes_json": negotiation_notes,
+                "lines_within_range": counts["WITHIN_RANGE"],
+                "lines_moderate": counts["MODERATE"],
+                "lines_high": counts["HIGH"],
+                "lines_needs_review": counts["NEEDS_REVIEW"],
+                "is_active": True,
+            },
+        )
+        return result
 
     @staticmethod
     def _start_agent_run(
@@ -195,12 +305,19 @@ class BenchmarkEngine:
                 force_reextract=force_reextract,
             )
 
+            cls._persist_benchmark_result(
+                bench_request=bench_request,
+                outputs=outputs,
+            )
+
             final_line_count = int(outputs.get("line_item_count", 0) or 0)
             if final_line_count <= 0:
                 raise ValueError(
                     "Benchmarking extraction produced zero line items. "
                     "Please verify quotation quality or Azure DI configuration and reprocess."
                 )
+
+            cls._persist_result_snapshot(bench_request=bench_request)
 
             bench_request.refresh_from_db()
             bench_request.status = "COMPLETED"
@@ -259,11 +376,13 @@ class BenchmarkEngine:
                     7. Vendor Recommendation - rank vendors
         """
         from apps.benchmarking.agents import (
+            BenchmarkAIAnalyzerAgentBM,
             BenchmarkComplianceAgentBM,
             BenchmarkDecisionMakerAgentBM,
             BenchmarkingAnalystAgentBM,
-                        BenchmarkLineItemUnderstandingAgentBM,
+            BenchmarkLineItemUnderstandingAgentBM,
             BenchmarkMarketDataAnalyzerAgentBM,
+            BenchmarkNegotiationTalkingPointsAgentBM,
             BenchmarkVendorRecommendationAgent,
         )
 
@@ -389,7 +508,6 @@ class BenchmarkEngine:
                 line_items=line_items,
                 decision_output=decision_output,
                 market_output=outputs.get("market_data", {}),
-                geography=bench_request.geography,
             )
         except Exception as exc:
             logger.exception("Market price application failed (non-fatal): %s", exc)
@@ -473,9 +591,223 @@ class BenchmarkEngine:
             logger.exception("Vendor Recommendation failed: %s", exc)
             cls._fail_agent_run(stage_run_id, error=str(exc))
 
+        # Stage 7: AI Insights Analyzer
+        stage_name = "AI_Insights_Analyzer"
+        stage_run_id = cls._start_agent_run(
+            bench_request,
+            user=user,
+            trace_id=trace_id,
+            invocation_reason=f"{stage_name}:execute",
+            parent_run_id=parent_agent_run_id,
+            input_payload_extra={"agent_stage": stage_name},
+            llm_model_used=cls._configured_llm_model(),
+        )
+        try:
+            ai_output = BenchmarkAIAnalyzerAgentBM.analyze(
+                bench_request=bench_request,
+                line_items=line_items,
+                vendor_cards=vendor_cards,
+                decision_output=outputs.get("decision", {}),
+                market_output=outputs.get("market_data", {}),
+                analyst_output=outputs.get("analyst", {}),
+                compliance_output=outputs.get("compliance", {}),
+                vendor_output=outputs.get("vendor_recommendation", {}),
+            )
+            outputs["ai_insights"] = ai_output
+            cls._complete_agent_run(
+                stage_run_id,
+                confidence=float(ai_output.get("confidence", 0.75) or 0.75),
+                summary=ai_output.get("summary", "AI insights generated"),
+                output=ai_output,
+            )
+            logger.info("AI Insights Analyzer: %s", ai_output.get("summary", "completed"))
+        except Exception as exc:
+            logger.exception("AI Insights Analyzer failed: %s", exc)
+            cls._fail_agent_run(stage_run_id, error=str(exc))
+
+        # Stage 8: Negotiation Talking Points
+        stage_name = "Negotiation_Talking_Points"
+        stage_run_id = cls._start_agent_run(
+            bench_request,
+            user=user,
+            trace_id=trace_id,
+            invocation_reason=f"{stage_name}:execute",
+            parent_run_id=parent_agent_run_id,
+            input_payload_extra={"agent_stage": stage_name},
+            llm_model_used=cls._configured_llm_model(),
+        )
+        try:
+            negotiation_output = BenchmarkNegotiationTalkingPointsAgentBM.generate(
+                bench_request=bench_request,
+                line_items=line_items,
+                vendor_cards=vendor_cards,
+                ai_output=outputs.get("ai_insights", {}),
+                compliance_output=outputs.get("compliance", {}),
+                vendor_output=outputs.get("vendor_recommendation", {}),
+            )
+            outputs["negotiation_talking_points"] = negotiation_output
+            cls._complete_agent_run(
+                stage_run_id,
+                confidence=float(negotiation_output.get("confidence", 0.75) or 0.75),
+                summary=negotiation_output.get("summary", "Negotiation talking points generated"),
+                output=negotiation_output,
+            )
+            logger.info("Negotiation Talking Points: %s", negotiation_output.get("summary", "completed"))
+        except Exception as exc:
+            logger.exception("Negotiation Talking Points failed: %s", exc)
+            cls._fail_agent_run(stage_run_id, error=str(exc))
+
         outputs["line_item_count"] = len(line_items)
         logger.info("BenchmarkEngine: Pipeline completed with %d agent stages", len(outputs))
         return outputs
+
+    @classmethod
+    def _sanitise_insight_text(cls, value: str) -> str:
+        text = str(value or "")
+        text = text.encode("ascii", "ignore").decode("ascii")
+        return text.strip()
+
+    @classmethod
+    def _derive_variance_status(cls, deviation_pct: Optional[float], benchmark_total: Decimal) -> str:
+        if benchmark_total <= 0 or deviation_pct is None:
+            return "NEEDS_REVIEW"
+        abs_dev = abs(float(deviation_pct))
+        if abs_dev <= 5.0:
+            return "WITHIN_RANGE"
+        if abs_dev <= 15.0:
+            return "MODERATE"
+        return "HIGH"
+
+    @classmethod
+    def _build_category_summary(cls, line_items: list) -> dict:
+        category_totals = {}
+        for line_item in line_items:
+            category = (line_item.category or "UNCATEGORIZED").strip() or "UNCATEGORIZED"
+            bucket = category_totals.setdefault(
+                category,
+                {
+                    "quoted": Decimal("0"),
+                    "benchmark": Decimal("0"),
+                    "line_count": 0,
+                    "benchmarked_line_count": 0,
+                },
+            )
+            quoted = Decimal(str(line_item.line_amount or "0"))
+            benchmark_mid = line_item.benchmark_mid
+            qty = line_item.quantity
+
+            bucket["quoted"] += quoted
+            bucket["line_count"] += 1
+
+            if benchmark_mid is not None:
+                benchmark_component = Decimal(str(benchmark_mid))
+                if qty is not None:
+                    benchmark_component = benchmark_component * Decimal(str(qty))
+                bucket["benchmark"] += benchmark_component
+                bucket["benchmarked_line_count"] += 1
+
+        summary = {}
+        for category, bucket in category_totals.items():
+            quoted = bucket["quoted"]
+            benchmark = bucket["benchmark"]
+            variance_pct = None
+            if benchmark > 0:
+                variance_pct = round(((quoted - benchmark) / benchmark) * Decimal("100"), 2)
+            summary[category] = {
+                "quoted": float(round(quoted, 2)),
+                "benchmark": float(round(benchmark, 2)),
+                "variance_pct": float(variance_pct) if variance_pct is not None else None,
+                "line_count": bucket["line_count"],
+                "benchmarked_line_count": bucket["benchmarked_line_count"],
+            }
+        return summary
+
+    @classmethod
+    def _persist_benchmark_result(cls, *, bench_request: BenchmarkRequest, outputs: dict) -> Optional[BenchmarkResult]:
+        line_items = list(
+            BenchmarkLineItem.objects.filter(
+                quotation__request=bench_request,
+                quotation__is_active=True,
+                is_active=True,
+            )
+        )
+        if not line_items:
+            return None
+
+        total_quoted = Decimal("0")
+        total_benchmark_mid = Decimal("0")
+        lines_within_range = 0
+        lines_moderate = 0
+        lines_high = 0
+        lines_needs_review = 0
+
+        for line_item in line_items:
+            line_amount = Decimal(str(line_item.line_amount or "0"))
+            total_quoted += line_amount
+
+            benchmark_mid = line_item.benchmark_mid
+            qty = line_item.quantity
+            if benchmark_mid is not None:
+                benchmark_component = Decimal(str(benchmark_mid))
+                if qty is not None:
+                    benchmark_component = benchmark_component * Decimal(str(qty))
+                total_benchmark_mid += benchmark_component
+
+            status = (line_item.variance_status or "NEEDS_REVIEW").strip().upper()
+            if status == "WITHIN_RANGE":
+                lines_within_range += 1
+            elif status == "MODERATE":
+                lines_moderate += 1
+            elif status == "HIGH":
+                lines_high += 1
+            else:
+                lines_needs_review += 1
+
+        overall_deviation_pct = None
+        if total_benchmark_mid > 0:
+            overall_deviation_pct = float(
+                round(((total_quoted - total_benchmark_mid) / total_benchmark_mid) * Decimal("100"), 2)
+            )
+
+        negotiation_payload = outputs.get("negotiation_talking_points") or {}
+        raw_insights = negotiation_payload.get("talking_points") or []
+        if not raw_insights:
+            fallback_summary = (
+                negotiation_payload.get("summary")
+                or outputs.get("vendor_recommendation", {}).get("summary")
+                or outputs.get("analyst", {}).get("summary")
+                or ""
+            )
+            if fallback_summary:
+                raw_insights = [fallback_summary]
+        negotiation_notes = [
+            cls._sanitise_insight_text(item)
+            for item in raw_insights
+            if cls._sanitise_insight_text(item)
+        ][:20]
+
+        category_summary = cls._build_category_summary(line_items)
+
+        defaults = {
+            "tenant": getattr(bench_request, "tenant", None),
+            "total_quoted": round(total_quoted, 2),
+            "total_benchmark_mid": round(total_benchmark_mid, 2),
+            "overall_deviation_pct": overall_deviation_pct,
+            "overall_status": cls._derive_variance_status(overall_deviation_pct, total_benchmark_mid),
+            "category_summary_json": category_summary,
+            "negotiation_notes_json": negotiation_notes,
+            "lines_within_range": lines_within_range,
+            "lines_moderate": lines_moderate,
+            "lines_high": lines_high,
+            "lines_needs_review": lines_needs_review,
+            "is_active": True,
+        }
+
+        result, _ = BenchmarkResult.objects.update_or_create(
+            request=bench_request,
+            defaults=defaults,
+        )
+        return result
 
     @classmethod
     def _run_extraction_stage(
@@ -646,83 +978,6 @@ class BenchmarkEngine:
         return vendor_cards
 
     @classmethod
-    def _resolve_variance_thresholds(cls, *, category: str, geography: str) -> dict:
-        """Resolve runtime variance thresholds from DB with sane fallback defaults."""
-        category_code = str(category or "ALL").strip().upper() or "ALL"
-        geography_code = str(geography or "ALL").strip().upper() or "ALL"
-
-        candidates = list(
-            VarianceThresholdConfig.objects.filter(
-                is_active=True,
-                category__in=[category_code, "ALL"],
-                geography__in=[geography_code, "ALL"],
-            )
-        )
-
-        if not candidates:
-            return {
-                "within_range_max_pct": 5.0,
-                "moderate_max_pct": 15.0,
-                "source": "DEFAULT",
-            }
-
-        def _priority(row):
-            return (
-                1 if row.category == category_code else 0,
-                1 if row.geography == geography_code else 0,
-            )
-
-        best = sorted(candidates, key=_priority, reverse=True)[0]
-        return {
-            "within_range_max_pct": float(best.within_range_max_pct),
-            "moderate_max_pct": float(best.moderate_max_pct),
-            "source": f"{best.category}:{best.geography}",
-        }
-
-    @classmethod
-    def _resolve_line_geography(cls, *, line_item: BenchmarkLineItem, geography: str = "") -> str:
-        geo = str(geography or "").strip().upper()
-        if geo:
-            return geo
-        try:
-            related_geo = getattr(getattr(line_item.quotation, "request", None), "geography", "")
-            return str(related_geo or "ALL").strip().upper() or "ALL"
-        except Exception:
-            return "ALL"
-
-    @classmethod
-    def _classify_variance_for_line(
-        cls,
-        *,
-        line_item: BenchmarkLineItem,
-        benchmark_mid,
-        geography: str = "",
-    ) -> tuple[float | None, str]:
-        if not line_item.quoted_unit_rate or benchmark_mid in (None, 0, Decimal("0")):
-            return None, VarianceStatus.NEEDS_REVIEW
-
-        variance_pct = (
-            (float(line_item.quoted_unit_rate) - float(benchmark_mid))
-            / float(benchmark_mid)
-            * 100.0
-        )
-        thresholds = cls._resolve_variance_thresholds(
-            category=getattr(line_item, "category", "ALL") or "ALL",
-            geography=cls._resolve_line_geography(line_item=line_item, geography=geography),
-        )
-        abs_variance = abs(variance_pct)
-        within_range_max = float(thresholds.get("within_range_max_pct", 5.0) or 5.0)
-        moderate_max = float(thresholds.get("moderate_max_pct", 15.0) or 15.0)
-
-        if abs_variance <= within_range_max:
-            status = VarianceStatus.WITHIN_RANGE
-        elif abs_variance <= moderate_max:
-            status = VarianceStatus.MODERATE
-        else:
-            status = VarianceStatus.HIGH
-        return round(variance_pct, 2), status
-
-    @classmethod
     def _apply_benchmark_corridors(
         cls,
         *,
@@ -852,13 +1107,21 @@ class BenchmarkEngine:
                 
                 # Calculate variance
                 if line_item.quoted_unit_rate and corridor.mid_rate:
-                    variance_pct, variance_status = cls._classify_variance_for_line(
-                        line_item=line_item,
-                        benchmark_mid=corridor.mid_rate,
-                        geography=geography,
+                    variance_pct = (
+                        (float(line_item.quoted_unit_rate) - float(corridor.mid_rate))
+                        / float(corridor.mid_rate)
+                        * 100.0
                     )
                     line_item.variance_pct = round(variance_pct, 2)
-                    line_item.variance_status = variance_status
+                    
+                    # Determine variance status
+                    abs_variance = abs(variance_pct)
+                    if abs_variance <= 5.0:
+                        line_item.variance_status = "WITHIN_RANGE"
+                    elif abs_variance <= 15.0:
+                        line_item.variance_status = "MODERATE"
+                    else:
+                        line_item.variance_status = "HIGH"
                 
                 line_item.save(update_fields=[
                     "benchmark_min", "benchmark_mid", "benchmark_max",
@@ -881,7 +1144,6 @@ class BenchmarkEngine:
         line_items: list,
         decision_output: dict,
         market_output: dict,
-        geography: str = "",
     ) -> None:
         line_decisions = decision_output.get("line_decisions", [])
         decisions_by_line_pk = {
@@ -962,13 +1224,19 @@ class BenchmarkEngine:
             line_item.benchmark_source = "PERPLEXITY_LIVE"
 
             if line_item.quoted_unit_rate:
-                variance_pct, variance_status = cls._classify_variance_for_line(
-                    line_item=line_item,
-                    benchmark_mid=benchmark_mid,
-                    geography=geography,
+                variance_pct = (
+                    (float(line_item.quoted_unit_rate) - float(benchmark_mid))
+                    / float(benchmark_mid)
+                    * 100.0
                 )
-                line_item.variance_pct = variance_pct
-                line_item.variance_status = variance_status
+                line_item.variance_pct = round(variance_pct, 2)
+                abs_variance = abs(variance_pct)
+                if abs_variance <= 5.0:
+                    line_item.variance_status = "WITHIN_RANGE"
+                elif abs_variance <= 15.0:
+                    line_item.variance_status = "MODERATE"
+                else:
+                    line_item.variance_status = "HIGH"
             else:
                 line_item.variance_pct = None
                 line_item.variance_status = "NEEDS_REVIEW"

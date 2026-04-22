@@ -25,6 +25,7 @@ import io
 import logging
 import os
 import time
+import re
 from datetime import datetime
 from typing import Union
 
@@ -117,6 +118,34 @@ class BlobStorageService:
             logger.warning("BlobStorageService: SAS URL generation failed for '%s': %s", blob_name, exc)
             return ""
 
+    @classmethod
+    def find_best_blob_for_quotation(
+        cls,
+        *,
+        request_title: str,
+        quotation_ref: str = "",
+        supplier_name: str = "",
+    ) -> tuple[str, str]:
+        """Find the most likely blob for a quotation with missing DB metadata.
+
+        Returns:
+            (blob_name, blob_url) or ("", "") when no good match is found.
+        """
+        try:
+            return cls._find_best_blob_for_quotation(
+                request_title=request_title,
+                quotation_ref=quotation_ref,
+                supplier_name=supplier_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "BlobStorageService: blob discovery failed for request='%s' ref='%s': %s",
+                request_title,
+                quotation_ref,
+                exc,
+            )
+            return "", ""
+
     # ------------------------------------------------------------------
     # Internal implementation
     # ------------------------------------------------------------------
@@ -142,6 +171,56 @@ class BlobStorageService:
         service = cls._get_service_client()
         container_name = getattr(settings, "AZURE_BLOB_CONTAINER_NAME", "finance-agents")
         return service.get_container_client(container_name)
+
+    @staticmethod
+    def _tokenize_search_text(value: str) -> list[str]:
+        text = (value or "").strip().lower()
+        if not text:
+            return []
+        parts = re.split(r"[^a-z0-9]+", text)
+        return [p for p in parts if len(p) >= 3]
+
+    @classmethod
+    def _find_best_blob_for_quotation(
+        cls,
+        *,
+        request_title: str,
+        quotation_ref: str,
+        supplier_name: str,
+    ) -> tuple[str, str]:
+        container_client = cls._get_container_client()
+        request_tokens = cls._tokenize_search_text(request_title)
+        ref_tokens = cls._tokenize_search_text(quotation_ref)
+        supplier_tokens = cls._tokenize_search_text(supplier_name)
+        strong_tokens = ref_tokens + supplier_tokens
+
+        best_blob_name = ""
+        best_blob_url = ""
+        best_score = -1
+
+        for blob in container_client.list_blobs(name_starts_with=cls.BENCHMARKING_PREFIX):
+            blob_name = str(getattr(blob, "name", "") or "")
+            if not blob_name:
+                continue
+            lower_name = blob_name.lower()
+            if not lower_name.endswith(".pdf"):
+                continue
+
+            request_score = sum(1 for token in request_tokens if token in lower_name)
+            if request_tokens and request_score == 0:
+                continue
+
+            strong_score = sum(2 for token in strong_tokens if token in lower_name)
+            total_score = request_score + strong_score
+
+            if total_score > best_score:
+                best_score = total_score
+                best_blob_name = blob_name
+                best_blob_url = container_client.get_blob_client(blob_name).url
+
+        if best_score <= 0:
+            return "", ""
+        return best_blob_name, best_blob_url
 
     @classmethod
     def _build_blob_name(cls, filename: str, request_ref: str = "") -> str:

@@ -312,15 +312,15 @@
         <div class="cfg-form-row">
           <div>
             <label class="form-label-cfg">Category Code <span class="text-danger">*</span></label>
-            <input type="text" id="cat-modal-code" class="form-control form-control-cfg" placeholder="Example: SPARE_PARTS" oninput="syncCategoryModalFromSelection()" style="text-transform:uppercase;">
-            <div class="mt-1 text-muted" style="font-size:.76rem;">
-              Enter a free category code using letters, numbers, or underscore only.
-            </div>
-            <div class="mt-2" id="cat-modal-code-examples" style="display:flex;flex-wrap:wrap;gap:.4rem;"></div>
-            <div class="mt-1 text-muted" style="font-size:.76rem;">
-              Example codes: <strong>EQUIPMENT</strong>, <strong>DUCTING</strong>, <strong>PIPING</strong>, <strong>CONTROLS</strong>, <strong>SPARE_PARTS</strong>.
-            </div>
+            <input type="text" id="cat-modal-code" class="form-control form-control-cfg" placeholder="Enter category code" oninput="syncCategoryModalFromSelection()" style="text-transform:uppercase;">
           </div>
+          <div>
+            <label class="form-label-cfg">Category Name <span class="text-danger">*</span></label>
+            <input type="text" id="cat-modal-name" class="form-control form-control-cfg" placeholder="Enter category name">
+          </div>
+        </div>
+
+        <div class="cfg-form-row">
           <div>
             <label class="form-label-cfg">Pricing Type <span class="text-danger">*</span></label>
             <select id="cat-modal-type" class="form-control form-control-cfg">
@@ -329,16 +329,9 @@
               <option value="BENCHMARK">BENCHMARK</option>
             </select>
           </div>
-        </div>
-
-        <div class="cfg-form-row">
-          <div>
-            <label class="form-label-cfg">Category Name <span class="text-danger">*</span></label>
-            <input type="text" id="cat-modal-name" class="form-control form-control-cfg" placeholder="Enter category name">
-          </div>
           <div class="d-flex align-items-end">
             <div class="text-muted" style="font-size:.78rem;padding:.7rem .8rem;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;width:100%;">
-              Display order is managed automatically. No sort order input is required.
+              Display order is managed automatically.
             </div>
           </div>
         </div>
@@ -350,10 +343,7 @@
 
         <div class="mt-2">
           <label class="form-label-cfg">Keywords <small class="text-muted">(comma-separated)</small></label>
-          <input type="text" id="cat-modal-keywords" class="form-control form-control-cfg" placeholder="e.g. chiller, condensing unit, thermostat">
-          <div class="mt-1 text-muted" style="font-size:.76rem;">
-            Example: chiller, vrf, condensing unit, copper pipe, diffuser.
-          </div>
+          <input type="text" id="cat-modal-keywords" class="form-control form-control-cfg" placeholder="Enter keywords">
         </div>
 
         <div class="cfg-form-row mt-2">
@@ -391,13 +381,12 @@
         <div class="cfg-form-row">
           <div>
             <label class="form-label-cfg">Category <span class="text-danger">*</span></label>
-            <select id="thr-modal-category" class="form-control form-control-cfg">
-              <option value="ALL">All Categories</option>
-            </select>
+            <input type="text" id="thr-modal-category" class="form-control form-control-cfg" placeholder="Enter category">
           </div>
           <div>
             <label class="form-label-cfg">Geography <span class="text-danger">*</span></label>
             <select id="thr-modal-geography" class="form-control form-control-cfg">
+              <option value="">Select Geography</option>
               <option value="ALL">All Geographies</option>
               {% for code, label in geo_choices_with_all %}
               {% if code != "ALL" %}<option value="{{ code }}">{{ label }}</option>{% endif %}
@@ -425,7 +414,7 @@
         <div class="cfg-form-row mt-2">
           <div class="d-flex align-items-end">
             <div class="form-check form-check-cfg">
-              <input class="form-check-input" type="checkbox" id="thr-modal-active" checked>
+              <input class="form-check-input" type="checkbox" id="thr-modal-active">
               <label class="form-check-label" for="thr-modal-active">Active</label>
             </div>
           </div>
@@ -716,12 +705,6 @@ function loadThresholds(){
 
 // ================================================================ CATEGORY MASTER MODAL
 function buildCategoryModalOptions(selectedCode){
-  var items = categoryConfigItems && categoryConfigItems.length ? categoryConfigItems : (dbCategories || []);
-  var exampleHtml = (items || []).slice(0, 6).map(function(item){
-    var code = item.code || '';
-    return '<span class="badge rounded-pill text-bg-light border" style="font-size:.72rem;cursor:default;">' + code + '</span>';
-  }).join('');
-  $('#cat-modal-code-examples').html(exampleHtml);
   $('#cat-modal-code').val(selectedCode || '');
 }
 
@@ -744,8 +727,8 @@ function syncCategoryModalFromSelection(){
     $('#cat-modal-active').prop('checked', true);
     $('#cat-modal-action-help').html(
       code
-        ? 'New category code detected. Add the name and details, then save. Example codes: <strong>EQUIPMENT</strong>, <strong>DUCTING</strong>, <strong>PIPING</strong>, <strong>SPARE_PARTS</strong>.'
-        : 'Enter a new category code and name. Example codes: <strong>EQUIPMENT</strong>, <strong>DUCTING</strong>, <strong>PIPING</strong>, <strong>SPARE_PARTS</strong>.'
+        ? 'New category code detected. Add the name and details, then save.'
+        : 'Enter category details and save.'
     );
     return;
   }
@@ -818,31 +801,15 @@ function saveCategoryConfig(){
 }
 
 // ================================================================ THRESHOLD MODAL
-function populateThresholdCategoryDropdown(selectedCategory){
-  var items = categoryConfigItems && categoryConfigItems.length ? categoryConfigItems : (dbCategories || []);
-  var html = ['<option value="ALL"' + (selectedCategory === 'ALL' ? ' selected' : '') + '>ALL - All Categories</option>'];
-  (items || []).forEach(function(item){
-    html.push('<option value="' + item.code + '"' + (item.code === selectedCategory ? ' selected' : '') + '>' + item.code + ' - ' + (item.label || item.code) + '</option>');
-  });
-  $('#thr-modal-category').html(html.join(''));
-}
-
 function openThresholdModal(item){
-  var current = item || {
-    category: 'ALL',
-    geography: 'ALL',
-    within_range_max_pct: 5.0,
-    moderate_max_pct: 15.0,
-    notes: '',
-    is_active: true
-  };
-  populateThresholdCategoryDropdown(current.category || 'ALL');
+  item = item || null;
   $('#modalThresholdTitle').html('<i class="bi bi-bar-chart-steps me-2"></i>Add Variance Threshold');
-  $('#thr-modal-geography').val(current.geography || 'ALL');
-  $('#thr-modal-within').val(current.within_range_max_pct);
-  $('#thr-modal-moderate').val(current.moderate_max_pct);
-  $('#thr-modal-notes').val(current.notes || '');
-  $('#thr-modal-active').prop('checked', current.is_active !== false);
+  $('#thr-modal-category').val('');
+  $('#thr-modal-geography').val('');
+  $('#thr-modal-within').val('');
+  $('#thr-modal-moderate').val('');
+  $('#thr-modal-notes').val('');
+  $('#thr-modal-active').prop('checked', false);
   new bootstrap.Modal(document.getElementById('modalThreshold')).show();
 }
 

@@ -16,8 +16,9 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.files.base import ContentFile
 from django.db import transaction
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 from apps.core.tenant_utils import require_tenant
 
@@ -38,7 +39,9 @@ from apps.benchmarking.models import (
 )
 from apps.benchmarking.services.benchmark_service import BenchmarkEngine
 from apps.benchmarking.services.blob_storage_service import BlobStorageService
+from apps.benchmarking.services.document_recovery_service import BenchmarkDocumentRecoveryService
 from apps.benchmarking.services.export_service import ExportService
+from apps.benchmarking.services.negotiation_assistant_service import BenchmarkNegotiationAssistantService
 from apps.benchmarking.agents.Vendor_Recommendation_Agent_BM import BenchmarkVendorRecommendationAgent
 from apps.documents.blob_service import build_blob_url, delete_blob, upload_to_blob
 
@@ -46,6 +49,12 @@ try:
     from apps.procurement.models import GeneratedRFQ as _GeneratedRFQ
 except ImportError:
     _GeneratedRFQ = None
+
+
+try:
+    from apps.procurement.models import HVACServiceScope as _HVACServiceScope
+except ImportError:
+    _HVACServiceScope = None
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +114,41 @@ def _extract_pdf_files_from_upload(uploaded_file):
     return extracted_files, None
 
 
+def _extract_pdf_files_from_uploads(uploaded_files):
+    """Flatten one or more PDF/ZIP uploads into a single PDF file list."""
+    if not uploaded_files:
+        return [], "Quotation file is required (PDF or ZIP)."
+
+    all_pdf_files = []
+    for uploaded_file in uploaded_files:
+        extracted_files, upload_error = _extract_pdf_files_from_upload(uploaded_file)
+        if upload_error:
+            return [], upload_error
+        all_pdf_files.extend(extracted_files)
+
+    if not all_pdf_files:
+        return [], "No PDF files found in uploaded quotation input."
+
+    if len(all_pdf_files) > BENCHMARK_ZIP_MAX_FILES:
+        return [], (
+            f"Total uploaded PDFs ({len(all_pdf_files)}) exceed maximum allowed "
+            f"{BENCHMARK_ZIP_MAX_FILES}."
+        )
+
+    return all_pdf_files, None
+
+
+def _get_quotation_uploads(request):
+    """Return quotation uploads from multi-file or legacy single-file form inputs."""
+    uploads = [f for f in request.FILES.getlist("quotation_pdfs") if f]
+    if uploads:
+        return uploads
+    legacy_upload = request.FILES.get("quotation_pdf")
+    if legacy_upload:
+        return [legacy_upload]
+    return []
+
+
 def _is_platform_admin(user) -> bool:
     return bool(getattr(user, "is_platform_admin", False) or getattr(user, "is_superuser", False))
 
@@ -130,7 +174,20 @@ def _create_quotations_from_upload(*, bench_request, upload, quotation_ref: str,
 
     Blob is the source of truth. Local file storage is not used for new uploads.
     """
-    extracted_files, upload_error = _extract_pdf_files_from_upload(upload)
+    return _create_quotations_from_uploads(
+        bench_request=bench_request,
+        uploads=[upload],
+        quotation_ref=quotation_ref,
+        user=user,
+    )
+
+
+def _create_quotations_from_uploads(*, bench_request, uploads, quotation_ref: str, user):
+    """Create one or many BenchmarkQuotation rows from PDF/ZIP upload list.
+
+    Blob is the source of truth. Local file storage is not used for new uploads.
+    """
+    extracted_files, upload_error = _extract_pdf_files_from_uploads(uploads)
     if upload_error:
         return [], upload_error
 
@@ -215,6 +272,69 @@ def _get_generated_rfqs(tenant=None):
             .values("rfq_ref", "system_label", "request__title")
         )
     except Exception:
+        return []
+
+
+def _build_rfq_scope_rows(*, bench_request, rfq_mode, rfq_ref):
+    """Build extracted RFQ scope rows for display in benchmarking request detail."""
+    if rfq_mode != "SYSTEM_RFQ" or not rfq_ref or _GeneratedRFQ is None or _HVACServiceScope is None:
+        return []
+
+    try:
+        rfq_qs = _GeneratedRFQ.objects.filter(rfq_ref=rfq_ref)
+        if getattr(bench_request, "tenant_id", None):
+            rfq_qs = rfq_qs.filter(request__tenant_id=bench_request.tenant_id)
+        generated_rfq = rfq_qs.order_by("-created_at").first()
+        if not generated_rfq:
+            return []
+
+        system_code = (generated_rfq.system_code or "").strip()
+        if not system_code:
+            return []
+
+        db_scope = _HVACServiceScope.objects.filter(system_type__iexact=system_code, is_active=True).first()
+        if not db_scope:
+            return []
+
+        quantity_overrides = {}
+        raw_qty_json = generated_rfq.qty_json or {}
+        if isinstance(raw_qty_json, dict):
+            for key, value in raw_qty_json.items():
+                try:
+                    quantity_overrides[int(key)] = value
+                except (TypeError, ValueError):
+                    continue
+
+        raw_rows = []
+        for category, field_text in [
+            ("Equipment", db_scope.equipment_scope),
+            ("Installation", db_scope.installation_services),
+            ("Piping/Ducting", db_scope.piping_ducting),
+            ("Electrical", db_scope.electrical_works),
+            ("Controls", db_scope.controls_accessories),
+            ("Testing", db_scope.testing_commissioning),
+        ]:
+            line_count = 0
+            for line in (field_text or "").splitlines():
+                clean_line = line.strip().lstrip("-*. ").strip()
+                if clean_line:
+                    raw_rows.append((category, clean_line, "LS", 1))
+                    line_count += 1
+            if line_count == 0:
+                raw_rows.append((category, "(As per site conditions)", "LS", 1))
+
+        rows = []
+        for index, (category, description, unit, quantity) in enumerate(raw_rows, start=1):
+            rows.append({
+                "line_no": index,
+                "category": category,
+                "description": description,
+                "unit": unit,
+                "quantity": quantity_overrides.get(index - 1, quantity),
+            })
+        return rows
+    except Exception:
+        logger.exception("Failed to build RFQ scope rows for benchmark request %s", bench_request.pk)
         return []
 
 
@@ -354,26 +474,39 @@ def request_create(request):
         scope_type = request.POST.get("scope_type", "SITC")
         store_type = request.POST.get("store_type", "").strip()
         rfq_source = request.POST.get("rfq_source", "manual")
+        rfq_manual_ref = request.POST.get("rfq_manual_ref", "").strip()
         if rfq_source == "system":
-            quotation_ref = request.POST.get("rfq_system_ref", "").strip()
+            rfq_ref = request.POST.get("rfq_system_ref", "").strip()
         elif rfq_source == "upload":
             rfq_upload_file = request.FILES.get("rfq_upload_file")
             if rfq_upload_file:
-                quotation_ref = os.path.splitext(rfq_upload_file.name)[0].strip() or "uploaded-rfq"
+                rfq_ref = os.path.splitext(rfq_upload_file.name)[0].strip() or "uploaded-rfq"
             else:
-                quotation_ref = request.POST.get("rfq_upload_ref", "").strip() or request.POST.get("quotation_ref", "").strip()
+                rfq_ref = request.POST.get("rfq_upload_ref", "").strip() or rfq_manual_ref
         else:
-            quotation_ref = request.POST.get("quotation_ref", "").strip()
+            rfq_ref = rfq_manual_ref
+        quotation_batch_ref = request.POST.get("quotation_batch_ref", "").strip()
         notes = request.POST.get("notes", "").strip()
 
         errors = []
         if not title:
             errors.append("Request title is required.")
-        upload = request.FILES.get("quotation_pdf")
-        if upload:
-            _, upload_validation_error = _extract_pdf_files_from_upload(upload)
+        if rfq_source == "system" and not rfq_ref:
+            errors.append("Please select a system RFQ reference.")
+        if rfq_source == "upload" and not request.FILES.get("rfq_upload_file"):
+            errors.append("Please upload an RFQ PDF file.")
+        if rfq_source == "manual" and not rfq_ref:
+            errors.append("Manual RFQ reference is required.")
+
+        uploads = _get_quotation_uploads(request)
+        if uploads:
+            extracted_files, upload_validation_error = _extract_pdf_files_from_uploads(uploads)
             if upload_validation_error:
                 errors.append(upload_validation_error)
+            elif len(extracted_files) < 4:
+                errors.append("Please upload at least 4 quotation PDFs for benchmarking.")
+        else:
+            errors.append("Please upload quotation files (PDF or ZIP).")
 
         if errors:
             for err in errors:
@@ -406,7 +539,7 @@ def request_create(request):
             tenant=getattr(request, "tenant", None),
             created_by=request.user,
             rfq_source=rfq_source,
-            rfq_ref=quotation_ref,
+            rfq_ref=rfq_ref,
         )
 
         # Save uploaded RFQ document (rfq_source == "upload")
@@ -431,11 +564,11 @@ def request_create(request):
                         generated_rfq_list=_get_generated_rfqs(getattr(request, "tenant", None)),
                     ))
 
-        if upload:
-            created_quotes, upload_error = _create_quotations_from_upload(
+        if uploads:
+            created_quotes, upload_error = _create_quotations_from_uploads(
                 bench_request=bench_request,
-                upload=upload,
-                quotation_ref=quotation_ref,
+                uploads=uploads,
+                quotation_ref=quotation_batch_ref,
                 user=request.user,
             )
             if upload_error:
@@ -483,6 +616,95 @@ def request_create(request):
 # 3. Request Detail / Results
 # --------------------------------------------------------------------------- #
 
+
+def _quotation_has_document_source(quotation) -> bool:
+    return BenchmarkDocumentRecoveryService.quotation_has_document_source(quotation)
+
+
+def _ensure_quotation_document_source(quotation) -> bool:
+    return BenchmarkDocumentRecoveryService.ensure_document_source(quotation)
+
+
+def _build_quotation_preview_url(quotation) -> str:
+    if not _ensure_quotation_document_source(quotation):
+        return ""
+
+    blob_name = (quotation.blob_name or "").strip()
+    if blob_name:
+        sas_url = (BlobStorageService.get_sas_url(blob_name, expiry_hours=24) or "").strip()
+        if sas_url:
+            return sas_url
+
+    blob_url = (quotation.blob_url or "").strip()
+    if blob_url:
+        return blob_url
+
+    return reverse("benchmarking:quotation_document_preview", args=[quotation.pk])
+
+
+def _build_inline_pdf_response(pdf_bytes: bytes, filename: str) -> HttpResponse:
+    safe_filename = os.path.basename(filename or "quotation.pdf").replace('"', "")
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="{safe_filename}"'
+    response["Cache-Control"] = "private, max-age=300"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@login_required
+@require_http_methods(["GET"])
+def quotation_document_preview(request, pk):
+    quotation = get_object_or_404(
+        _scope_quotations(
+            request,
+            BenchmarkQuotation.objects.filter(is_active=True).select_related("request"),
+        ),
+        pk=pk,
+    )
+
+    base_filename = (
+        (quotation.quotation_ref or "").strip()
+        or (quotation.supplier_name or "").strip()
+        or f"quotation_{quotation.pk}"
+    )
+    if not base_filename.lower().endswith(".pdf"):
+        base_filename = f"{base_filename}.pdf"
+
+    _ensure_quotation_document_source(quotation)
+
+    if (quotation.blob_name or "").strip():
+        try:
+            pdf_bytes = BlobStorageService.download_blob_bytes(quotation.blob_name)
+            return _build_inline_pdf_response(pdf_bytes, base_filename)
+        except Exception:
+            logger.exception(
+                "Failed to stream benchmarking blob document for quotation_id=%s blob_name=%s",
+                quotation.pk,
+                quotation.blob_name,
+            )
+
+    if quotation.document:
+        try:
+            quotation.document.open("rb")
+            response = FileResponse(quotation.document.file, content_type="application/pdf")
+            response["Content-Disposition"] = (
+                f'inline; filename="{os.path.basename(quotation.document.name) or base_filename}"'
+            )
+            response["Cache-Control"] = "private, max-age=300"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            logger.exception(
+                "Failed to stream local benchmarking document for quotation_id=%s",
+                quotation.pk,
+            )
+
+    if (quotation.blob_url or "").strip():
+        return redirect(quotation.blob_url)
+
+    return HttpResponse("Quotation document not found.", status=404)
+
+
 @login_required
 def request_detail(request, pk):
     """Detailed results view for a benchmarking request."""
@@ -498,16 +720,7 @@ def request_detail(request, pk):
         line_items.extend(q_items)
         fallback_vendor_label = f"Vendor {chr(64 + idx)}" if idx <= 26 else f"Vendor {idx}"
         supplier_name = (q.supplier_name or "").strip() or fallback_vendor_label
-        quotation_document_url = ""
-        if q.blob_name:
-            quotation_document_url = (BlobStorageService.get_sas_url(q.blob_name, expiry_hours=24) or "").strip()
-        if not quotation_document_url:
-            quotation_document_url = (q.blob_url or "").strip()
-        if not quotation_document_url:
-            try:
-                quotation_document_url = q.document.url if q.document else ""
-            except Exception:
-                quotation_document_url = ""
+        quotation_document_url = _build_quotation_preview_url(q)
         q_total = 0.0
         q_total_bench_covered = 0.0
         q_bench = 0.0
@@ -617,6 +830,12 @@ def request_detail(request, pk):
         rfq_mode = "NO_RFQ"
         rfq_label = "No RFQ"
 
+    rfq_scope_rows = _build_rfq_scope_rows(
+        bench_request=bench_request,
+        rfq_mode=rfq_mode,
+        rfq_ref=rfq_ref,
+    )
+
     total_line_count = len(line_items)
     db_line_count = len([li for li in line_items if li.benchmark_source == "CORRIDOR_DB"])
     market_line_count = len([li for li in line_items if li.benchmark_source == "PERPLEXITY_LIVE"])
@@ -722,8 +941,51 @@ def request_detail(request, pk):
         round(sum(variance_values) / len(variance_values), 1) if variance_values else None
     )
 
-    # AI insights -- same as negotiation_notes for this system
-    insight_items = negotiation_notes
+    # AI insights: source from AI_Insights_Analyzer AgentRun payload
+    insight_items = []
+    try:
+        from apps.agents.models import AgentRun
+        _latest_ai_run = (
+            AgentRun.objects.filter(
+                input_payload__benchmark_request_pk=bench_request.pk,
+                input_payload__agent_stage="AI_Insights_Analyzer",
+            )
+            .order_by("-started_at", "-pk")
+            .first()
+        )
+        if _latest_ai_run:
+            _payload = _latest_ai_run.output_payload or {}
+            _insights = _payload.get("insights") or []
+            insight_items = [str(x).strip() for x in _insights if str(x).strip()]
+            if not insight_items:
+                _summary = str(_payload.get("summary") or "").strip()
+                if _summary:
+                    insight_items = [_summary]
+    except Exception:
+        pass
+
+    # Negotiation talking points: prefer persisted result notes, fallback to Negotiation_Talking_Points AgentRun payload
+    if not negotiation_notes:
+        try:
+            from apps.agents.models import AgentRun
+            _latest_negotiation_run = (
+                AgentRun.objects.filter(
+                    input_payload__benchmark_request_pk=bench_request.pk,
+                    input_payload__agent_stage="Negotiation_Talking_Points",
+                )
+                .order_by("-started_at", "-pk")
+                .first()
+            )
+            if _latest_negotiation_run:
+                _payload = _latest_negotiation_run.output_payload or {}
+                _notes = _payload.get("talking_points") or []
+                negotiation_notes = [str(x).strip() for x in _notes if str(x).strip()]
+                if not negotiation_notes:
+                    _summary = str(_payload.get("summary") or "").strip()
+                    if _summary:
+                        negotiation_notes = [_summary]
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Vendor names ordered (stable across pivot & filter dropdowns)        #
@@ -915,14 +1177,63 @@ def request_detail(request, pk):
             "stage_key": "Vendor_Recommendation",
             "display_name": "BenchmarkVendorRecommendationAgent",
             "short_name": "Vendor Recommendation",
-            "description": "Ranks vendors by benchmarked deviation, coverage, and compliance; generates negotiation talking points",
+            "description": "Ranks vendors by benchmarked deviation, coverage, and compliance",
             "api_call": "Azure OpenAI GPT-4o -- chat completions",
             "color": "#0f766e",
             "badge_bg": "#134e4a",
             "badge_fg": "#5eead4",
             "icon": "bi-trophy",
         },
+        {
+            "stage_key": "AI_Insights_Analyzer",
+            "display_name": "BenchmarkAIAnalyzerAgentBM",
+            "short_name": "AI Insights Analyzer",
+            "description": "Generates detailed AI insights, risk flags, and recommended next actions from full pipeline output",
+            "api_call": "Azure OpenAI GPT-4o -- chat completions",
+            "color": "#9333ea",
+            "badge_bg": "#581c87",
+            "badge_fg": "#e9d5ff",
+            "icon": "bi-stars",
+        },
+        {
+            "stage_key": "Negotiation_Talking_Points",
+            "display_name": "BenchmarkNegotiationTalkingPointsAgentBM",
+            "short_name": "Negotiation Talking Points",
+            "description": "Builds vendor-facing negotiation talking points, fallback positions, and red flags from benchmark outcomes",
+            "api_call": "Azure OpenAI GPT-4o -- chat completions",
+            "color": "#b45309",
+            "badge_bg": "#78350f",
+            "badge_fg": "#fcd34d",
+            "icon": "bi-chat-left-dots",
+        },
     ]
+
+    _AGENT_STAGE_META_BY_KEY = {
+        _meta["stage_key"]: _meta for _meta in _AGENT_STAGE_META
+    }
+
+    def _actor_label(_user) -> str:
+        if not _user:
+            return "System"
+        try:
+            return _user.get_short_name() or _user.get_full_name() or _user.email or "System"
+        except Exception:
+            return getattr(_user, "email", "") or "System"
+
+    def _duration_display(_duration_ms):
+        if _duration_ms is None:
+            return ""
+        return f"{_duration_ms}ms" if _duration_ms < 1000 else f"{_duration_ms/1000:.2f}s"
+
+    def _status_tone(_status: str) -> str:
+        _norm = (_status or "").upper()
+        if _norm in {"COMPLETED", "SUCCESS", "DONE"}:
+            return "success"
+        if _norm in {"FAILED", "ERROR"}:
+            return "danger"
+        if _norm in {"RUNNING", "PROCESSING", "STARTED", "PENDING"}:
+            return "warning"
+        return "secondary"
 
     # Query real AgentRun records for this benchmark request
     _agent_runs_by_stage: dict = {}
@@ -950,9 +1261,7 @@ def request_detail(request, pk):
         if _ar:
             _op = _ar.output_payload or {}
             _ip = _ar.input_payload or {}
-            _dur = None
-            if _ar.duration_ms is not None:
-                _dur = f"{_ar.duration_ms}ms" if _ar.duration_ms < 1000 else f"{_ar.duration_ms/1000:.2f}s"
+            _dur = _duration_display(_ar.duration_ms)
             _run_data = {
                 "pk": _ar.pk,
                 "status": _ar.status,
@@ -970,6 +1279,195 @@ def request_detail(request, pk):
                 "error_message": getattr(_ar, "error_message", "") or "",
             }
         dev_pipeline_stages.append({**_smeta, "run": _run_data})
+
+    observed_stage_keys = set()
+    dev_agent_runs = []
+    for _seq, _ar in enumerate(_all_agent_runs, start=1):
+        _ip = _ar.input_payload or {}
+        _op = _ar.output_payload or {}
+        _stage_key = (_ip.get("agent_stage") or "").strip()
+        if not _stage_key:
+            _invocation = (_ar.invocation_reason or "").strip()
+            _stage_key = _invocation.split(":", 1)[0] if ":" in _invocation else (_ar.agent_type or "UNKNOWN_STAGE")
+        _meta = _AGENT_STAGE_META_BY_KEY.get(
+            _stage_key,
+            {
+                "stage_key": _stage_key or "UNKNOWN_STAGE",
+                "display_name": _ar.agent_type or "Unknown Agent",
+                "short_name": _stage_key.replace("_", " ") if _stage_key else "Unknown Stage",
+                "description": _ar.invocation_reason or "Observed from AgentRun record",
+                "api_call": _ar.llm_model_used or "Internal agent call",
+                "color": "#64748b",
+                "badge_bg": "#334155",
+                "badge_fg": "#cbd5e1",
+                "icon": "bi-robot",
+            },
+        )
+        observed_stage_keys.add(_stage_key)
+        dev_agent_runs.append({
+            "sequence": _seq,
+            "stage_key": _stage_key,
+            "display_name": _meta["display_name"],
+            "short_name": _meta["short_name"],
+            "description": _meta["description"],
+            "api_call": _meta["api_call"],
+            "color": _meta["color"],
+            "badge_bg": _meta["badge_bg"],
+            "badge_fg": _meta["badge_fg"],
+            "icon": _meta["icon"],
+            "pk": _ar.pk,
+            "status": _ar.status,
+            "tone": _status_tone(_ar.status),
+            "started_at": _ar.started_at,
+            "completed_at": _ar.completed_at,
+            "duration_display": _duration_display(_ar.duration_ms),
+            "duration_ms": _ar.duration_ms,
+            "confidence": _ar.confidence,
+            "llm_model_used": _ar.llm_model_used or "N/A",
+            "trace_id": _ar.trace_id or "",
+            "invocation_reason": _ar.invocation_reason or "",
+            "input_payload": _ip,
+            "output_payload": _op,
+            "output_summary": _op.get("summary") or _op.get("message") or "",
+            "error_message": getattr(_ar, "error_message", "") or "",
+            "timestamp": _ar.started_at or _ar.completed_at or _ar.created_at,
+        })
+
+    dev_expected_stages = [
+        _meta for _meta in _AGENT_STAGE_META if _meta["stage_key"] not in observed_stage_keys
+    ]
+    dev_pipeline_summary = {
+        "expected_stages": len(_AGENT_STAGE_META),
+        "observed_runs": len(dev_agent_runs),
+        "completed_runs": sum(1 for _run in dev_agent_runs if (_run["status"] or "").upper() == "COMPLETED"),
+        "failed_runs": sum(1 for _run in dev_agent_runs if (_run["status"] or "").upper() == "FAILED"),
+        "pending_runs": len(dev_expected_stages),
+    }
+
+    dev_timeline_events = []
+
+    def _push_timeline_event(**kwargs):
+        dev_timeline_events.append(kwargs)
+
+    _push_timeline_event(
+        source="BenchmarkRequest",
+        title="Request created",
+        detail="Benchmark request created for {} / {}".format(
+            bench_request.geography or "Unknown geography",
+            bench_request.scope_type or "Unknown scope",
+        ),
+        timestamp=bench_request.created_at,
+        tone="primary",
+        icon="bi-plus-circle-fill",
+        actor=_actor_label(bench_request.submitted_by),
+        badge=bench_request.status,
+        extra={
+            "request_pk": bench_request.pk,
+            "store_type": bench_request.store_type or "",
+            "rfq_ref": bench_request.rfq_ref or "",
+        },
+    )
+
+    for _q in bench_request.quotations.filter(is_active=True).order_by("created_at"):
+        _blob_name = (_q.blob_name or "").strip()
+        _blob_url = (_q.blob_url or "").strip()
+        _blob_uploaded = bool(_blob_name or _blob_url)
+        _push_timeline_event(
+            source="BenchmarkQuotation",
+            title="Quotation uploaded -- {}".format((_q.supplier_name or "Unknown supplier").strip() or "Unknown supplier"),
+            detail="Blob: {} | Extraction: {} | Ref: {}".format(
+                "uploaded" if _blob_uploaded else "missing",
+                _q.extraction_status,
+                _q.quotation_ref or "N/A",
+            ),
+            timestamp=_q.created_at,
+            tone="success" if _blob_uploaded else "warning",
+            icon="bi-cloud-upload-fill" if _blob_uploaded else "bi-exclamation-triangle-fill",
+            actor="Upload flow",
+            badge=_q.extraction_status,
+            extra={
+                "quotation_pk": _q.pk,
+                "blob_name": _blob_name or "",
+                "blob_url": _blob_url or "",
+                "local_file": bool(_q.document),
+            },
+        )
+
+    for _log in sorted(run_logs, key=lambda _item: _item.created_at):
+        _log_title = {
+            BenchmarkRunLog.RunType.ANALYSIS: "Analysis run logged",
+            BenchmarkRunLog.RunType.EXPORT_CSV: "CSV export downloaded",
+            BenchmarkRunLog.RunType.EXPORT_PDF: "PDF export downloaded",
+        }.get(_log.run_type, _log.run_type)
+        _push_timeline_event(
+            source="BenchmarkRunLog",
+            title=_log_title,
+            detail="Run type: {} | Status: {} | Run #: {}".format(
+                _log.run_type,
+                _log.status,
+                _log.run_number or "-",
+            ),
+            timestamp=_log.created_at,
+            tone=_status_tone(_log.status),
+            icon="bi-clock-history",
+            actor=_actor_label(_log.triggered_by),
+            badge=_log.status,
+            extra={
+                "notes": _log.notes or "",
+                "run_number": _log.run_number,
+            },
+        )
+
+    for _run in dev_agent_runs:
+        _push_timeline_event(
+            source="AgentRun",
+            title="{} {}".format(_run["display_name"], (_run["status"] or "").title()),
+            detail="{} | Model: {} | Duration: {}".format(
+                _run["short_name"],
+                _run["llm_model_used"],
+                _run["duration_display"] or "n/a",
+            ),
+            timestamp=_run["timestamp"],
+            tone=_run["tone"],
+            icon=_run["icon"],
+            actor=_run["display_name"],
+            badge=_run["status"],
+            extra={
+                "agent_run_pk": _run["pk"],
+                "trace_id": _run["trace_id"],
+                "summary": _run["output_summary"],
+                "error": _run["error_message"],
+            },
+        )
+
+    if result:
+        _push_timeline_event(
+            source="BenchmarkResult",
+            title="Benchmark result generated",
+            detail="Overall status: {} | Deviation: {}".format(
+                result.overall_status,
+                "{:+.2f}%".format(result.overall_deviation_pct) if result.overall_deviation_pct is not None else "N/A",
+            ),
+            timestamp=result.created_at or bench_request.updated_at or bench_request.created_at,
+            tone=_status_tone(result.overall_status),
+            icon="bi-graph-up-arrow",
+            actor="Benchmark Engine",
+            badge=result.overall_status,
+            extra={
+                "lines_within_range": result.lines_within_range,
+                "lines_moderate": result.lines_moderate,
+                "lines_high": result.lines_high,
+                "lines_needs_review": result.lines_needs_review,
+            },
+        )
+
+    dev_timeline_events.sort(
+        key=lambda _event: (
+            _event.get("timestamp") is None,
+            _event.get("timestamp") or bench_request.created_at,
+            _event.get("title") or "",
+        )
+    )
 
     # Per-quotation trace (real data, no fallbacks to "--")
     dev_trace_quotations = []
@@ -1122,6 +1620,7 @@ def request_detail(request, pk):
         best_vendor_summary=best_vendor_summary,
         no_vendor_recommendation=no_vendor_recommendation,
         benchmark_flow_summary=benchmark_flow_summary,
+        rfq_scope_rows=rfq_scope_rows,
         # KPI cards
         total_line_items_count=total_line_items_count,
         high_variance_items_count=high_variance_items_count,
@@ -1132,6 +1631,7 @@ def request_detail(request, pk):
         vendor_names_ordered=vendor_names_ordered,
         # AI insights
         insight_items=insight_items,
+        negotiation_assistant_url=reverse("benchmarking:request_negotiation_assistant", kwargs={"pk": bench_request.pk}),
         # History
         run_logs=run_logs,
         show_history=show_history,
@@ -1139,9 +1639,42 @@ def request_detail(request, pk):
         # Developer trace
         dev_trace_quotations=dev_trace_quotations,
         dev_pipeline_stages=dev_pipeline_stages,
+        dev_agent_runs=dev_agent_runs,
+        dev_expected_stages=dev_expected_stages,
+        dev_pipeline_summary=dev_pipeline_summary,
+        dev_timeline_events=dev_timeline_events,
         dev_request_geography=_geo_for_trace,
     )
     return render(request, "benchmarking/request_detail.html", ctx)
+
+
+@login_required
+@require_http_methods(["POST"])
+def request_negotiation_assistant(request, pk):
+    """Return a dynamic LLM-backed negotiation answer for this benchmark request."""
+    bench_request = get_object_or_404(
+        _scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)),
+        pk=pk,
+    )
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        return JsonResponse({"success": False, "message": "Invalid JSON payload."}, status=400)
+
+    question = str(payload.get("question") or "").strip()
+    if not question:
+        return JsonResponse({"success": False, "message": "Question is required."}, status=400)
+
+    result = BenchmarkNegotiationAssistantService.answer_prompt(
+        bench_request=bench_request,
+        user_prompt=question,
+    )
+
+    if not result.get("success"):
+        return JsonResponse({"success": False, "message": result.get("error") or "Unable to generate answer."}, status=400)
+
+    return JsonResponse(result)
 
 
 @login_required
@@ -1151,15 +1684,15 @@ def request_add_quotations(request, pk):
     bench_request = get_object_or_404(_scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)), pk=pk)
 
     quotation_ref = request.POST.get("quotation_ref", "").strip()
-    upload = request.FILES.get("quotation_pdf")
+    uploads = _get_quotation_uploads(request)
 
-    if not upload:
+    if not uploads:
         messages.error(request, "Quotation file is required (PDF or ZIP).")
         return redirect("benchmarking:request_detail", pk=pk)
 
-    created_quotes, upload_error = _create_quotations_from_upload(
+    created_quotes, upload_error = _create_quotations_from_uploads(
         bench_request=bench_request,
-        upload=upload,
+        uploads=uploads,
         quotation_ref=quotation_ref,
         user=request.user,
     )
@@ -1866,7 +2399,6 @@ def api_bench_thresholds(request):
     category_name_map = {item["code"]: item["label"] for item in _build_category_config_items()}
     category_name_map["ALL"] = "All Categories"
     geography_map = dict(Geography.CHOICES + [("ALL", "All Geographies")])
-    allowed_categories = _allowed_category_codes()
     ordered_allowed_categories = [item["code"] for item in _build_category_config_items() if item.get("is_active")]
 
     if request.method == "POST":
@@ -1875,14 +2407,16 @@ def api_bench_thresholds(request):
         except Exception:
             return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
 
-        category = str(body.get("category") or "ALL").strip().upper()
+        category_raw = str(body.get("category") or "ALL").strip()
+        category = category_raw.upper() if category_raw.upper() == "ALL" else category_raw
         geography = str(body.get("geography") or "ALL").strip().upper()
         notes = str(body.get("notes") or "").strip()
-        valid_categories = allowed_categories.union({"ALL"})
         valid_geographies = {code for code, _label in Geography.CHOICES}.union({"ALL"})
 
-        if category not in valid_categories:
-            return JsonResponse({"success": False, "message": "Invalid threshold category."}, status=400)
+        if not category:
+            return JsonResponse({"success": False, "message": "Category is required."}, status=400)
+        if len(category) > 30:
+            return JsonResponse({"success": False, "message": "Category must be 30 characters or fewer."}, status=400)
         if geography not in valid_geographies:
             return JsonResponse({"success": False, "message": "Invalid geography."}, status=400)
 
@@ -1897,17 +2431,28 @@ def api_bench_thresholds(request):
         if moderate_max_pct < within_range_max_pct:
             return JsonResponse({"success": False, "message": "Moderate max must be greater than or equal to within range max."}, status=400)
 
-        row, created = VarianceThresholdConfig.objects.update_or_create(
-            category=category,
-            geography=geography,
-            defaults={
-                "within_range_max_pct": within_range_max_pct,
-                "moderate_max_pct": moderate_max_pct,
-                "notes": notes,
-                "is_active": bool(body.get("is_active", True)),
-                "updated_by": request.user,
-            },
-        )
+        defaults = {
+            "within_range_max_pct": within_range_max_pct,
+            "moderate_max_pct": moderate_max_pct,
+            "notes": notes,
+            "is_active": bool(body.get("is_active", True)),
+            "updated_by": request.user,
+        }
+        row = VarianceThresholdConfig.objects.filter(category__iexact=category, geography=geography).first()
+        created = False
+        if row:
+            row.category = category
+            for field_name, field_value in defaults.items():
+                setattr(row, field_name, field_value)
+            row.save()
+        else:
+            row = VarianceThresholdConfig.objects.create(
+                category=category,
+                geography=geography,
+                created_by=request.user,
+                **defaults,
+            )
+            created = True
         if created and not getattr(row, "created_by_id", None):
             row.created_by = request.user
             row.save(update_fields=["created_by"])
@@ -1921,9 +2466,13 @@ def api_bench_thresholds(request):
 
     items = []
     present_categories = set()
-    for row in VarianceThresholdConfig.objects.filter(category__in=(list(allowed_categories) + ["ALL"])).order_by("category", "geography"):
-        if row.category in allowed_categories:
+    custom_present_categories = set()
+    allowed_categories_set = set(ordered_allowed_categories)
+    for row in VarianceThresholdConfig.objects.all().order_by("category", "geography"):
+        if row.category in allowed_categories_set:
             present_categories.add(row.category)
+        elif row.category != "ALL":
+            custom_present_categories.add(row.category)
         items.append({
             "id": row.pk,
             "category": row.category,
@@ -1951,8 +2500,10 @@ def api_bench_thresholds(request):
             "is_active": True,
         })
 
-    category_order_map = {code: idx for idx, code in enumerate(ordered_allowed_categories)}
-    category_order_map["ALL"] = len(ordered_allowed_categories) + 1
+    ordered_categories_with_custom = ordered_allowed_categories + sorted(custom_present_categories)
+
+    category_order_map = {code: idx for idx, code in enumerate(ordered_categories_with_custom)}
+    category_order_map["ALL"] = len(ordered_categories_with_custom) + 1
     items.sort(key=lambda item: (category_order_map.get(item["category"], 999), item.get("geography") or ""))
     return JsonResponse({"items": items})
 

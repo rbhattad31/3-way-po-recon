@@ -15,6 +15,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.views.decorators.http import require_POST, require_http_methods
 from django.db.models import Count, OuterRef, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.core.exceptions import PermissionDenied
@@ -295,14 +296,30 @@ def request_list(request):
         .order_by("-created_at")
         .values("confidence_score")[:1]
     )
+    store_type_prefill_sq = Subquery(
+        ProcurementRequestAttribute.objects.filter(
+            request=OuterRef("pk"),
+            attribute_code="f_store_type",
+        )
+        .values("value_text")[:1]
+    )
+    store_type_raw_sq = Subquery(
+        ProcurementRequestAttribute.objects.filter(
+            request=OuterRef("pk"),
+            attribute_code="store_type",
+        )
+        .values("value_text")[:1]
+    )
 
     qs = _tenant_scoped_queryset(request, ProcurementRequest).select_related("created_by", "assigned_to").filter(
         is_duplicate=False,
         duplicate_of__isnull=True,
     ).annotate(
-        attribute_count=Count("attributes"),
-        quotation_count=Count("quotations"),
-        run_count=Count("analysis_runs"),
+        attribute_count=Count("attributes", distinct=True),
+        quotation_count=Count("quotations", distinct=True),
+        run_count=Count("analysis_runs", distinct=True),
+        generated_rfq_count=Count("generated_rfqs", distinct=True),
+        store_type=Coalesce(store_type_prefill_sq, store_type_raw_sq),
         latest_recommended_option=latest_recommendation_sq,
         latest_confidence_score=latest_confidence_sq,
     )

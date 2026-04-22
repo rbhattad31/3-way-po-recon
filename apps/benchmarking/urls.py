@@ -13,6 +13,7 @@ urlpatterns = [
     # New Request
     path("new/", views.request_create, name="request_create"),
     # Detail / Results
+    path("<int:pk>/negotiation-assistant/", views.request_negotiation_assistant, name="request_negotiation_assistant"),
     path("<int:pk>/", views.request_detail, name="request_detail"),
     # Reprocess
     path("<int:pk>/reprocess/", views.request_reprocess, name="request_reprocess"),
@@ -27,6 +28,7 @@ urlpatterns = [
     path("<int:pk>/live-enrich/ajax/", views.request_live_enrich_ajax, name="request_live_enrich_ajax"),
     # Quotations
     path("quotations/", views.quotation_list, name="quotation_list"),
+    path("quotations/<int:pk>/document/", views.quotation_document_preview, name="quotation_document_preview"),
     path("quotations/<int:pk>/", views.quotation_detail, name="quotation_detail"),
     # Reports
     path("reports/", views.reports, name="reports"),

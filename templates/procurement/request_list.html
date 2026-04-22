@@ -5,6 +5,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/procurement/request-list.css' %}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.3/dist/style.min.css">
 <style>
 /* ── New-Request Choice Modal ── */
 .nr-choice-card {
@@ -59,6 +60,82 @@
   background: linear-gradient(135deg,#f8faff,#f0f9ff);
   border-bottom: 1px solid #e2e8f0;
 }
+.requests-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+.requests-table {
+  margin-bottom: 0;
+  font-size: 0.82rem;
+}
+.requests-table thead th {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.requests-table tbody td {
+  vertical-align: middle;
+}
+.cell-nowrap {
+  white-space: nowrap;
+}
+.col-request-id {
+  min-width: 170px;
+}
+.col-title {
+  min-width: 280px;
+}
+.col-recommended {
+  min-width: 220px;
+}
+.col-actions {
+  min-width: 90px;
+  text-align: center;
+}
+.action-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  text-decoration: none;
+}
+.action-view {
+  color: #1665d8;
+  background: #eff6ff;
+}
+.action-delete {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: none;
+}
+#requestsDataTable_wrapper .datatable-top,
+#requestsDataTable_wrapper .datatable-bottom {
+  padding: 10px 12px;
+}
+#requestsDataTable_wrapper .datatable-selector,
+#requestsDataTable_wrapper .datatable-input {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+}
+#requestsDataTable_wrapper .datatable-pagination a,
+#requestsDataTable_wrapper .datatable-pagination button {
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+#requestsDataTable_wrapper .datatable-sorter::before,
+#requestsDataTable_wrapper .datatable-sorter::after {
+  opacity: 0.45;
+}
 </style>
 {% endblock %}
 
@@ -92,33 +169,6 @@
     <i class="bi bi-plus-circle"></i> New Request
   </button>
 </div>
-
-
-{% with total=page_obj.paginator.count %}
-<div class="row g-3 mb-4">
-  <div class="col-12 col-lg-6">
-    <div class="kpi-card kpi-blue d-flex align-items-center gap-3">
-      <div class="kpi-icon"><i class="bi bi-collection-fill"></i></div>
-      <div>
-        <div class="kpi-value">{{ total }}</div>
-        <div class="kpi-label">Total Requests</div>
-      </div>
-      <div class="kpi-bar"></div>
-    </div>
-  </div>
-  <div class="col-12 col-lg-6">
-    <div class="kpi-card kpi-amber d-flex align-items-center gap-3">
-      <div class="kpi-icon"><i class="bi bi-globe-asia-australia"></i></div>
-      <div>
-        <div class="kpi-value">6</div>
-        <div class="kpi-label">GCC Countries</div>
-      </div>
-      <div class="kpi-bar"></div>
-    </div>
-  </div>
-</div>
-{% endwith %}
-
 
 <div class="filter-panel mb-4">
   <form method="get">
@@ -159,117 +209,79 @@
 
 {% if page_obj.object_list %}
 <div class="d-flex align-items-center justify-content-between mb-3">
-  <span class="section-label"><i class="bi bi-grid-3x3-gap me-1"></i>All Requests</span>
+  <span class="section-label"><i class="bi bi-table me-1"></i>All Requests</span>
   <span class="results-count">
     Showing <strong>{{ page_obj.start_index }}</strong>-<strong>{{ page_obj.end_index }}</strong>
     of <strong>{{ page_obj.paginator.count }}</strong> requests
   </span>
 </div>
 
-<div class="row g-3">
-  {% for req in page_obj %}
-  <div class="col-md-6 col-xl-4">
-    <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="req-card h-100">
-
-      {# Accent bar by status #}
-      {% if req.status == "PENDING_RFQ" %}<div class="rc-accent rc-accent-review"></div>
-      {% elif req.status == "READY_RFQ" %}<div class="rc-accent rc-accent-ready"></div>
-      {% elif req.status == "COMPLETED" %}<div class="rc-accent rc-accent-completed"></div>
-      {% elif req.status == "FAILED" %}<div class="rc-accent rc-accent-failed"></div>
-      {% else %}<div class="rc-accent rc-accent-default"></div>{% endif %}
-
-      <div class="rc-body">
-
-        {# Title + Status #}
-        <div class="d-flex justify-content-between align-items-start mb-2">
-          <div class="rc-title">{{ req.title|truncatechars:62 }}</div>
-          {% if req.status == "PENDING_RFQ" %}
-            <span class="status-pill sp-review"><span class="sp-dot" style="background:#f59e0b;"></span>Pending RFQ</span>
-          {% elif req.status == "READY_RFQ" %}
-            <span class="status-pill sp-ready"><span class="sp-dot" style="background:#0ea5e9;"></span>Ready RFQ</span>
-          {% elif req.status == "COMPLETED" %}
-            <span class="status-pill sp-completed"><span class="sp-dot" style="background:#22c55e;"></span>Completed</span>
-          {% elif req.status == "FAILED" %}
-            <span class="status-pill sp-failed"><span class="sp-dot" style="background:#ef4444;"></span>Failed</span>
+<div class="requests-table-wrap table-responsive">
+  <table id="requestsDataTable" class="table table-hover requests-table align-middle">
+    <thead>
+      <tr>
+        <th scope="col" class="col-request-id"><i class="bi bi-hash me-1"></i>Request ID</th>
+        <th scope="col" class="col-title"><i class="bi bi-card-text me-1"></i>Request Title</th>
+        <th scope="col" class="cell-nowrap"><i class="bi bi-info-circle me-1"></i>Status</th>
+        <th scope="col"><i class="bi bi-flag me-1"></i>Country</th>
+        <th scope="col"><i class="bi bi-geo-alt me-1"></i>City</th>
+        <th scope="col"><i class="bi bi-shop me-1"></i>Store Type</th>
+        <th scope="col" class="col-recommended"><i class="bi bi-cpu me-1"></i>Recommended System</th>
+        <th scope="col" class="cell-nowrap"><i class="bi bi-file-earmark-check me-1"></i>RFQ Generated</th>
+        <th scope="col" class="cell-nowrap"><i class="bi bi-files me-1"></i>Number of RFQs</th>
+        <th scope="col" class="cell-nowrap"><i class="bi bi-calendar-plus me-1"></i>Created Date</th>
+        <th scope="col" class="cell-nowrap"><i class="bi bi-calendar-check me-1"></i>Last Updated Date</th>
+        <th scope="col" class="col-actions"><i class="bi bi-gear me-1"></i>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for req in page_obj %}
+      <tr>
+        <td class="cell-nowrap text-muted small">
+          <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none">{{ req.request_id|truncatechars:14 }}</a>
+        </td>
+        <td>
+          <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none" title="{{ req.title }}">{{ req.title|truncatechars:56 }}</a>
+        </td>
+        <td class="cell-nowrap"><i class="bi bi-info-circle me-1 text-secondary"></i>{{ req.status|default:"-" }}</td>
+        <td>{{ req.geography_country|default:"-" }}</td>
+        <td>{{ req.geography_city|default:"-" }}</td>
+        <td>{{ req.store_type|default:"-" }}</td>
+        <td title="{{ req.latest_recommended_option|default:'' }}">{{ req.latest_recommended_option|default:"-"|truncatechars:42 }}</td>
+        <td class="cell-nowrap">
+          {% if req.generated_rfq_count|default:0 > 0 %}
+            <i class="bi bi-check-circle-fill text-success me-1"></i>Yes
           {% else %}
-            <span class="status-pill sp-default"><span class="sp-dot" style="background:#2563eb;"></span>{{ req.status }}</span>
+            <i class="bi bi-x-circle-fill text-danger me-1"></i>No
           {% endif %}
-        </div>
-
-        {# Description #}
-        <p class="rc-desc mb-2">
-          {% if req.description %}{{ req.description|truncatechars:95 }}{% else %}<em class="text-muted">No description provided.</em>{% endif %}
-        </p>
-
-        {# Meta tags #}
-        <div class="rc-meta">
-          {% if req.status == "PENDING_RFQ" or req.status == "READY_RFQ" or req.status == "COMPLETED" %}
-          <span class="rc-tag" style="background:#ecfdf5;color:#166534;border-color:#bbf7d0;">
-            <i class="bi bi-check-circle-fill"></i> Recommendation Success
-          </span>
-          {% elif req.status == "FAILED" %}
-          <span class="rc-tag" style="background:#fef2f2;color:#991b1b;border-color:#fecaca;">
-            <i class="bi bi-x-octagon-fill"></i> Recommendation Failed
-          </span>
-          {% endif %}
-          {% if req.geography_country %}
-          <span class="rc-tag geo-tag"><i class="bi bi-geo-alt-fill"></i> {{ req.geography_country }}</span>
-          {% endif %}
-        </div>
-
-        {# AI Recommendation Strip #}
-        {% if req.latest_recommended_option %}
-        <div class="ai-strip">
-          <div class="ai-strip-label">
-            <i class="bi bi-cpu-fill" style="color:#16a34a;"></i> AI Recommendation
-          </div>
-          <div class="ai-strip-text">{{ req.latest_recommended_option|truncatechars:85 }}</div>
-          {% if req.latest_confidence_score %}
-          <div class="ai-confidence">
-            <div class="conf-bar">
-              <div class="conf-fill" style="width:{% widthratio req.latest_confidence_score 1 100 %}%;"></div>
-            </div>
-            <span class="conf-pct">{% widthratio req.latest_confidence_score 1 100 %}% confidence</span>
-          </div>
-          {% endif %}
-        </div>
-        {% endif %}
-
-      </div>{# /rc-body #}
-
-      {# Card Footer: Stats + Priority #}
-      <div class="rc-footer">
-        <div class="d-flex gap-3">
-          <span class="rc-stat" title="Attributes">
-            <i class="bi bi-sliders2-vertical"></i> {{ req.attribute_count }}
-          </span>
-          <span class="rc-stat" title="Quotations">
-            <i class="bi bi-file-earmark-text"></i> {{ req.quotation_count }}
-          </span>
-          <span class="rc-stat" title="AI Runs">
-            <i class="bi bi-lightning-charge"></i> {{ req.run_count }}
-          </span>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-          {% if req.priority == "CRITICAL" %}
-            <span class="prio-dot prio-critical"></span><span class="rc-stat text-danger fw-semibold">Critical</span>
-          {% elif req.priority == "HIGH" %}
-            <span class="prio-dot prio-high"></span><span class="rc-stat fw-semibold" style="color:#b45309;">High</span>
-          {% elif req.priority == "MEDIUM" %}
-            <span class="prio-dot prio-medium"></span><span class="rc-stat" style="color:#0369a1;">Medium</span>
-          {% else %}
-            <span class="prio-dot prio-low"></span><span class="rc-stat">Low</span>
-          {% endif %}
-          <span class="rc-stat" style="color:#94a3b8;">
-            <i class="bi bi-calendar3"></i> {{ req.created_at|date:"d M Y" }}
-          </span>
-        </div>
-      </div>
-
-      <i class="bi bi-arrow-right rc-arrow"></i>
-    </a>
-  </div>
-  {% endfor %}
+        </td>
+        <td class="cell-nowrap"><i class="bi bi-files me-1 text-secondary"></i>{{ req.generated_rfq_count|default:0 }}</td>
+        <td class="cell-nowrap"><i class="bi bi-calendar3 me-1 text-secondary"></i>{{ req.created_at|date:"d M Y, H:i" }}</td>
+        <td class="cell-nowrap"><i class="bi bi-clock-history me-1 text-secondary"></i>{{ req.updated_at|date:"d M Y, H:i" }}</td>
+        <td class="col-actions">
+          <a
+            href="{% url 'procurement:request_workspace' pk=req.pk %}"
+            class="action-icon action-view"
+            title="View"
+            aria-label="View request"
+          >
+            <i class="bi bi-eye"></i>
+          </a>
+          <button
+            type="button"
+            class="action-icon action-delete js-delete-request"
+            data-request-pk="{{ req.pk }}"
+            data-request-title="{{ req.title }}"
+            title="Delete"
+            aria-label="Delete request"
+          >
+            <i class="bi bi-trash"></i>
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 
 
@@ -332,6 +344,55 @@
 {% endif %}
 
 
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.3"></script>
+<script>
+  (function () {
+    if (window.simpleDatatables && document.getElementById('requestsDataTable')) {
+      new simpleDatatables.DataTable('#requestsDataTable', {
+        searchable: true,
+        perPage: 25,
+        perPageSelect: [10, 25, 50, 100],
+        fixedHeight: false,
+      });
+    }
+
+    function getCookie(name) {
+      const cookieValue = document.cookie
+        .split('; ')
+        .find(function (row) { return row.startsWith(name + '='); });
+      return cookieValue ? decodeURIComponent(cookieValue.split('=')[1]) : null;
+    }
+
+    document.querySelectorAll('.js-delete-request').forEach(function (button) {
+      button.addEventListener('click', function () {
+        const requestPk = this.getAttribute('data-request-pk');
+        const requestTitle = this.getAttribute('data-request-title') || 'this request';
+        if (!confirm('Delete "' + requestTitle + '"? This action cannot be undone.')) {
+          return;
+        }
+
+        fetch('/api/v1/procurement/requests/' + requestPk + '/', {
+          method: 'DELETE',
+          headers: {
+            'X-CSRFToken': getCookie('csrftoken') || '',
+          },
+          credentials: 'same-origin',
+        }).then(function (response) {
+          if (response.ok || response.status === 204) {
+            window.location.reload();
+            return;
+          }
+          alert('Unable to delete the request.');
+        }).catch(function () {
+          alert('Unable to delete the request.');
+        });
+      });
+    });
+  })();
+</script>
 {% endblock %}
 
 
