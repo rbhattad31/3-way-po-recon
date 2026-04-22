@@ -50,8 +50,17 @@
       <div class="row g-3 mt-1">
         <div class="col-md-4">
           <label class="form-label">Company</label>
-          {{ form.company }}
-          <small class="text-muted">Assign user to a tenant company</small>
+          {% if is_platform_admin %}
+            {{ form.company }}
+            <small class="text-muted">Assign user to a tenant company</small>
+          {% else %}
+            <div class="form-control bg-light d-flex align-items-center gap-2" style="color:#495057;">
+              <i class="bi bi-building text-secondary"></i>
+              <span>{{ locked_company.name|default:"No company assigned" }}</span>
+            </div>
+            <input type="hidden" name="company" value="{{ locked_company.pk|default:'' }}">
+            <small class="text-muted">Company is set from your account</small>
+          {% endif %}
         </div>
         <div class="col-md-4">
           <label class="form-label">Department</label>
@@ -67,11 +76,23 @@
       <div class="row g-3 mt-1">
         <div class="col-md-4">
           <label class="form-label">Password <span class="text-danger">*</span></label>
-          {{ form.password1 }}
+          <div class="input-group">
+            {{ form.password1 }}
+            <button
+              class="btn btn-outline-secondary"
+              type="button"
+              id="toggle-password1"
+              aria-label="Show password"
+              aria-pressed="false"
+            >
+              <i class="bi bi-eye" id="toggle-password1-icon"></i>
+            </button>
+          </div>
         </div>
         <div class="col-md-4">
           <label class="form-label">Confirm Password <span class="text-danger">*</span></label>
           {{ form.password2 }}
+          <small id="password-match-message" class="form-text text-muted"></small>
         </div>
       </div>
 
@@ -82,4 +103,59 @@
     </form>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var password1 = document.getElementById('id_password1');
+  var password2 = document.getElementById('id_password2');
+  var matchMessage = document.getElementById('password-match-message');
+  var toggleBtn = document.getElementById('toggle-password1');
+  var toggleIcon = document.getElementById('toggle-password1-icon');
+
+  function updateMatchMessage() {
+    if (!password1 || !password2 || !matchMessage) {
+      return;
+    }
+
+    if (!password1.value && !password2.value) {
+      matchMessage.textContent = '';
+      matchMessage.className = 'form-text text-muted';
+      return;
+    }
+
+    if (password1.value === password2.value) {
+      matchMessage.textContent = 'Passwords match';
+      matchMessage.className = 'form-text text-success';
+      return;
+    }
+
+    matchMessage.textContent = 'Passwords do not match';
+    matchMessage.className = 'form-text text-danger';
+  }
+
+  function togglePasswordVisibility() {
+    if (!password1 || !toggleBtn || !toggleIcon) {
+      return;
+    }
+
+    var showPassword = password1.type === 'password';
+    password1.type = showPassword ? 'text' : 'password';
+    toggleIcon.className = showPassword ? 'bi bi-eye-slash' : 'bi bi-eye';
+    toggleBtn.setAttribute('aria-label', showPassword ? 'Hide password' : 'Show password');
+    toggleBtn.setAttribute('aria-pressed', showPassword ? 'true' : 'false');
+  }
+
+  if (password1 && password2) {
+    password1.addEventListener('input', updateMatchMessage);
+    password2.addEventListener('input', updateMatchMessage);
+    updateMatchMessage();
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', togglePasswordVisibility);
+  }
+})();
+</script>
 {% endblock %}

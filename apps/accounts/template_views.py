@@ -124,15 +124,26 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx["form"] = UserCreateForm()
+        is_pa = getattr(self.request.user, 'is_platform_admin', False)
+        ctx['is_platform_admin'] = is_pa
+        if not is_pa:
+            user_company = getattr(self.request.user, 'company', None)
+            ctx['form'] = UserCreateForm(initial={'company': user_company})
+            ctx['locked_company'] = user_company
+        else:
+            ctx['form'] = UserCreateForm()
+            ctx['locked_company'] = None
         return ctx
 
     def post(self, request, *args, **kwargs):
         form = UserCreateForm(request.POST)
+        is_pa = getattr(request.user, 'is_platform_admin', False)
         if form.is_valid():
             with transaction.atomic():
                 user = form.save(commit=False)
-                if not user.company:
+                if not is_pa:
+                    user.company = getattr(request.user, 'company', None) or getattr(request, 'tenant', None)
+                elif not user.company:
                     user.company = getattr(request, 'tenant', None)
                 user.save()
                 # Assign initial role if selected
@@ -159,7 +170,11 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
                     pass  # fail-silent; credits can be allocated later
             messages.success(request, f"User '{user.email}' created.")
             return redirect("accounts:user_detail", pk=user.pk)
-        return self.render_to_response({"form": form})
+        return self.render_to_response({
+            'form': form,
+            'is_platform_admin': is_pa,
+            'locked_company': None if is_pa else getattr(request.user, 'company', None),
+        })
 
 
 @method_decorator(observed_action("user_manage", permission="users.manage", entity_type="User"), name="dispatch")
