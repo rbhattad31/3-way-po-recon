@@ -238,10 +238,10 @@
       {% for req in page_obj %}
       <tr>
         <td class="cell-nowrap text-muted small">
-          <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none">{{ req.request_id|truncatechars:14 }}</a>
+          <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none request-link">{{ req.request_id|truncatechars:14 }}</a>
         </td>
         <td>
-          <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none" title="{{ req.title }}">{{ req.title|truncatechars:56 }}</a>
+          <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none request-link" title="{{ req.title }}">{{ req.title|truncatechars:56 }}</a>
         </td>
         <td class="cell-nowrap"><i class="bi bi-info-circle me-1 text-secondary"></i>{{ req.status|default:"-" }}</td>
         <td>{{ req.geography_country|default:"-" }}</td>

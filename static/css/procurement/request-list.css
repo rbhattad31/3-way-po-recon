@@ -135,6 +135,14 @@ body { background: #f0f4fa; }
   text-transform: uppercase; letter-spacing: .07em;
 }
 .results-count { font-size: .8rem; color: #64748b; }
+.request-link {
+  color: #0f172a;
+  font-weight: 500;
+}
+.request-link:hover,
+.request-link:focus {
+  color: #0f172a;
+}
 
 /* ---- Request card ---- */
 .req-card {
