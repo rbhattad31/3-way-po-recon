@@ -200,16 +200,7 @@
     {# Results panel #}
     <div id="mi-results" class="{% if not latest %}d-none{% endif %}">
 
-      {# Query banner #}
-      <div class="mi-query-banner">
-        <div class="d-flex align-items-start gap-2">
-          <i class="bi bi-lightbulb text-warning mt-1" style="font-size:.95rem;"></i>
-          <div>
-            <div class="text-muted fw-semibold mb-1" style="font-size:.7rem; text-transform:uppercase; letter-spacing:.06em;">AI Interpreted This Request As</div>
-            <div id="mi-rephrased-query" class="fw-semibold" style="font-size:.88rem; color:#1e40af;">{{ latest.rephrased_query|default:"" }}</div>
-          </div>
-        </div>
-      </div>
+  
 
       {# Summary + Market Context #}
       <div class="row g-3 mb-3">

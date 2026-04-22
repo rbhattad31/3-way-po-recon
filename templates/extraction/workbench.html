@@ -831,6 +831,7 @@
   const FILTER_URL  = "{% url 'extraction:ajax_filter' %}";
   const DETAIL_URL  = "{% url 'extraction:console' pk=0 %}".replace('/0/', '/{pk}/');
   const EXPORT_URL  = "{% url 'extraction:export_csv' %}";
+  const IS_ADMIN_USER = {% if is_admin_user %}true{% else %}false{% endif %};
   const tbody        = document.getElementById('resultsTableBody');
   const countEl      = document.getElementById('resultCount');
   const filterBadge  = document.getElementById('filterIndicator');
@@ -861,7 +862,7 @@
   // ── Render table rows from JSON ──────────────────────────
   function renderRows(rows) {
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-5" style="color:var(--ap-text-muted)">
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
         <i class="bi bi-funnel d-block mb-2" style="font-size:2rem"></i>No results match your filters.</td></tr>`;
       return;
     }
@@ -893,6 +894,9 @@
           ? '<i class="bi bi-check-circle-fill text-success me-1" style="font-size:.7rem" title="Vendor matched in system"></i>'
           : '<i class="bi bi-exclamation-circle-fill text-warning me-1" style="font-size:.7rem" title="Vendor not found in system"></i>')
         : '';
+      const deleteBtn = IS_ADMIN_USER
+        ? `<button type="button" class="btn btn-sm btn-outline-danger py-0 ms-1" style="font-size:.7rem" title="Admin: Hard-delete this invoice and all associated data" onclick="openAdminDeleteModal(${parseInt(r.pk, 10)}, '${escJsSingle(r.invoice_number || 'N/A')}')"><i class="bi bi-trash3"></i></button>`
+        : '';
 
       return `<tr${isProc ? ' data-processing="true"' : ''}>
         <td>${invLink}</td>
@@ -902,7 +906,7 @@
         <td>${statusBadge}</td>
         <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
-        <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a></td>
+        <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a>${deleteBtn}</td>
       </tr>`;
     }).join('');
   }
@@ -944,6 +948,9 @@
   }
   function escAttr(s) {
     return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escJsSingle(s) {
+    return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   }
 
   // ── Event bindings ───────────────────────────────────────
@@ -1037,6 +1044,7 @@
     var modal = new bootstrap.Modal(document.getElementById('adminDeleteModal'));
     modal.show();
   }
+  window.openAdminDeleteModal = openAdminDeleteModal;
 })();
 </script>
 

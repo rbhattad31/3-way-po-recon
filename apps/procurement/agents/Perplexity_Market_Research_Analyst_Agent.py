@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse as _urlparse
 
@@ -282,6 +283,21 @@ class PerplexityMarketResearchAnalystAgent:
             domain_list=domain_list,
         )
 
+        # 6b. Generate dynamic AI narrative grounded in concrete suggestions
+        ai_summary, market_context = self._build_ai_grounded_narrative(
+            raw_ai_summary=str(data.get("ai_summary", "") or ""),
+            raw_market_context=str(data.get("market_context", "") or ""),
+            suggestions=suggestions,
+            system_name=prompt_system_name,
+            country=str(getattr(proc_request, "geography_country", "") or "").strip() or "UAE",
+            city=str(getattr(proc_request, "geography_city", "") or "").strip(),
+            citations=perplexity_citations,
+            model=model,
+            api_key=api_key,
+        )
+        data["ai_summary"] = ai_summary
+        data["market_context"] = market_context
+
         # 7. Persist to DB
         self._persist(
             proc_request=proc_request,
@@ -303,8 +319,8 @@ class PerplexityMarketResearchAnalystAgent:
             "system_code": system_code,
             "system_name": system_name,
             "rephrased_query": data.get("rephrased_query", ""),
-            "ai_summary": data.get("ai_summary", ""),
-            "market_context": data.get("market_context", ""),
+            "ai_summary": ai_summary,
+            "market_context": market_context,
             "suggestions": suggestions,
             "perplexity_citations": perplexity_citations,
             "source_reference_label": "Perplexity Source References",
@@ -690,6 +706,287 @@ class PerplexityMarketResearchAnalystAgent:
                 s["citation_source"] = db_label
 
         return suggestions
+
+    @staticmethod
+    def _build_product_oriented_narrative(
+        raw_ai_summary: str,
+        raw_market_context: str,
+        suggestions: list,
+        system_name: str,
+        country: str,
+        city: str,
+    ) -> tuple[str, str]:
+        """Build product-oriented AI summary + market context from concrete suggestions.
+
+        The LLM-provided summary/context is used only as fallback when no suggestions exist.
+        """
+        if not suggestions:
+            safe_ai = raw_ai_summary.strip() or (
+                f"No product suggestions were returned for {system_name}. Please rerun market intelligence."
+            )
+            safe_market = raw_market_context.strip() or (
+                f"No market context is available for {system_name} in {country}."
+            )
+            return safe_ai, safe_market
+
+        location = f"{city}, {country}" if city else country
+
+        def _clean_text(value: Any) -> str:
+            return str(value or "").strip()
+
+        def _first_number(value: str) -> Decimal | None:
+            if not value:
+                return None
+            match = re.search(r"(\d[\d,]*(?:\.\d+)?)", value)
+            if not match:
+                return None
+            try:
+                return Decimal(match.group(1).replace(",", ""))
+            except Exception:
+                return None
+
+        ranked = sorted(
+            suggestions,
+            key=lambda item: (
+                -int(item.get("fit_score", 0) or 0),
+                int(item.get("rank", 999) or 999),
+            ),
+        )
+        top = ranked[:3]
+
+        product_fragments: list[str] = []
+        availability_fragments: list[str] = []
+        source_labels: list[str] = []
+        price_points: list[Decimal] = []
+
+        for item in top:
+            product_name = _clean_text(item.get("product_name")) or "Unspecified product"
+            manufacturer = _clean_text(item.get("manufacturer"))
+            model_code = _clean_text(item.get("model_code"))
+            capacity = _clean_text(item.get("cooling_capacity"))
+            price_range = _clean_text(item.get("price_range_aed"))
+
+            first = _first_number(price_range)
+            if first is not None:
+                price_points.append(first)
+
+            title_bits = [product_name]
+            if manufacturer:
+                title_bits.append(f"by {manufacturer}")
+            if model_code:
+                title_bits.append(f"model {model_code}")
+
+            detail_bits = []
+            if capacity:
+                detail_bits.append(capacity)
+            if price_range:
+                detail_bits.append(f"price {price_range}")
+
+            title = ", ".join(title_bits)
+            details = f" ({'; '.join(detail_bits)})" if detail_bits else ""
+            product_fragments.append(f"{title}{details}")
+
+            availability = _clean_text(item.get("market_availability"))
+            if availability:
+                availability_fragments.append(availability)
+
+            source_name = _clean_text(item.get("citation_source"))
+            citation_url = _clean_text(item.get("citation_url"))
+            if source_name:
+                source_labels.append(source_name)
+            elif citation_url:
+                source_labels.append(_urlparse(citation_url).netloc or citation_url)
+
+        unique_sources: list[str] = []
+        for source in source_labels:
+            if source and source not in unique_sources:
+                unique_sources.append(source)
+
+        products_sentence = "; ".join(product_fragments)
+        ai_summary = (
+            f"For {location}, shortlisted {system_name} options are: {products_sentence}. "
+            "Use the cited product pages for final technical compliance checks and supplier confirmation before purchase."
+        )
+
+        market_bits: list[str] = []
+        if price_points:
+            price_low = min(price_points)
+            price_high = max(price_points)
+            if price_low == price_high:
+                market_bits.append(f"Observed listing price point is around AED {price_low:,.0f}")
+            else:
+                market_bits.append(f"Observed listing prices span approximately AED {price_low:,.0f} to AED {price_high:,.0f}")
+
+        if unique_sources:
+            market_bits.append("Primary sources: " + ", ".join(unique_sources[:3]))
+
+        if availability_fragments:
+            market_bits.append("Availability notes: " + " | ".join(availability_fragments[:2]))
+
+        market_bits.append(
+            "Confirm local stock, lead time, and warranty scope with the cited supplier before issuing PO"
+        )
+        market_context = ". ".join(market_bits) + "."
+
+        return ai_summary, market_context
+
+    def _build_ai_grounded_narrative(
+        self,
+        raw_ai_summary: str,
+        raw_market_context: str,
+        suggestions: list,
+        system_name: str,
+        country: str,
+        city: str,
+        citations: list[str],
+        model: str,
+        api_key: str,
+    ) -> tuple[str, str]:
+        """Generate dynamic AI summary/context grounded in real suggestion payload.
+
+        Falls back to deterministic synthesis when LLM refinement fails or looks generic.
+        """
+        if not suggestions:
+            return self._build_product_oriented_narrative(
+                raw_ai_summary=raw_ai_summary,
+                raw_market_context=raw_market_context,
+                suggestions=suggestions,
+                system_name=system_name,
+                country=country,
+                city=city,
+            )
+
+        llm_result = self._llm_refine_narrative(
+            suggestions=suggestions,
+            system_name=system_name,
+            country=country,
+            city=city,
+            citations=citations,
+            model=model,
+            api_key=api_key,
+        )
+
+        ai_summary = str((llm_result or {}).get("ai_summary") or "").strip()
+        market_context = str((llm_result or {}).get("market_context") or "").strip()
+
+        if ai_summary and market_context and not self._looks_generic(ai_summary, market_context, suggestions):
+            return ai_summary, market_context
+
+        return self._build_product_oriented_narrative(
+            raw_ai_summary=raw_ai_summary,
+            raw_market_context=raw_market_context,
+            suggestions=suggestions,
+            system_name=system_name,
+            country=country,
+            city=city,
+        )
+
+    def _llm_refine_narrative(
+        self,
+        suggestions: list,
+        system_name: str,
+        country: str,
+        city: str,
+        citations: list[str],
+        model: str,
+        api_key: str,
+    ) -> dict:
+        """Ask the model to produce concise grounded narrative from known products only."""
+        try:
+            import requests as _requests
+        except ImportError:
+            return {}
+
+        payload_products = []
+        for row in suggestions[:5]:
+            payload_products.append({
+                "rank": row.get("rank"),
+                "product_name": row.get("product_name"),
+                "manufacturer": row.get("manufacturer"),
+                "model_code": row.get("model_code"),
+                "cooling_capacity": row.get("cooling_capacity"),
+                "price_range_aed": row.get("price_range_aed"),
+                "market_availability": row.get("market_availability"),
+                "citation_source": row.get("citation_source"),
+                "citation_url": row.get("citation_url"),
+            })
+
+        location = f"{city}, {country}" if city else country
+        prompt = (
+            "You are writing procurement market-intelligence text. Use ONLY the provided product rows. "
+            "Do not invent products, regions, or percentages. Return strict JSON with keys ai_summary and market_context.\n\n"
+            f"System: {system_name}\n"
+            f"Location: {location}\n"
+            f"Products: {json.dumps(payload_products, ensure_ascii=True)}\n"
+            f"Citations: {json.dumps(citations[:8], ensure_ascii=True)}\n\n"
+            "Rules:\n"
+            "1) ai_summary: 2 sentences, explicitly mention at least two product/manufacturer names from Products.\n"
+            "2) market_context: 2 sentences, include observed availability or pricing pattern from Products.\n"
+            "3) Keep concise, concrete, and buyer-oriented.\n"
+            "4) Do not mention missing geography unless Products explicitly indicate it.\n"
+            "Output format: {\"ai_summary\":\"...\",\"market_context\":\"...\"}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        req = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "Return only valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 420,
+            "return_images": False,
+            "return_related_questions": False,
+        }
+        try:
+            resp = _requests.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers=headers,
+                json=req,
+                timeout=45,
+            )
+            resp.raise_for_status()
+            content = (((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            if not content:
+                return {}
+            parsed = self._parse_json(content, model)
+            return {
+                "ai_summary": str(parsed.get("ai_summary") or "").strip(),
+                "market_context": str(parsed.get("market_context") or "").strip(),
+            }
+        except Exception as exc:
+            logger.warning("PerplexityMarketResearchAnalystAgent._llm_refine_narrative failed: %s", exc)
+            return {}
+
+    @staticmethod
+    def _looks_generic(ai_summary: str, market_context: str, suggestions: list) -> bool:
+        """Heuristic guardrail for low-quality generic narrative."""
+        text = (f"{ai_summary} {market_context}").lower()
+        generic_markers = [
+            "limited direct product detail",
+            "strong global availability",
+            "contact local distributors",
+            "verify regional availability",
+            "us-focused listings",
+        ]
+        generic_hits = sum(1 for marker in generic_markers if marker in text)
+
+        product_tokens: list[str] = []
+        for row in suggestions[:4]:
+            product = str(row.get("product_name") or "").strip().lower()
+            maker = str(row.get("manufacturer") or "").strip().lower()
+            if product:
+                product_tokens.append(product)
+            if maker:
+                product_tokens.append(maker)
+        mentions = sum(1 for token in product_tokens if token and token in text)
+
+        return generic_hits >= 2 or mentions == 0
 
     @staticmethod
     def _persist(
