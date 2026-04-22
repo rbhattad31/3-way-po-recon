@@ -179,6 +179,8 @@ class ExtractionOutputContract:
     # Errors (extraction failures)
     errors: list[str] = field(default_factory=list)
     resolved: bool = False
+    # Backward-compatible QR payload used by extraction console (_qr block)
+    qr_data: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Serialize to the canonical JSON structure."""
@@ -198,6 +200,7 @@ class ExtractionOutputContract:
             "review_reasons": self.review_reasons,
             "errors": self.errors,
             "resolved": self.resolved,
+            **({"_qr": self.qr_data} if self.qr_data else {}),
         }
 
     def get_field_value(self, field_code: str) -> FieldValue | None:

@@ -5,6 +5,7 @@
 
 {% block extra_css %}
 <link href="{% static 'css/case-console.css' %}" rel="stylesheet">
+<link href="{% static 'css/extraction_console.css' %}" rel="stylesheet">
 {% endblock %}
 
 {% block breadcrumb %}
@@ -189,6 +190,17 @@
               <button class="nav-link active" id="tab-overview" data-bs-toggle="pill"
                       data-bs-target="#panel-overview" type="button" role="tab">
                 <i class="bi bi-house me-1"></i>Overview
+              </button>
+            </li>
+
+            {# Tab 2: Invoice (embedded extraction console view) #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-invoice" data-bs-toggle="pill"
+                      data-bs-target="#panel-invoice" type="button" role="tab">
+                <i class="bi bi-receipt-cutoff me-1"></i>Invoice
+                {% if qr_data %}
+                <span class="badge bg-success ms-1">QR</span>
+                {% endif %}
               </button>
             </li>
 
@@ -1066,6 +1078,11 @@
               {% endif %}
             </div>
 
+            {# TAB 6: INVOICE (single-page embedded invoice deep-dive)      #}
+            <div class="tab-pane fade p-3" id="panel-invoice" role="tabpanel">
+              {% include "cases/partials/_invoice_panel.html" %}
+            </div>
+
             {# TAB 6: REVIEW & NOTES                                        #}
             <div class="tab-pane fade p-3" id="panel-review" role="tabpanel">
 
@@ -1338,6 +1355,59 @@
 {% block extra_js %}
 <script>
 /* ── Case actions (approve / reject / reprocess / escalate) ── */
+{% if ext and invoice %}
+document.addEventListener('DOMContentLoaded', function() {
+  var saveBtn = document.getElementById('saveEditBtn');
+  if (!saveBtn) return;
+
+  saveBtn.addEventListener('click', function() {
+    var header = {};
+    document.querySelectorAll('.edit-header').forEach(function(inp) {
+      header[inp.dataset.field] = inp.value;
+    });
+
+    var lines = [];
+    document.querySelectorAll('#editModal tr[data-line-pk]').forEach(function(row) {
+      var lineData = { pk: parseInt(row.dataset.linePk, 10) };
+      row.querySelectorAll('.edit-line').forEach(function(inp) {
+        lineData[inp.dataset.field] = inp.value;
+      });
+      lines.push(lineData);
+    });
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+
+    fetch("{% url 'extraction:edit_values' ext.pk %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]') ? document.querySelector('[name=csrfmiddlewaretoken]').value : '',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ header: header, lines: lines })
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
+        if (modal) modal.hide();
+        window.location.reload();
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+      }
+    })
+    .catch(function(err) {
+      alert('Network error: ' + err);
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+    });
+  });
+});
+{% endif %}
+
 function caseAction(action) {
   var ccEl = document.querySelector('.cc-console');
   var decideUrl = ccEl.dataset.decideUrl;
@@ -1461,4 +1531,5 @@ function submitCorrection() {
     .catch(function(err) { alert('Request failed: ' + err); });
 }
 </script>
+  <script src="{% static 'js/extraction_console.js' %}"></script>
 {% endblock %}

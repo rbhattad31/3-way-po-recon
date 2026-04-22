@@ -1337,6 +1337,38 @@ def extraction_approval_detail(request, pk):
                     if _is_blank(_get_norm(_field_key)) and not _is_blank(_field_value):
                         _set_norm(_field_key, _field_value)
 
+                # If governed payload line_items are empty but invoice rows were
+                # persisted, validate against persisted rows to avoid false WARNs.
+                if not getattr(normalized, "line_items", None):
+                    _invoice_lines = list(invoice.line_items.order_by("line_number"))
+                    if _invoice_lines:
+                        try:
+                            from apps.extraction.services.normalization_service import NormalizedLineItem
+
+                            normalized.line_items = [
+                                NormalizedLineItem(
+                                    line_number=li.line_number or (_idx + 1),
+                                    raw_description=li.raw_description or "",
+                                    raw_item_category=li.item_category or "",
+                                    raw_quantity=li.raw_quantity or "",
+                                    raw_unit_price=li.raw_unit_price or "",
+                                    raw_tax_percentage=(str(li.tax_percentage) if li.tax_percentage is not None else ""),
+                                    raw_tax_amount=li.raw_tax_amount or "",
+                                    raw_line_amount=li.raw_line_amount or "",
+                                    description=li.description or "",
+                                    item_category=li.item_category or "",
+                                    normalized_description=li.normalized_description or "",
+                                    quantity=li.quantity,
+                                    unit_price=li.unit_price,
+                                    tax_percentage=li.tax_percentage,
+                                    tax_amount=li.tax_amount,
+                                    line_amount=li.line_amount,
+                                )
+                                for _idx, li in enumerate(_invoice_lines)
+                            ]
+                        except Exception:
+                            pass
+
             val_result = ValidationService().validate(normalized)
             validation_issues = [
                 {"field": v.field, "severity": v.severity, "message": v.message}
@@ -1717,6 +1749,38 @@ def extraction_console(request, pk):
                 for _field_key, _field_value in _invoice_fallbacks.items():
                     if _is_blank(_get_norm(_field_key)) and not _is_blank(_field_value):
                         _set_norm(_field_key, _field_value)
+
+                # If governed payload line_items are empty but invoice rows were
+                # persisted, validate against persisted rows to avoid false WARNs.
+                if not getattr(normalized, "line_items", None):
+                    _invoice_lines = list(invoice.line_items.order_by("line_number"))
+                    if _invoice_lines:
+                        try:
+                            from apps.extraction.services.normalization_service import NormalizedLineItem
+
+                            normalized.line_items = [
+                                NormalizedLineItem(
+                                    line_number=li.line_number or (_idx + 1),
+                                    raw_description=li.raw_description or "",
+                                    raw_item_category=li.item_category or "",
+                                    raw_quantity=li.raw_quantity or "",
+                                    raw_unit_price=li.raw_unit_price or "",
+                                    raw_tax_percentage=(str(li.tax_percentage) if li.tax_percentage is not None else ""),
+                                    raw_tax_amount=li.raw_tax_amount or "",
+                                    raw_line_amount=li.raw_line_amount or "",
+                                    description=li.description or "",
+                                    item_category=li.item_category or "",
+                                    normalized_description=li.normalized_description or "",
+                                    quantity=li.quantity,
+                                    unit_price=li.unit_price,
+                                    tax_percentage=li.tax_percentage,
+                                    tax_amount=li.tax_amount,
+                                    line_amount=li.line_amount,
+                                )
+                                for _idx, li in enumerate(_invoice_lines)
+                            ]
+                        except Exception:
+                            pass
 
             val_result = ValidationService().validate(normalized)
 
@@ -2206,15 +2270,27 @@ def extraction_console(request, pk):
             })
         correction_count = len(corrections)
 
-    # ── QR / e-invoice data from raw_response["_qr"] ──
+    # ── QR / e-invoice data from extracted payload ──
     qr_data = None
     qr_decision_codes = []
     qr_date_match = None  # None = not comparable, True = match, False = mismatch
     if isinstance(extracted_data, dict):
         _qr_raw = extracted_data.get("_qr")
-        if isinstance(_qr_raw, dict) and _qr_raw.get("irn"):
+        # Governed output may store QR metadata in the canonical meta block.
+        if not isinstance(_qr_raw, dict):
+            _meta = extracted_data.get("meta")
+            if isinstance(_meta, dict):
+                _qr_raw = _meta.get("qr_data")
+
+        # Show QR panel whenever we have a decoded QR payload, even if IRN is absent.
+        if isinstance(_qr_raw, dict) and _qr_raw:
             qr_data = _qr_raw
+
         qr_decision_codes = extracted_data.get("_decision_codes") or []
+        if not qr_decision_codes:
+            _meta = extracted_data.get("meta")
+            if isinstance(_meta, dict):
+                qr_decision_codes = _meta.get("decision_codes") or []
 
     qr_amount_match = None  # None = not comparable, True = match, False = mismatch
     # Compare QR doc_date with invoice.invoice_date (different formats)

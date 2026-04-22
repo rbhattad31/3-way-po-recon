@@ -1,0 +1,55 @@
+{% load rbac_tags %}
+
+{# Embedded extraction-console tabs inside case console #}
+<div class="ap-card p-3">
+  {% if ext %}
+  <ul class="nav nav-pills mb-3" id="invoiceInnerTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="invoice-data-tab" data-bs-toggle="pill" data-bs-target="#invoice-data" type="button" role="tab">
+        <i class="bi bi-grid-3x3-gap me-1"></i>Extracted Data
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="invoice-corrections-tab" data-bs-toggle="pill" data-bs-target="#invoice-corrections" type="button" role="tab">
+        <i class="bi bi-pencil-square me-1"></i>Corrections
+        {% if correction_count %}
+        <span class="badge bg-secondary ms-1">{{ correction_count }}</span>
+        {% endif %}
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if not qr_data %}text-muted{% endif %}" id="invoice-qr-tab" data-bs-toggle="pill" data-bs-target="#invoice-qr" type="button" role="tab">
+        <i class="bi bi-qr-code me-1"></i>e-Invoice QR
+        {% if qr_data %}
+          {% if "QR_MISMATCH" in qr_decision_codes %}
+          <span class="badge bg-danger ms-1">Mismatch</span>
+          {% else %}
+          <span class="badge bg-success ms-1">✓</span>
+          {% endif %}
+        {% endif %}
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="invoiceInnerTabContent">
+    <div class="tab-pane fade show active" id="invoice-data" role="tabpanel" aria-labelledby="invoice-data-tab">
+      {% include "extraction/console/_extracted_data.html" %}
+    </div>
+
+    <div class="tab-pane fade" id="invoice-corrections" role="tabpanel" aria-labelledby="invoice-corrections-tab">
+      {% include "extraction/console/_corrections_panel.html" %}
+    </div>
+
+    <div class="tab-pane fade" id="invoice-qr" role="tabpanel" aria-labelledby="invoice-qr-tab">
+      {% include "extraction/console/_qr_panel.html" %}
+    </div>
+  </div>
+
+  {% include "extraction/console/_edit_modal.html" %}
+  {% else %}
+  <div class="text-center py-4">
+    <i class="bi bi-file-earmark-text text-muted" style="font-size:2rem;opacity:.5"></i>
+    <p class="text-muted mt-2 mb-0">No extraction result is linked to this case invoice yet.</p>
+  </div>
+  {% endif %}
+</div>

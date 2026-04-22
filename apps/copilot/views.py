@@ -4,6 +4,10 @@ import logging
 import os
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+from django.conf import settings
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -515,6 +519,24 @@ def upload_status(request, upload_id):
         .first()
     )
     if not invoice:
+        # Stale-processing guard: avoid infinite "running" loops when extraction is stuck.
+        stale_minutes = int(getattr(settings, "COPILOT_UPLOAD_STALE_MINUTES", 10))
+        age_minutes = (timezone.now() - upload.updated_at).total_seconds() / 60.0 if upload.updated_at else 0.0
+        if upload.processing_state == FileProcessingState.PROCESSING and age_minutes >= stale_minutes:
+            upload.processing_state = FileProcessingState.FAILED
+            upload.processing_message = (
+                "Extraction timed out while reading the document. "
+                "Please retry the upload."
+            )
+            upload.save(update_fields=["processing_state", "processing_message", "updated_at"])
+            steps.append({"label": "Extraction failed", "done": True, "failed": True})
+            return Response({
+                "steps": steps,
+                "completed": True,
+                "error": upload.processing_message,
+                **data,
+            })
+
         progress_label = upload.processing_message or "Reading the document..."
         steps.append({"label": progress_label, "done": False})
         return Response({"steps": steps, "completed": False, **data})
@@ -1418,7 +1440,19 @@ def supervisor_run_stream(request):
                         _c = _APC.objects.filter(pk=case_id).values_list("case_number", flat=True).first()
                         _case_num = _c
 
-                    invoice = _run_extraction(upload_id, case_id, _case_num)
+                    extraction_timeout_seconds = int(
+                        getattr(settings, "COPILOT_SUPERVISOR_EXTRACTION_TIMEOUT_SECONDS", 600)
+                    )
+                    with ThreadPoolExecutor(max_workers=1) as _pool:
+                        _future = _pool.submit(_run_extraction, upload_id, case_id, _case_num)
+                        try:
+                            invoice = _future.result(timeout=extraction_timeout_seconds)
+                        except FuturesTimeoutError:
+                            _emit({"type": "pipeline_stage", "stage": "extraction", "status": "failed",
+                                   "message": "Extraction timed out while reading the document."})
+                            _emit({"type": "error", "message": "Extraction timed out. Please retry upload."})
+                            return
+
                     if invoice:
                         invoice_id = invoice.pk
                         inv_label = invoice.invoice_number or "Invoice"

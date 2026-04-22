@@ -106,7 +106,9 @@ def download_blob_to_tempfile(blob_path: str) -> str:
     _, ext = os.path.splitext(blob_path)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
     try:
-        download_stream = blob_client.download_blob()
+        timeout_seconds = int(getattr(settings, "AZURE_BLOB_DOWNLOAD_TIMEOUT_SECONDS", 90))
+        # Use a bounded server-side timeout so stalled blob reads do not hang forever.
+        download_stream = blob_client.download_blob(timeout=timeout_seconds, max_concurrency=1)
         tmp.write(download_stream.readall())
         tmp.flush()
         tmp.close()

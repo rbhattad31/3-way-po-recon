@@ -15,9 +15,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0"><i class="bi bi-building me-2"></i>Company Profiles</h4>
+  {% if form %}
+  {% has_permission "companies.create" as can_create %}
+  {% if can_create %}
   <button class="btn btn-sm btn-primary" data-bs-toggle="collapse" data-bs-target="#newProfileForm">
     <i class="bi bi-plus-lg me-1"></i>New Company
   </button>
+  {% endif %}
+  {% endif %}
 </div>
 
 <div class="alert alert-info py-2" style="font-size:var(--ap-font-size-sm)">
@@ -27,7 +32,8 @@
   with the actual vendor (the other party on the invoice).
 </div>
 
-{# New Profile Form (collapsed) #}
+{# New Profile Form (collapsed) - Only for superusers #}
+{% if form %}
 <div class="collapse mb-3" id="newProfileForm">
   <div class="card">
     <div class="card-header"><strong>Create Company Profile</strong></div>
@@ -74,6 +80,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {# Profiles Table #}
 {% if profiles %}
@@ -84,6 +91,7 @@
         <tr>
           <th>Name</th>
           <th>Tax ID</th>
+            <th>Tenant ID</th>
           <th>Country</th>
           <th>Aliases</th>
           <th>Tax IDs</th>
@@ -100,6 +108,9 @@
             {% if p.legal_name %}<br><small class="text-muted">{{ p.legal_name }}</small>{% endif %}
           </td>
           <td><code>{{ p.tax_id|default:"-" }}</code></td>
+            <td>
+              <span class="badge bg-light text-dark border font-monospace" title="Database tenant ID (primary key)">{{ p.pk }}</span>
+            </td>
           <td>{{ p.country|default:"-" }}</td>
           <td>
             <span class="badge bg-secondary">{{ p.aliases.count }}</span>

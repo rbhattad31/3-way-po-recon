@@ -5,6 +5,7 @@ URL prefix: /admin-console/
 from django.contrib import messages
 from django.contrib.auth.views import LoginView as DjangoLoginView
 from django.conf import settings
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q, Count
 from django.shortcuts import get_object_or_404, redirect
@@ -23,6 +24,28 @@ from apps.accounts.rbac_models import (
 from apps.accounts.rbac_services import RBACEventService
 from apps.core.decorators import observed_action
 from apps.core.permissions import PermissionRequiredMixin
+
+
+def _is_super_admin_actor(user) -> bool:
+    """Return True when user is platform admin or has SUPER_ADMIN role."""
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, "is_platform_admin", False) or getattr(user, "is_superuser", False):
+        return True
+    if hasattr(user, "get_role_codes"):
+        try:
+            return "SUPER_ADMIN" in set(user.get_role_codes())
+        except Exception:
+            return False
+    return getattr(user, "role", "") == "SUPER_ADMIN"
+
+
+def _assignable_roles_for_actor(user):
+    """Limit assignable roles for non-super-admin actors."""
+    qs = Role.objects.filter(is_active=True).order_by("rank")
+    if _is_super_admin_actor(user):
+        return qs
+    return qs.exclude(code="SUPER_ADMIN")
 
 
 # ============================================================================
@@ -133,10 +156,12 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
         else:
             ctx['form'] = UserCreateForm()
             ctx['locked_company'] = None
+        ctx['form'].fields['initial_role'].queryset = _assignable_roles_for_actor(self.request.user)
         return ctx
 
     def post(self, request, *args, **kwargs):
         form = UserCreateForm(request.POST)
+        form.fields['initial_role'].queryset = _assignable_roles_for_actor(request.user)
         is_pa = getattr(request.user, 'is_platform_admin', False)
         if form.is_valid():
             with transaction.atomic():
@@ -149,6 +174,13 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
                 # Assign initial role if selected
                 initial_role = form.cleaned_data.get("initial_role")
                 if initial_role:
+                    if initial_role.code == "SUPER_ADMIN" and not _is_super_admin_actor(request.user):
+                        form.add_error("initial_role", "Only SUPER_ADMIN can assign SUPER_ADMIN role.")
+                        return self.render_to_response({
+                            'form': form,
+                            'is_platform_admin': is_pa,
+                            'locked_company': None if is_pa else getattr(request.user, 'company', None),
+                        })
                     user.role = initial_role.code
                     user.save(update_fields=["role"])
                     UserRole.objects.create(
@@ -192,7 +224,9 @@ class UserDetailView(PermissionRequiredMixin, DetailView):
         now = timezone.now()
 
         ctx["profile_form"] = UserProfileForm(instance=user)
-        ctx["role_assign_form"] = UserRoleAssignForm()
+        role_form = UserRoleAssignForm()
+        role_form.fields["role"].queryset = _assignable_roles_for_actor(self.request.user)
+        ctx["role_assign_form"] = role_form
         ctx["override_form"] = UserPermissionOverrideForm()
 
         ctx["user_roles"] = (
@@ -267,8 +301,12 @@ class UserDetailView(PermissionRequiredMixin, DetailView):
     def _handle_role_assign(self, request):
         user = self.object
         form = UserRoleAssignForm(request.POST)
+        form.fields["role"].queryset = _assignable_roles_for_actor(request.user)
         if form.is_valid():
             role = form.cleaned_data["role"]
+            if role.code == "SUPER_ADMIN" and not _is_super_admin_actor(request.user):
+                messages.error(request, "Only SUPER_ADMIN can assign SUPER_ADMIN role.")
+                return redirect("accounts:user_detail", pk=user.pk)
             is_primary = form.cleaned_data["is_primary"]
             expires_at = form.cleaned_data.get("expires_at")
 
@@ -331,6 +369,10 @@ class UserDetailView(PermissionRequiredMixin, DetailView):
         user = self.object
         ur_id = request.POST.get("user_role_id")
         ur = get_object_or_404(UserRole, id=ur_id, user=user, is_active=True)
+
+        if ur.role.code == "SUPER_ADMIN" and not _is_super_admin_actor(request.user):
+            messages.error(request, "Only SUPER_ADMIN can set SUPER_ADMIN as primary role.")
+            return redirect("accounts:user_detail", pk=user.pk)
 
         old_code = user.role
         with transaction.atomic():
@@ -412,6 +454,11 @@ class RoleListView(PermissionRequiredMixin, ListView):
     context_object_name = "roles"
     required_permission = "roles.manage"
 
+    def dispatch(self, request, *args, **kwargs):
+        if not _is_super_admin_actor(request.user):
+            raise PermissionDenied("Only SUPER_ADMIN can manage roles and permissions.")
+        return super().dispatch(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = Role.objects.annotate(
             active_user_count=Count("user_roles", filter=Q(user_roles__is_active=True))
@@ -430,6 +477,11 @@ class RoleDetailView(PermissionRequiredMixin, DetailView):
     template_name = "accounts/role_detail.html"
     context_object_name = "role"
     required_permission = "roles.manage"
+
+    def dispatch(self, request, *args, **kwargs):
+        if not _is_super_admin_actor(request.user):
+            raise PermissionDenied("Only SUPER_ADMIN can manage roles and permissions.")
+        return super().dispatch(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -523,6 +575,11 @@ class RoleCreateView(PermissionRequiredMixin, TemplateView):
     template_name = "accounts/role_create.html"
     required_permission = "roles.manage"
 
+    def dispatch(self, request, *args, **kwargs):
+        if not _is_super_admin_actor(request.user):
+            raise PermissionDenied("Only SUPER_ADMIN can manage roles and permissions.")
+        return super().dispatch(request, *args, **kwargs)
+
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["form"] = RoleForm()
@@ -549,6 +606,11 @@ class PermissionListView(PermissionRequiredMixin, ListView):
     template_name = "accounts/permission_list.html"
     context_object_name = "permissions"
     required_permission = "roles.manage"
+
+    def dispatch(self, request, *args, **kwargs):
+        if not _is_super_admin_actor(request.user):
+            raise PermissionDenied("Only SUPER_ADMIN can manage roles and permissions.")
+        return super().dispatch(request, *args, **kwargs)
 
     def get_queryset(self):
         qs = Permission.objects.filter(is_active=True).order_by("module", "action")
@@ -583,6 +645,11 @@ class RolePermissionMatrixView(PermissionRequiredMixin, TemplateView):
 
     template_name = "accounts/role_matrix.html"
     required_permission = "roles.manage"
+
+    def dispatch(self, request, *args, **kwargs):
+        if not _is_super_admin_actor(request.user):
+            raise PermissionDenied("Only SUPER_ADMIN can manage roles and permissions.")
+        return super().dispatch(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
         import json
@@ -678,22 +745,52 @@ class CompanyProfileListView(PermissionRequiredMixin, ListView):
     model = CompanyProfile
     template_name = "accounts/company_profile_list.html"
     context_object_name = "profiles"
-    required_permission = "users.manage"
+    required_permission = "companies.view"
 
     def get_queryset(self):
-        return (
+        qs = (
             CompanyProfile.objects
             .filter(is_active=True)
             .prefetch_related("aliases", "tax_ids", "users")
             .order_by("-is_default", "name")
         )
+        # Scope to user's company unless they are platform admin or have companies.create/companies.edit
+        if not getattr(self.request.user, "is_platform_admin", False):
+            # Non-admin users see only their own company
+            qs = qs.filter(pk=self.request.user.company.pk)
+        return qs
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx["form"] = CompanyProfileForm(initial={"is_active": True})
+        # Only users with SUPER_ADMIN role can create companies
+        # Note: We explicitly check for SUPER_ADMIN role here, not just the permission,
+        # because the RBAC system grants all permissions to ADMIN users, but we want
+        # to restrict company creation to SUPER_ADMIN only
+        can_create = self._user_can_create_company()
+        
+        if can_create:
+            ctx["form"] = CompanyProfileForm(initial={"is_active": True})
+        else:
+            ctx["form"] = None
         return ctx
+    
+    def _user_can_create_company(self):
+        """Check if user is SUPER_ADMIN or platform admin."""
+        if not self.request.user or not self.request.user.is_authenticated:
+            return False
+        # Platform admins can create companies
+        if getattr(self.request.user, "is_platform_admin", False):
+            return True
+        # Only SUPER_ADMIN role can create companies
+        user_roles = getattr(self.request.user, 'get_role_codes', lambda: [])()
+        return "SUPER_ADMIN" in user_roles
 
     def post(self, request, *args, **kwargs):
+        # Only SUPER_ADMIN users can create companies
+        if not self._user_can_create_company():
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied("Only SUPER_ADMIN users can create company profiles.")
+        
         data = request.POST.copy()
         data.setdefault("is_active", "on")  # new profiles are always active
         form = CompanyProfileForm(data)
@@ -714,7 +811,16 @@ class CompanyProfileDetailView(PermissionRequiredMixin, DetailView):
     model = CompanyProfile
     template_name = "accounts/company_profile_detail.html"
     context_object_name = "profile"
-    required_permission = "users.manage"
+    required_permission = "companies.edit"
+
+    def get_object(self, queryset=None):
+        obj = super().get_object(queryset)
+        # Scope access to user's company unless they are platform admin
+        if not getattr(self.request.user, "is_platform_admin", False):
+            if obj.pk != self.request.user.company.pk:
+                from django.core.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have access to this company profile.")
+        return obj
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)

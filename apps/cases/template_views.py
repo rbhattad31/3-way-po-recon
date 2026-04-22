@@ -752,6 +752,215 @@ def case_agent_view(request, pk):
         recon_match_status = recon_result.match_status
         recon_mode = getattr(recon_result, "reconciliation_mode", None)
 
+    # Invoice deep-dive panel (embedded extraction console subset)
+    extraction_result = None
+    extraction_payload = {}
+    extraction = {}
+    ext = None
+    header_fields = {}
+    tax_fields = {}
+    line_items = []
+    line_items_raw = []
+    line_items_totals = {"quantity": 0, "tax_amount": 0, "total": 0}
+    invoice_tax_breakdown = {}
+    validation_field_issues = {}
+    corrections = []
+    correction_count = 0
+    parties = {}
+    enrichment = None
+    qr_date_match = None
+    qr_amount_match = None
+    qr_data = None
+    qr_decision_codes = []
+    raw_json_pretty = ""
+    if invoice and getattr(invoice, "document_upload_id", None):
+        try:
+            from apps.extraction.models import ExtractionResult
+
+            extraction_result = (
+                ExtractionResult.objects
+                .select_related("extraction_run")
+                .filter(document_upload_id=invoice.document_upload_id)
+                .order_by("-created_at")
+                .first()
+            )
+            if extraction_result:
+                ext = extraction_result
+                extraction_payload = extraction_result.raw_response or {}
+                if not extraction_payload and extraction_result.extraction_run:
+                    extraction_payload = extraction_result.extraction_run.extracted_data_json or {}
+
+                # Extraction metadata expected by extraction console partials.
+                _run = extraction_result.extraction_run
+                extraction = {
+                    "resolved_jurisdiction": {
+                        "country_code": getattr(_run, "country_code", ""),
+                        "regime_code": getattr(_run, "regime_code", ""),
+                    } if _run and (getattr(_run, "country_code", "") or getattr(_run, "regime_code", "")) else None,
+                    "jurisdiction_source": getattr(_run, "jurisdiction_source", "") if _run else "",
+                    "jurisdiction_confidence": getattr(_run, "jurisdiction_confidence", None) if _run else None,
+                    "jurisdiction_warning": getattr(_run, "jurisdiction_warning", "") if _run else "",
+                }
+
+                # Header/tax/line context aligned to extraction console rendering.
+                _header_map = [
+                    ("invoice_number", "Invoice Number", True),
+                    ("po_number", "PO Number", False),
+                    ("invoice_date", "Invoice Date", True),
+                    ("due_date", "Due Date", False),
+                    ("vendor_tax_id", "Vendor Tax ID (GSTIN/VAT)", False),
+                    ("buyer_name", "Buyer / Bill To", False),
+                    ("currency", "Currency", True),
+                    ("subtotal", "Subtotal", False),
+                    ("tax_percentage", "Tax Rate %", False),
+                    ("tax_amount", "Tax Amount", False),
+                    ("total_amount", "Total Amount", True),
+                ]
+                _inv_conf = invoice.extraction_confidence if invoice.extraction_confidence is not None else 0.0
+                for _attr, _display, _mandatory in _header_map:
+                    _val = getattr(invoice, _attr, None)
+                    _raw_attr = f"raw_{_attr}" if hasattr(invoice, f"raw_{_attr}") else None
+                    _raw_val = getattr(invoice, _raw_attr) if _raw_attr else None
+                    _has_value = _val is not None and str(_val).strip() != ""
+                    header_fields[_attr] = {
+                        "display_name": _display,
+                        "value": str(_val) if _val is not None else "",
+                        "raw_value": str(_raw_val) if _raw_val else None,
+                        "confidence": _inv_conf if _has_value else None,
+                        "method": "LLM" if _has_value else None,
+                        "is_mandatory": _mandatory,
+                        "evidence": _has_value,
+                    }
+
+                for _attr, _display in [("tax_percentage", "Tax Rate %"), ("tax_amount", "Tax Amount"), ("currency", "Currency")]:
+                    _val = getattr(invoice, _attr, None)
+                    _has_value = _val is not None and str(_val).strip() != ""
+                    tax_fields[f"tax_{_attr}"] = {
+                        "display_name": _display,
+                        "value": str(_val) if _val is not None else "",
+                        "confidence": _inv_conf if _has_value else None,
+                        "method": "LLM" if _has_value else None,
+                        "is_mandatory": False,
+                        "evidence": _has_value,
+                    }
+
+                _invoice_lines = list(invoice.line_items.order_by("line_number"))
+                line_items_raw = _invoice_lines
+                for _li in _invoice_lines:
+                    line_items.append({
+                        "description": _li.description,
+                        "quantity": _li.quantity,
+                        "unit_price": _li.unit_price,
+                        "tax_percentage": _li.tax_percentage,
+                        "tax_amount": _li.tax_amount,
+                        "total": _li.line_amount,
+                        "confidence": _inv_conf,
+                        "fields": {
+                            "Line Number": _li.line_number,
+                            "Item Category": _li.item_category or "",
+                        },
+                    })
+
+                from decimal import Decimal as _Dec, InvalidOperation as _InvalidOperation
+
+                def _to_dec(_v):
+                    if _v is None:
+                        return _Dec(0)
+                    try:
+                        return _Dec(str(_v))
+                    except (_InvalidOperation, ValueError):
+                        return _Dec(0)
+
+                line_items_totals = {
+                    "quantity": sum(_to_dec(_li.get("quantity")) for _li in line_items),
+                    "tax_amount": sum(_to_dec(_li.get("tax_amount")) for _li in line_items),
+                    "total": sum(_to_dec(_li.get("total")) for _li in line_items),
+                }
+
+                if invoice.tax_breakdown and isinstance(invoice.tax_breakdown, dict):
+                    invoice_tax_breakdown = invoice.tax_breakdown
+
+                # Corrections tab data
+                from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
+
+                _approval = ExtractionApproval.objects.filter(invoice=invoice).first()
+                if _approval:
+                    _field_corrections = (
+                        ExtractionFieldCorrection.objects
+                        .filter(approval=_approval)
+                        .select_related("corrected_by")
+                        .order_by("-created_at")
+                    )
+                    for _fc in _field_corrections:
+                        corrections.append({
+                            "field_code": _fc.field_name,
+                            "original_value": _fc.original_value,
+                            "corrected_value": _fc.corrected_value,
+                            "correction_reason": f"{_fc.entity_type} correction",
+                            "corrected_by": _fc.corrected_by,
+                            "created_at": _fc.created_at,
+                        })
+                    correction_count = len(corrections)
+
+                if isinstance(extraction_payload, dict):
+                    _qr_raw = extraction_payload.get("_qr")
+                    if not isinstance(_qr_raw, dict):
+                        _meta = extraction_payload.get("meta")
+                        if isinstance(_meta, dict):
+                            _qr_raw = _meta.get("qr_data")
+                            qr_decision_codes = _meta.get("decision_codes") or []
+
+                    if isinstance(_qr_raw, dict) and _qr_raw:
+                        qr_data = _qr_raw
+                    if not qr_decision_codes:
+                        qr_decision_codes = extraction_payload.get("_decision_codes") or []
+
+                if qr_data and invoice and invoice.invoice_date:
+                    _qr_date_str = qr_data.get("doc_date", "")
+                    if _qr_date_str:
+                        import datetime as _dt
+                        _parsed_qr_date = None
+                        for _fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"):
+                            try:
+                                _parsed_qr_date = _dt.datetime.strptime(_qr_date_str, _fmt).date()
+                                break
+                            except ValueError:
+                                continue
+                        if _parsed_qr_date is not None:
+                            qr_date_match = (_parsed_qr_date == invoice.invoice_date)
+
+                if qr_data and invoice and invoice.total_amount is not None:
+                    _qr_total = qr_data.get("total_value")
+                    if _qr_total is not None:
+                        try:
+                            from decimal import Decimal as _QDec
+                            qr_amount_match = (abs(_QDec(str(_qr_total)) - _QDec(str(invoice.total_amount))) < _QDec("0.01"))
+                        except Exception:
+                            pass
+
+                raw_json_pretty = json.dumps(extraction_payload, indent=2, default=str) if extraction_payload else ""
+        except Exception:
+            extraction_result = None
+            extraction_payload = {}
+            extraction = {}
+            ext = None
+            header_fields = {}
+            tax_fields = {}
+            line_items = []
+            line_items_raw = []
+            line_items_totals = {"quantity": 0, "tax_amount": 0, "total": 0}
+            invoice_tax_breakdown = {}
+            validation_field_issues = {}
+            corrections = []
+            correction_count = 0
+            parties = {}
+            enrichment = None
+            qr_date_match = None
+            qr_amount_match = None
+            qr_data = None
+            qr_decision_codes = []
+            raw_json_pretty = ""
+
     return render(request, "cases/case_agent_view.html", {
         "case": case,
         "invoice": invoice,
@@ -781,6 +990,27 @@ def case_agent_view(request, pk):
         "cost_run_history": cost_run_history,
         "recon_match_status": recon_match_status,
         "recon_mode": recon_mode,
+        "extraction_result": extraction_result,
+        "extraction_payload": extraction_payload,
+        "extraction": extraction,
+        "ext": ext,
+        "header_fields": header_fields,
+        "tax_fields": tax_fields,
+        "line_items": line_items,
+        "line_items_raw": line_items_raw,
+        "line_items_totals": line_items_totals,
+        "invoice_tax_breakdown": invoice_tax_breakdown,
+        "validation_field_issues": validation_field_issues,
+        "corrections": corrections,
+        "correction_count": correction_count,
+        "parties": parties,
+        "enrichment": enrichment,
+        "qr_data": qr_data,
+        "qr_decision_codes": qr_decision_codes,
+        "qr_date_match": qr_date_match,
+        "qr_amount_match": qr_amount_match,
+        "raw_json_pretty": raw_json_pretty,
+        "can_correct_extraction": _has_permission_code(request.user, "extraction.correct"),
         "copilot_context_json": json.dumps(copilot_context, default=str),
         "reviewers": reviewers,
         "activities": list(case.activities.select_related("actor").order_by("-created_at")),

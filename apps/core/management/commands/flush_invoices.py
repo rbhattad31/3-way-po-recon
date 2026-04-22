@@ -28,35 +28,89 @@ class Command(BaseCommand):
             action="store_true",
             help="Skip the interactive confirmation prompt",
         )
+        parser.add_argument(
+            "--tenant-id",
+            type=int,
+            default=None,
+            help="Flush invoice-related data only for a specific tenant (CompanyProfile ID)",
+        )
 
     def handle(self, *args, **options):
+        tenant_id = options.get("tenant_id")
+
         if not options["confirm"]:
-            answer = input(
-                "This will DELETE all invoices, cases, reconciliation results,\n"
-                "agent runs, reviews, extraction results, and audit events.\n"
-                "POs, GRNs, vendors, users, and config will be preserved.\n"
-                "Type 'yes' to continue: "
-            )
+            if tenant_id is None:
+                answer = input(
+                    "This will DELETE all invoices, cases, reconciliation results,\n"
+                    "agent runs, reviews, extraction results, and audit events.\n"
+                    "POs, GRNs, vendors, users, and config will be preserved.\n"
+                    "Type 'yes' to continue: "
+                )
+            else:
+                answer = input(
+                    f"This will DELETE invoice-related data for tenant_id={tenant_id}.\n"
+                    "POs, GRNs, vendors, users, and config will be preserved.\n"
+                    "Type 'yes' to continue: "
+                )
             if answer.strip().lower() != "yes":
                 self.stdout.write(self.style.WARNING("Aborted."))
                 return
 
-        self.stdout.write(self.style.WARNING("Flushing invoice-related data..."))
+        if tenant_id is None:
+            self.stdout.write(self.style.WARNING("Flushing invoice-related data..."))
+        else:
+            self.stdout.write(self.style.WARNING(
+                f"Flushing invoice-related data for tenant_id={tenant_id}..."
+            ))
 
         with transaction.atomic():
-            self._flush()
+            self._flush(tenant_id=tenant_id)
 
-        self.stdout.write(self.style.SUCCESS(
-            "Flush complete. POs, GRNs, vendors, config & users preserved."
-        ))
+        if tenant_id is None:
+            self.stdout.write(self.style.SUCCESS(
+                "Flush complete. POs, GRNs, vendors, config & users preserved."
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS(
+                f"Tenant flush complete for tenant_id={tenant_id}. "
+                "POs, GRNs, vendors, config & users preserved."
+            ))
 
-    def _flush(self):
+    def _flush(self, tenant_id=None):
         flushed_models = []
+        skipped_models = []
+
+        def _scoped_queryset(model):
+            qs = model.objects.all()
+            if tenant_id is None:
+                return qs
+
+            concrete_fields = {
+                f.name for f in model._meta.get_fields() if getattr(f, "concrete", False)
+            }
+            if "tenant" in concrete_fields:
+                return qs.filter(tenant_id=tenant_id)
+
+            key = f"{model._meta.app_label}.{model.__name__}"
+            relation_filters = {
+                "extraction.CreditTransaction": "account__user__company_id",
+                "extraction.UserCreditAccount": "user__company_id",
+                "extraction.BulkExtractionItem": "job__tenant_id",
+                "extraction_core.ExtractionOCRText": "extraction_run__tenant_id",
+            }
+            rel_filter = relation_filters.get(key)
+            if rel_filter:
+                return qs.filter(**{rel_filter: tenant_id})
+
+            skipped_models.append(key)
+            return qs.none()
 
         def _delete(model):
-            count = model.objects.all().delete()[0]
+            qs = _scoped_queryset(model)
+            count = qs.delete()[0]
             self.stdout.write(f"  {model.__name__}: {count}")
-            flushed_models.append(model)
+            if tenant_id is None:
+                flushed_models.append(model)
 
         # --- Audit / Observability ---
         from apps.auditlog.models import AuditEvent, ProcessingLog
@@ -122,9 +176,10 @@ class Command(BaseCommand):
         try:
             from apps.extraction.credit_models import CreditTransaction, UserCreditAccount
             _delete(CreditTransaction)
-            updated = UserCreditAccount.objects.all().update(
-                balance_credits=100, reserved_credits=0, monthly_used=0,
-            )
+            credit_qs = UserCreditAccount.objects.all()
+            if tenant_id is not None:
+                credit_qs = credit_qs.filter(user__company_id=tenant_id)
+            updated = credit_qs.update(balance_credits=100, reserved_credits=0, monthly_used=0)
             self.stdout.write(f"  UserCreditAccount reset: {updated}")
         except ImportError:
             pass
@@ -207,18 +262,24 @@ class Command(BaseCommand):
         ]:
             _delete(model)
 
-        # --- Reset auto-increment IDs ---
+        # --- Reset auto-increment IDs (full flush only) ---
         reset_count = 0
-        with connection.cursor() as cursor:
-            for model in flushed_models:
-                table = model._meta.db_table
-                try:
-                    # Table name cannot be parameterised in MySQL; validate it
-                    # against Django's known table registry before interpolating.
-                    if not table.replace("_", "").isalnum():
-                        raise ValueError(f"Refusing to reset unsafe table name: {table!r}")
-                    cursor.execute("ALTER TABLE `%s` AUTO_INCREMENT = 1" % table)  # nosec B608 – validated above
-                    reset_count += 1
-                except Exception:
-                    pass
-        self.stdout.write(f"  Auto-increment reset for {reset_count} tables.")
+        if tenant_id is None:
+            with connection.cursor() as cursor:
+                for model in flushed_models:
+                    table = model._meta.db_table
+                    try:
+                        # Table name cannot be parameterised in MySQL; validate it
+                        # against Django's known table registry before interpolating.
+                        if not table.replace("_", "").isalnum():
+                            raise ValueError(f"Refusing to reset unsafe table name: {table!r}")
+                        cursor.execute("ALTER TABLE `%s` AUTO_INCREMENT = 1" % table)  # nosec B608 - validated above
+                        reset_count += 1
+                    except Exception:
+                        pass
+            self.stdout.write(f"  Auto-increment reset for {reset_count} tables.")
+        elif skipped_models:
+            skipped = ", ".join(sorted(set(skipped_models)))
+            self.stdout.write(self.style.WARNING(
+                f"  Skipped tenant scoping for models without tenant relation: {skipped}"
+            ))

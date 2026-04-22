@@ -27,6 +27,11 @@
       <button class="btn btn-sm btn-outline-primary active" id="filterAll" data-filter="all">
         All Fields
       </button>
+      {% if invoice and can_correct_extraction %}
+      <button class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#editModal">
+        <i class="bi bi-pencil-square me-1"></i>Edit Invoice Data
+      </button>
+      {% endif %}
       <button class="btn btn-sm btn-outline-warning" id="filterFlagged" data-filter="flagged">
         <i class="bi bi-flag me-1"></i>Flagged Only
       </button>

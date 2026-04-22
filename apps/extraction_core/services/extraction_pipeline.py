@@ -568,6 +568,14 @@ class ExtractionPipeline:
                 WarningItem(message=w, severity="WARNING")
             )
 
+        # Backward-compatible QR payload for extraction console.
+        qr_obj = getattr(legacy_result, "qr_data", None)
+        if qr_obj is not None:
+            try:
+                output.qr_data = qr_obj.to_serializable()
+            except Exception:
+                output.qr_data = {}
+
         # Errors
         output.errors = list(legacy_result.errors)
 

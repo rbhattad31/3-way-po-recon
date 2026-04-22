@@ -59,90 +59,6 @@
     </a>
     {% endif %}
 
-    {% has_permission "email.view" as can_view_email_integration %}
-    {% if can_view_email_integration %}
-    <a class="ap-nav-link {% if request.resolver_match.app_name == 'email_integration' %}active{% endif %}"
-       href="{% url 'email_integration:dashboard' %}">
-      <i class="bi bi-envelope me-1"></i>Email Integration
-    </a>
-    {% endif %}
-
-    {# Documents dropdown #}
-    <div class="ap-nav-dropdown">
-      <button class="ap-nav-link {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'grn_list' or request.resolver_match.app_name == 'vendors' %}active{% endif %}"
-              data-bs-toggle="dropdown" aria-expanded="false">
-        <i class="bi bi-folder me-1"></i>Documents<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
-      </button>
-      <ul class="dropdown-menu dropdown-menu-dark shadow">
-        {% has_permission "invoices.view" as can_view_invoice_list %}
-        {% if can_view_invoice_list %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' %}active{% endif %}"
-             href="{% url 'documents:invoice_list' %}">
-            <i class="bi bi-file-earmark-text me-2 opacity-75"></i>Invoices
-          </a>
-        </li>
-        {% endif %}
-        {% has_permission "purchase_orders.view" as can_view_pos %}
-        {% if can_view_pos %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active{% endif %}"
-             href="{% url 'po_list' %}">
-            <i class="bi bi-cart-check me-2 opacity-75"></i>Purchase Orders
-          </a>
-        </li>
-        {% endif %}
-        {% has_permission "grns.view" as can_view_grns %}
-        {% if can_view_grns %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active{% endif %}"
-             href="{% url 'grn_list' %}">
-            <i class="bi bi-box-seam me-2 opacity-75"></i>GRNs
-          </a>
-        </li>
-        {% endif %}
-        {% has_permission "vendors.view" as can_view_vendors %}
-        {% if can_view_vendors %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.app_name == 'vendors' %}active{% endif %}"
-             href="{% url 'vendors:vendor_list' %}">
-            <i class="bi bi-building me-2 opacity-75"></i>Vendors
-          </a>
-        </li>
-        {% endif %}
-      </ul>
-    </div>
-
-    {# ERP dropdown #}
-    {% if can_view_invoices %}
-    <div class="ap-nav-dropdown">
-      <button class="ap-nav-link {% if request.resolver_match.app_name == 'erp_integration' or request.resolver_match.url_name == 'posting-imports' %}active{% endif %}"
-              data-bs-toggle="dropdown" aria-expanded="false">
-        <i class="bi bi-plug me-1"></i>ERP<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
-      </button>
-      <ul class="dropdown-menu dropdown-menu-dark shadow">
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'erp_reference_data' %}active{% endif %}"
-             href="{% url 'erp_integration:erp_reference_data' %}">
-            <i class="bi bi-database me-2 opacity-75"></i>Reference Data
-          </a>
-        </li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'posting-imports' %}active{% endif %}"
-             href="{% url 'posting:posting-imports' %}">
-            <i class="bi bi-cloud-upload me-2 opacity-75"></i>Import Reference Data
-          </a>
-        </li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.app_name == 'erp_integration' and request.resolver_match.url_name != 'erp_reference_data' %}active{% endif %}"
-             href="{% url 'erp_integration:erp_connection_list' %}">
-            <i class="bi bi-plug me-2 opacity-75"></i>ERP Connections
-          </a>
-        </li>
-      </ul>
-    </div>
-    {% endif %}
-
     {# More mega menu #}
     <div class="ap-nav-dropdown ap-mega-dropdown">
       <button class="ap-nav-link" data-bs-toggle="dropdown" aria-expanded="false">
@@ -176,9 +92,26 @@
               <i class="bi bi-cart4 me-2 opacity-75"></i>Requests
             </a>
             {% endif %}
+            
+            {# ERP Section #}
+            {% if can_view_invoices %}
+            <div class="ap-mega-heading mt-3"><i class="bi bi-plug me-1"></i>ERP</div>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'erp_reference_data' %}active{% endif %}"
+               href="{% url 'erp_integration:erp_reference_data' %}">
+              <i class="bi bi-database me-2 opacity-75"></i>Reference Data
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'posting-imports' %}active{% endif %}"
+               href="{% url 'posting:posting-imports' %}">
+              <i class="bi bi-cloud-upload me-2 opacity-75"></i>Import Reference Data
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'erp_integration' and request.resolver_match.url_name != 'erp_reference_data' %}active{% endif %}"
+               href="{% url 'erp_integration:erp_connection_list' %}">
+              <i class="bi bi-plug me-2 opacity-75"></i>ERP Connections
+            </a>
+            {% endif %}
           </div>
 
-          {# Column 2: Reports #}
+          {# Column 2: Reports, Admin, ERP #}
           <div class="ap-mega-col">
             <div class="ap-mega-heading"><i class="bi bi-bar-chart me-1"></i>Reports</div>
             {% has_permission "cases.view" as can_view_case_ops %}
@@ -193,6 +126,75 @@
                href="{% url 'dashboard:agent_performance' %}">
               <i class="bi bi-robot me-2 opacity-75"></i>Agent Performance
             </a>
+            {% endif %}
+            
+            {# Admin Section #}
+            {% has_permission "users.manage" as can_manage_users_col2 %}
+            {% has_permission "roles.manage" as can_manage_roles_base_col2 %}
+            {% if request.user.is_platform_admin or request.user.is_superuser or "SUPER_ADMIN" in user_role_codes %}
+            {% with True as can_manage_roles_col2 %}
+            {% if can_manage_users_col2 or can_manage_roles_base_col2 %}
+            <div class="ap-mega-heading mt-3"><i class="bi bi-gear me-1"></i>Admin</div>
+            {% if can_manage_users_col2 %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
+               href="{% url 'accounts:user_list' %}">
+              <i class="bi bi-people me-2 opacity-75"></i>Users
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'company_list' or request.resolver_match.url_name == 'company_detail' %}active{% endif %}"
+               href="{% url 'accounts:company_list' %}">
+              <i class="bi bi-building me-2 opacity-75"></i>Company Profiles
+            </a>
+            {% endif %}
+            {% if can_manage_roles_base_col2 %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'role_list' %}active{% endif %}"
+               href="{% url 'accounts:role_list' %}">
+              <i class="bi bi-shield me-2 opacity-75"></i>Roles
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'permission_list' %}active{% endif %}"
+               href="{% url 'accounts:permission_list' %}">
+              <i class="bi bi-key me-2 opacity-75"></i>Permissions
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'role_matrix' %}active{% endif %}"
+               href="{% url 'accounts:role_matrix' %}">
+              <i class="bi bi-grid-3x3 me-2 opacity-75"></i>Role Matrix
+            </a>
+            {% endif %}
+            {% has_permission "credits.manage" as can_manage_credits %}
+            {% if can_manage_credits %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'credit_account_list' %}active{% endif %}"
+               href="{% url 'extraction:credit_account_list' %}">
+              <i class="bi bi-coin me-2 opacity-75"></i>Credits
+            </a>
+            {% endif %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'recon_settings' %}active{% endif %}"
+               href="{% url 'reconciliation:recon_settings' %}">
+              <i class="bi bi-gear me-2 opacity-75"></i>Settings
+            </a>
+            {% endif %}
+            {% endwith %}
+            {% else %}
+            {% if can_manage_users_col2 %}
+            <div class="ap-mega-heading mt-3"><i class="bi bi-gear me-1"></i>Admin</div>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
+               href="{% url 'accounts:user_list' %}">
+              <i class="bi bi-people me-2 opacity-75"></i>Users
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'company_list' or request.resolver_match.url_name == 'company_detail' %}active{% endif %}"
+               href="{% url 'accounts:company_list' %}">
+              <i class="bi bi-building me-2 opacity-75"></i>Company Profiles
+            </a>
+            {% has_permission "credits.manage" as can_manage_credits %}
+            {% if can_manage_credits %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'credit_account_list' %}active{% endif %}"
+               href="{% url 'extraction:credit_account_list' %}">
+              <i class="bi bi-coin me-2 opacity-75"></i>Credits
+            </a>
+            {% endif %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'recon_settings' %}active{% endif %}"
+               href="{% url 'reconciliation:recon_settings' %}">
+              <i class="bi bi-gear me-2 opacity-75"></i>Settings
+            </a>
+            {% endif %}
             {% endif %}
           </div>
 
@@ -219,6 +221,50 @@
             {% endif %}
           </div>
 
+          {# Column 4: Documents & Email #}
+          <div class="ap-mega-col">
+            {# Documents Section #}
+            <div class="ap-mega-heading"><i class="bi bi-folder me-1"></i>Documents</div>
+            {% has_permission "invoices.view" as can_view_invoice_list %}
+            {% if can_view_invoice_list %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' %}active{% endif %}"
+               href="{% url 'documents:invoice_list' %}">
+              <i class="bi bi-file-earmark-text me-2 opacity-75"></i>Invoices
+            </a>
+            {% endif %}
+            {% has_permission "purchase_orders.view" as can_view_pos %}
+            {% if can_view_pos %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active{% endif %}"
+               href="{% url 'po_list' %}">
+              <i class="bi bi-cart-check me-2 opacity-75"></i>Purchase Orders
+            </a>
+            {% endif %}
+            {% has_permission "grns.view" as can_view_grns %}
+            {% if can_view_grns %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active{% endif %}"
+               href="{% url 'grn_list' %}">
+              <i class="bi bi-box-seam me-2 opacity-75"></i>GRNs
+            </a>
+            {% endif %}
+            {% has_permission "vendors.view" as can_view_vendors %}
+            {% if can_view_vendors %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'vendors' %}active{% endif %}"
+               href="{% url 'vendors:vendor_list' %}">
+              <i class="bi bi-building me-2 opacity-75"></i>Vendors
+            </a>
+            {% endif %}
+
+            {# Email Section #}
+            {% has_permission "email.view" as can_view_email_integration %}
+            {% if can_view_email_integration %}
+            <div class="ap-mega-heading mt-3"><i class="bi bi-envelope me-1"></i>Email</div>
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'email_integration' %}active{% endif %}"
+               href="{% url 'email_integration:dashboard' %}">
+              <i class="bi bi-envelope me-2 opacity-75"></i>Email Integration
+            </a>
+            {% endif %}
+          </div>
+
         </div>
         {# Bottom bar: Reference #}
         <div class="ap-mega-footer">
@@ -236,71 +282,6 @@
           data-bs-toggle="offcanvas" data-bs-target="#mobileMenu">
     <i class="bi bi-list"></i>
   </button>
-
-  {# Admin dropdown #}
-  {% has_permission "users.manage" as can_manage_users %}
-  {% has_permission "roles.manage" as can_manage_roles %}
-  {% if can_manage_users or can_manage_roles %}
-  <div class="dropdown d-none d-md-block">
-    <button class="btn btn-sm btn-light dropdown-toggle d-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-      <i class="bi bi-gear"></i>
-      <span class="d-none d-lg-inline">Admin</span>
-    </button>
-    <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-      {% if can_manage_users %}
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
-           href="{% url 'accounts:user_list' %}">
-          <i class="bi bi-people me-2 opacity-75"></i>Users
-        </a>
-      </li>
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'company_list' or request.resolver_match.url_name == 'company_detail' %}active{% endif %}"
-           href="{% url 'accounts:company_list' %}">
-          <i class="bi bi-building me-2 opacity-75"></i>Company Profiles
-        </a>
-      </li>
-      {% endif %}
-      {% if can_manage_roles %}
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'role_list' %}active{% endif %}"
-           href="{% url 'accounts:role_list' %}">
-          <i class="bi bi-shield me-2 opacity-75"></i>Roles
-        </a>
-      </li>
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'permission_list' %}active{% endif %}"
-           href="{% url 'accounts:permission_list' %}">
-          <i class="bi bi-key me-2 opacity-75"></i>Permissions
-        </a>
-      </li>
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'role_matrix' %}active{% endif %}"
-           href="{% url 'accounts:role_matrix' %}">
-          <i class="bi bi-grid-3x3 me-2 opacity-75"></i>Role Matrix
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "credits.manage" as can_manage_credits %}
-      {% if can_manage_credits %}
-      <li><hr class="dropdown-divider"></li>
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'credit_account_list' %}active{% endif %}"
-           href="{% url 'extraction:credit_account_list' %}">
-          <i class="bi bi-coin me-2 opacity-75"></i>Credits
-        </a>
-      </li>
-      {% endif %}
-      <li><hr class="dropdown-divider"></li>
-      <li>
-        <a class="dropdown-item {% if request.resolver_match.url_name == 'recon_settings' %}active{% endif %}"
-           href="{% url 'reconciliation:recon_settings' %}">
-          <i class="bi bi-gear me-2 opacity-75"></i>Settings
-        </a>
-      </li>
-    </ul>
-  </div>
-  {% endif %}
 
   {# Right actions #}
   <div class="ap-topbar-actions">
