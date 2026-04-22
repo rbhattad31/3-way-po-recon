@@ -29,6 +29,7 @@ from apps.benchmarking.models import (
     BenchmarkQuotation,
     BenchmarkRequest,
     BenchmarkResult,
+    VarianceThresholdConfig,
     VarianceStatus,
 )
 
@@ -388,6 +389,7 @@ class BenchmarkEngine:
                 line_items=line_items,
                 decision_output=decision_output,
                 market_output=outputs.get("market_data", {}),
+                geography=bench_request.geography,
             )
         except Exception as exc:
             logger.exception("Market price application failed (non-fatal): %s", exc)
@@ -644,6 +646,83 @@ class BenchmarkEngine:
         return vendor_cards
 
     @classmethod
+    def _resolve_variance_thresholds(cls, *, category: str, geography: str) -> dict:
+        """Resolve runtime variance thresholds from DB with sane fallback defaults."""
+        category_code = str(category or "ALL").strip().upper() or "ALL"
+        geography_code = str(geography or "ALL").strip().upper() or "ALL"
+
+        candidates = list(
+            VarianceThresholdConfig.objects.filter(
+                is_active=True,
+                category__in=[category_code, "ALL"],
+                geography__in=[geography_code, "ALL"],
+            )
+        )
+
+        if not candidates:
+            return {
+                "within_range_max_pct": 5.0,
+                "moderate_max_pct": 15.0,
+                "source": "DEFAULT",
+            }
+
+        def _priority(row):
+            return (
+                1 if row.category == category_code else 0,
+                1 if row.geography == geography_code else 0,
+            )
+
+        best = sorted(candidates, key=_priority, reverse=True)[0]
+        return {
+            "within_range_max_pct": float(best.within_range_max_pct),
+            "moderate_max_pct": float(best.moderate_max_pct),
+            "source": f"{best.category}:{best.geography}",
+        }
+
+    @classmethod
+    def _resolve_line_geography(cls, *, line_item: BenchmarkLineItem, geography: str = "") -> str:
+        geo = str(geography or "").strip().upper()
+        if geo:
+            return geo
+        try:
+            related_geo = getattr(getattr(line_item.quotation, "request", None), "geography", "")
+            return str(related_geo or "ALL").strip().upper() or "ALL"
+        except Exception:
+            return "ALL"
+
+    @classmethod
+    def _classify_variance_for_line(
+        cls,
+        *,
+        line_item: BenchmarkLineItem,
+        benchmark_mid,
+        geography: str = "",
+    ) -> tuple[float | None, str]:
+        if not line_item.quoted_unit_rate or benchmark_mid in (None, 0, Decimal("0")):
+            return None, VarianceStatus.NEEDS_REVIEW
+
+        variance_pct = (
+            (float(line_item.quoted_unit_rate) - float(benchmark_mid))
+            / float(benchmark_mid)
+            * 100.0
+        )
+        thresholds = cls._resolve_variance_thresholds(
+            category=getattr(line_item, "category", "ALL") or "ALL",
+            geography=cls._resolve_line_geography(line_item=line_item, geography=geography),
+        )
+        abs_variance = abs(variance_pct)
+        within_range_max = float(thresholds.get("within_range_max_pct", 5.0) or 5.0)
+        moderate_max = float(thresholds.get("moderate_max_pct", 15.0) or 15.0)
+
+        if abs_variance <= within_range_max:
+            status = VarianceStatus.WITHIN_RANGE
+        elif abs_variance <= moderate_max:
+            status = VarianceStatus.MODERATE
+        else:
+            status = VarianceStatus.HIGH
+        return round(variance_pct, 2), status
+
+    @classmethod
     def _apply_benchmark_corridors(
         cls,
         *,
@@ -773,21 +852,13 @@ class BenchmarkEngine:
                 
                 # Calculate variance
                 if line_item.quoted_unit_rate and corridor.mid_rate:
-                    variance_pct = (
-                        (float(line_item.quoted_unit_rate) - float(corridor.mid_rate))
-                        / float(corridor.mid_rate)
-                        * 100.0
+                    variance_pct, variance_status = cls._classify_variance_for_line(
+                        line_item=line_item,
+                        benchmark_mid=corridor.mid_rate,
+                        geography=geography,
                     )
                     line_item.variance_pct = round(variance_pct, 2)
-                    
-                    # Determine variance status
-                    abs_variance = abs(variance_pct)
-                    if abs_variance <= 5.0:
-                        line_item.variance_status = "WITHIN_RANGE"
-                    elif abs_variance <= 15.0:
-                        line_item.variance_status = "MODERATE"
-                    else:
-                        line_item.variance_status = "HIGH"
+                    line_item.variance_status = variance_status
                 
                 line_item.save(update_fields=[
                     "benchmark_min", "benchmark_mid", "benchmark_max",
@@ -810,6 +881,7 @@ class BenchmarkEngine:
         line_items: list,
         decision_output: dict,
         market_output: dict,
+        geography: str = "",
     ) -> None:
         line_decisions = decision_output.get("line_decisions", [])
         decisions_by_line_pk = {
@@ -890,19 +962,13 @@ class BenchmarkEngine:
             line_item.benchmark_source = "PERPLEXITY_LIVE"
 
             if line_item.quoted_unit_rate:
-                variance_pct = (
-                    (float(line_item.quoted_unit_rate) - float(benchmark_mid))
-                    / float(benchmark_mid)
-                    * 100.0
+                variance_pct, variance_status = cls._classify_variance_for_line(
+                    line_item=line_item,
+                    benchmark_mid=benchmark_mid,
+                    geography=geography,
                 )
-                line_item.variance_pct = round(variance_pct, 2)
-                abs_variance = abs(variance_pct)
-                if abs_variance <= 5.0:
-                    line_item.variance_status = "WITHIN_RANGE"
-                elif abs_variance <= 15.0:
-                    line_item.variance_status = "MODERATE"
-                else:
-                    line_item.variance_status = "HIGH"
+                line_item.variance_pct = variance_pct
+                line_item.variance_status = variance_status
             else:
                 line_item.variance_pct = None
                 line_item.variance_status = "NEEDS_REVIEW"

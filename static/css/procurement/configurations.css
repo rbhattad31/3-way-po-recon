@@ -271,6 +271,16 @@ body { background: #f0f4fa; }
   min-width: 0;
 }
 
+.cfg-table-wrap-scroll-both .cfg-category-table {
+  width: max-content;
+  min-width: 980px;
+}
+
+.cfg-table-wrap-scroll-both .cfg-threshold-table {
+  width: max-content;
+  min-width: 960px;
+}
+
 #src-matrix-table {
   width: max-content;
   min-width: 1320px;
