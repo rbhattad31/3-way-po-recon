@@ -138,10 +138,13 @@ body { background: #f0f4fa; }
 .request-link {
   color: #0f172a;
   font-weight: 500;
+  transition: color .12s ease;
 }
 .request-link:hover,
 .request-link:focus {
-  color: #0f172a;
+  color: #1665D8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ---- Request card ---- */
