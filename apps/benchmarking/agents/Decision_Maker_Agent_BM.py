@@ -106,9 +106,10 @@ class BenchmarkDecisionMakerAgentBM:
             "task": "Classify and route each benchmark line item.",
             "rules": [
                 "Use one category code from allowed categories. If no fit, use UNCATEGORIZED.",
-                "Use pricing_type MARKET or BENCHMARK.",
-                "If category has corridor rule, source must be DB_BENCHMARK.",
-                "Else source can be MARKET_DATA or NEEDS_REVIEW.",
+                "Use pricing_type MARKET, BENCHMARK, or HYBRID.",
+                "MARKET always routes to MARKET_DATA.",
+                "BENCHMARK routes to DB_BENCHMARK only when corridor exists, else NEEDS_REVIEW.",
+                "HYBRID uses DB_BENCHMARK plus market intent when corridor exists; otherwise MARKET_DATA.",
                 "Return strict JSON only.",
             ],
             "geography": geography,
@@ -123,10 +124,12 @@ class BenchmarkDecisionMakerAgentBM:
                         "line_pk": "int|null",
                         "line_number": "int",
                         "category": "string",
-                        "pricing_type": "MARKET|BENCHMARK",
+                        "pricing_type": "MARKET|BENCHMARK|HYBRID",
                         "classification_confidence": "float_0_to_1",
                         "source": "DB_BENCHMARK|MARKET_DATA|NEEDS_REVIEW",
                         "source_reason": "string",
+                        "hybrid_use_benchmark": "bool",
+                        "hybrid_use_market": "bool",
                     }
                 ],
             },
@@ -178,10 +181,9 @@ class BenchmarkDecisionMakerAgentBM:
                     category = fallback.get("category") or "UNCATEGORIZED"
 
                 pricing_type = str(model_row.get("pricing_type") or fallback.get("pricing_type") or "BENCHMARK").strip().upper()
-                if pricing_type not in {"MARKET", "BENCHMARK"}:
+                if pricing_type not in {"MARKET", "BENCHMARK", "HYBRID"}:
                     pricing_type = str(fallback.get("pricing_type") or "BENCHMARK").strip().upper() or "BENCHMARK"
 
-                model_source = str(model_row.get("source") or "").strip().upper()
                 source_decision = cls._choose_source(
                     category=category,
                     geography=geography,
@@ -189,11 +191,6 @@ class BenchmarkDecisionMakerAgentBM:
                     pricing_type=pricing_type,
                 )
                 source = source_decision.get("source")
-                if model_source in {"DB_BENCHMARK", "MARKET_DATA", "NEEDS_REVIEW"}:
-                    if source_decision.get("corridor_rule_found") and model_source != "DB_BENCHMARK":
-                        source = "DB_BENCHMARK"
-                    else:
-                        source = model_source
 
                 if category != "UNCATEGORIZED":
                     classified_count += 1
@@ -223,6 +220,8 @@ class BenchmarkDecisionMakerAgentBM:
                         "source": source,
                         "source_reason": str(model_row.get("source_reason") or source_decision.get("reason") or "")[:300],
                         "corridor_rule_found": bool(source_decision.get("corridor_rule_found")),
+                        "hybrid_use_benchmark": bool(source_decision.get("hybrid_use_benchmark", False)),
+                        "hybrid_use_market": bool(source_decision.get("hybrid_use_market", False)),
                     }
                 )
 
@@ -295,6 +294,8 @@ class BenchmarkDecisionMakerAgentBM:
                     "source": source,
                     "source_reason": source_decision.get("reason", ""),
                     "corridor_rule_found": source_decision.get("corridor_rule_found", False),
+                    "hybrid_use_benchmark": source_decision.get("hybrid_use_benchmark", False),
+                    "hybrid_use_market": source_decision.get("hybrid_use_market", False),
                 }
             )
 
@@ -360,31 +361,58 @@ class BenchmarkDecisionMakerAgentBM:
             scope_type__in=[scope_type, "ALL"],
         ).exists()
 
-        if corridor_exists:
-            return {
-                "source": "DB_BENCHMARK",
-                "reason": "DB-first routing: benchmark corridor rule exists in configuration table.",
-                "corridor_rule_found": True,
-            }
+        pricing_mode = (pricing_type or "BENCHMARK").strip().upper()
 
         if category == "UNCATEGORIZED":
             return {
                 "source": "MARKET_DATA",
-                "reason": "No DB corridor for uncategorized line; using market research fallback.",
-                "corridor_rule_found": False,
+                "reason": "Uncategorized line; using market research fallback.",
+                "corridor_rule_found": corridor_exists,
+                "hybrid_use_benchmark": False,
+                "hybrid_use_market": False,
             }
 
-        if pricing_type == "MARKET":
+        if pricing_mode == "MARKET":
             return {
                 "source": "MARKET_DATA",
-                "reason": "No DB corridor found for MARKET pricing category; using market research fallback.",
+                "reason": "Pricing type MARKET routes to market research.",
+                "corridor_rule_found": corridor_exists,
+                "hybrid_use_benchmark": False,
+                "hybrid_use_market": False,
+            }
+
+        if pricing_mode == "HYBRID":
+            if corridor_exists:
+                return {
+                    "source": "DB_BENCHMARK",
+                    "reason": "HYBRID with corridor uses benchmark plus market values.",
+                    "corridor_rule_found": True,
+                    "hybrid_use_benchmark": True,
+                    "hybrid_use_market": True,
+                }
+            return {
+                "source": "MARKET_DATA",
+                "reason": "HYBRID without corridor uses market values only.",
                 "corridor_rule_found": False,
+                "hybrid_use_benchmark": False,
+                "hybrid_use_market": True,
+            }
+
+        if corridor_exists:
+            return {
+                "source": "DB_BENCHMARK",
+                "reason": "BENCHMARK with corridor uses database benchmark rules.",
+                "corridor_rule_found": True,
+                "hybrid_use_benchmark": False,
+                "hybrid_use_market": False,
             }
 
         return {
-            "source": "MARKET_DATA",
-            "reason": "No DB corridor found; using market research fallback.",
+            "source": "NEEDS_REVIEW",
+            "reason": "BENCHMARK category has no corridor rule and requires review.",
             "corridor_rule_found": False,
+            "hybrid_use_benchmark": False,
+            "hybrid_use_market": False,
         }
 
     @staticmethod

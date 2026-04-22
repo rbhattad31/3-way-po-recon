@@ -19,6 +19,8 @@ urlpatterns = [
     path("<int:pk>/quotations/add/", views.request_add_quotations, name="request_add_quotations"),
     # Export CSV
     path("<int:pk>/export/", views.request_export, name="request_export"),
+    # Export PDF
+    path("<int:pk>/export-pdf/", views.request_export_pdf, name="request_export_pdf"),
     # Status JSON
     path("<int:pk>/status/", views.request_status, name="request_status"),
     path("<int:pk>/live-enrich/", views.request_live_enrich, name="request_live_enrich"),

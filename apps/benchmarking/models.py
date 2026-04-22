@@ -596,3 +596,77 @@ class BenchmarkResult(BaseModel):
             "NEEDS_REVIEW": "secondary",
         }
         return mapping.get(self.overall_status, "secondary")
+
+
+# ---------------------------------------------------------------------------
+# BenchmarkRunLog  -- tracks every analysis run + export action
+# ---------------------------------------------------------------------------
+
+class BenchmarkRunLog(BaseModel):
+    """
+    Appended every time:
+      - The benchmark engine is triggered (Re-run Analysis / first upload)
+      - A CSV export is downloaded
+      - A PDF export is downloaded
+    Gives a full audit trail ordered by created_at.
+    """
+
+    class RunType(models.TextChoices):
+        ANALYSIS = "ANALYSIS", "Re-run Analysis"
+        EXPORT_CSV = "EXPORT_CSV", "Export CSV"
+        EXPORT_PDF = "EXPORT_PDF", "Export PDF"
+
+    class RunStatus(models.TextChoices):
+        SUCCESS = "SUCCESS", "Success"
+        FAILED = "FAILED", "Failed"
+
+    request = models.ForeignKey(
+        BenchmarkRequest,
+        on_delete=models.CASCADE,
+        related_name="run_logs",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+    run_type = models.CharField(
+        max_length=20,
+        choices=RunType.choices,
+        default=RunType.ANALYSIS,
+        db_index=True,
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=RunStatus.choices,
+        default=RunStatus.SUCCESS,
+    )
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    run_number = models.PositiveIntegerField(default=0)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Benchmark Run Log"
+        verbose_name_plural = "Benchmark Run Logs"
+
+    def __str__(self):
+        return f"{self.run_type} #{self.run_number} -- {self.request.title}"
+
+    def save(self, *args, **kwargs):
+        if not self.pk and self.run_type == self.RunType.ANALYSIS and self.run_number == 0:
+            existing = BenchmarkRunLog.objects.filter(
+                request=self.request,
+                run_type=self.RunType.ANALYSIS,
+            ).count()
+            self.run_number = existing + 1
+        super().save(*args, **kwargs)

@@ -3,36 +3,364 @@
 
 {% block extra_head %}
 <style>
-  .variance-within { color:#059669; font-weight:600; }
-  .variance-moderate { color:#d97706; font-weight:600; }
-  .variance-high { color:#dc2626; font-weight:600; }
-  .variance-review { color:#6b7280; }
-  .stat-card { border-radius:10px;background:#fff;border:1px solid #e5e7eb;padding:1rem 1.2rem; }
-  /* ---- Folder cards ---- */
-  .folder-grid { display:flex; flex-wrap:wrap; gap:1rem; }
-  .folder-card {
-    width:155px; cursor:pointer; user-select:none;
-    border-radius:0 10px 10px 10px;
-    border:1.5px solid #e5e7eb;
-    background:#fffdf7;
-    transition:box-shadow .15s, border-color .15s;
+  html, body {
+    overflow-x: hidden;
   }
-  .folder-card:hover { box-shadow:0 4px 14px rgba(0,0,0,.1); border-color:#facc15; }
-  .folder-card.folder-best { border-color:#22c55e!important; background:#f0fdf4; }
-  .folder-card.folder-open { border-color:#3b82f6; box-shadow:0 0 0 3px #bfdbfe; }
-  .folder-tab {
-    height:10px; width:58%; border-radius:6px 6px 0 0;
-    background:#facc15; margin-bottom:-2px;
+  .benchmark-wrap {
+    width: 100%;
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 20px 24px;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
-  .folder-card.folder-best .folder-tab { background:#22c55e; }
-  .folder-card.folder-open .folder-tab { background:#3b82f6; }
-  .folder-body { padding:.65rem .75rem; }
-  .folder-icon { font-size:2.1rem; line-height:1; }
-  .folder-vendor { font-size:.78rem; font-weight:700; color:#111827; margin-top:.3rem; word-break:break-word; }
-  .folder-ref { font-size:.68rem; color:#6b7280; }
-  .folder-count { font-size:.68rem; background:#f3f4f6; border-radius:20px; padding:.15em .65em; color:#374151; font-weight:600; display:inline-flex; align-items:center; gap:.25rem; margin-top:.4rem; }
-  .folder-chevron { font-size:.75rem; color:#9ca3af; margin-top:.35rem; }
-  .folder-detail-panel { background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+  .benchmark-wrap > * + * {
+    margin-top: 20px;
+  }
+  .benchmark-header {
+    background: linear-gradient(90deg, #1e3c72, #2a84d2);
+    border-radius: 16px;
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #ffffff;
+    box-shadow: 0 8px 22px rgba(30, 60, 114, 0.22);
+    gap: 16px;
+  }
+  .header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+  }
+  .header-title {
+    font-size: 1.12rem;
+    font-weight: 700;
+    margin: 0;
+  }
+  .header-subtitle {
+    margin: 0;
+    font-size: 0.8rem;
+    opacity: 0.92;
+  }
+  .header-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .header-meta .badge {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.26);
+    font-size: 0.72rem;
+    font-weight: 500;
+  }
+  .header-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    align-items: center;
+  }
+  .header-actions .btn {
+    border-radius: 999px;
+    font-size: 0.78rem;
+    padding: 6px 14px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .header-actions .reprocess-form {
+    margin-left: auto;
+  }
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .summary-panel {
+    background: #ffffff;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+    padding: 12px;
+  }
+  .summary-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 0;
+    min-height: 108px;
+  }
+  .summary-card .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    color: #475569;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-align: left;
+  }
+  .summary-card .value {
+    margin-top: 6px;
+    font-size: 1.12rem;
+    font-weight: 700;
+    color: #0f172a;
+    text-align: left;
+  }
+  .summary-card-1 { background: #eff6ff; }
+  .summary-card-2 { background: #f8fafc; }
+  .summary-card-3 { background: #fff1f2; }
+  .summary-card-4 { background: #ecfdf3; }
+  .summary-card-5 { background: #fff7ed; }
+  .status-optimal { color: #1b8f5a; }
+  .status-high { color: #d32f2f; }
+  .status-moderate { color: #b26a00; }
+  .status-review { color: #64748b; }
+  .main-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2.2fr) minmax(280px, 1fr);
+    gap: 20px;
+    align-items: start;
+    width: 100%;
+    overflow: hidden;
+  }
+  .main-grid > div {
+    min-width: 0;
+  }
+  .table-card,
+  .side-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+    margin-bottom: 20px;
+  }
+  .table-card:last-child,
+  .side-card:last-child {
+    margin-bottom: 0;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .filters {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+  .filters .form-select {
+    min-width: 146px;
+    font-size: 0.75rem;
+    padding-top: 0.22rem;
+    padding-bottom: 0.22rem;
+  }
+  .card-title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .table-scroll {
+    width: 100%;
+    max-height: 420px;
+    overflow: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    box-sizing: border-box;
+  }
+  .table th,
+  .table td {
+    padding: 12px 10px;
+  }
+  .table thead th {
+    color: #6b7280;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+    vertical-align: middle;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  .table tbody td {
+    font-size: 0.8rem;
+    vertical-align: middle;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .text-cell {
+    text-align: left;
+  }
+  .number-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .status-cell {
+    text-align: center;
+  }
+  .action-cell {
+    text-align: right;
+  }
+  .status-badge {
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-block;
+  }
+  .badge-optimal { background: #e6f7ee; color: #1b8f5a; }
+  .badge-high { background: #fde2e2; color: #d32f2f; }
+  .badge-moderate { background: #fff4e5; color: #b26a00; }
+  .badge-review { background: #eef2f7; color: #64748b; }
+  .source-pill {
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    background: #f1f5f9;
+    color: #475569;
+  }
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+    position: sticky;
+    top: 12px;
+    align-self: start;
+  }
+  .insight-list {
+    padding-left: 0;
+    margin: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .insight-list li {
+    margin: 0;
+    padding: 8px 10px 8px 28px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    color: #334155;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    word-break: break-word;
+    position: relative;
+  }
+  .ai-insights-card {
+    background: #ffffff;
+  }
+  .insight-list li::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #2a6df4;
+    position: absolute;
+    left: 12px;
+    top: 14px;
+  }
+  .priority-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #f1f5f9;
+    gap: 10px;
+  }
+  .priority-item:last-child { border-bottom: 0; }
+  .priority-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #0f172a;
+    margin: 0;
+  }
+  .priority-vendor {
+    font-size: 0.72rem;
+    color: #64748b;
+  }
+  .pill-btn {
+    border: 0;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    white-space: nowrap;
+  }
+  .pill-review { background: #e6f0ff; color: #2a6df4; }
+  .pill-negotiate { background: #e8f7ec; color: #1f9d55; }
+  .empty-text {
+    font-size: 0.8rem;
+    color: #64748b;
+    margin: 0;
+  }
+  .notice-card {
+    border-radius: 14px;
+    border: 1px solid #dbeafe;
+    background: #f8fbff;
+    color: #1e3a8a;
+    padding: 12px 14px;
+    font-size: 0.8rem;
+    margin-top: 0;
+  }
+  @media (max-width: 1400px) {
+    .summary-row {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 992px) {
+    .main-grid {
+      grid-template-columns: 1fr;
+      overflow: visible;
+    }
+    .sidebar {
+      position: static;
+      top: auto;
+    }
+    .summary-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 576px) {
+    .benchmark-wrap {
+      padding: 16px 12px;
+    }
+    .summary-row {
+      grid-template-columns: 1fr;
+    }
+    .benchmark-header {
+      padding: 16px;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .card-head {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .filters {
+      justify-content: flex-start;
+      width: 100%;
+    }
+    .header-actions {
+      justify-content: flex-start;
+      width: 100%;
+      overflow-x: auto;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -47,260 +375,423 @@
 {% endblock %}
 
 {% block content %}
-
-{# Title row #}
-<div class="d-flex align-items-start justify-content-between mb-3">
-  <div>
-    <h1 class="fs-5 fw-bold mb-0" style="color:#111827;">{{ bench_request.title }}</h1>
-    <div class="mt-1 d-flex gap-2 flex-wrap" style="font-size:.78rem;">
-      <span class="badge bg-light text-dark border">{{ bench_request.geography }}</span>
-      <span class="badge bg-light text-dark border">{{ bench_request.scope_type }}</span>
-      {% if bench_request.store_type %}<span class="badge bg-light text-dark border">{{ bench_request.store_type }}</span>{% endif %}
-      <span class="badge bg-{{ bench_request.get_status_badge_class }}">{{ bench_request.status }}</span>
+<div class="benchmark-wrap pb-3">
+  <div class="benchmark-header">
+    <div class="header-left">
+      <h1 class="header-title">{{ bench_request.title }}</h1>
+      <p class="header-subtitle">Benchmarking Workspace</p>
+      <div class="header-meta">
+        <span class="badge">{{ bench_request.geography }}</span>
+        <span class="badge">{{ bench_request.scope_type }}</span>
+        {% if bench_request.store_type %}<span class="badge">{{ bench_request.store_type }}</span>{% endif %}
+        <span class="badge">Status: {{ bench_request.status }}</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      {% if bench_request.status == 'COMPLETED' %}
+      <a href="{% url 'benchmarking:request_export' bench_request.pk %}" class="btn btn-light">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="me-1" aria-hidden="true">
+          <path d="M2 1.5A1.5 1.5 0 0 1 3.5 0h6.293a1.5 1.5 0 0 1 1.06.44l2.707 2.707a1.5 1.5 0 0 1 .44 1.06V14.5A1.5 1.5 0 0 1 12.5 16h-9A1.5 1.5 0 0 1 2 14.5v-13zM9.5 1v2.5A1.5 1.5 0 0 0 11 5h2.5L9.5 1z"/>
+          <path d="M4 8.75h8v1.5H4v-1.5zm0-3h8v1.5H4v-1.5zm0 6h5v1.5H4v-1.5z"/>
+        </svg>Export CSV
+      </a>
+      {% endif %}
+      <a href="{% url 'benchmarking:request_export_pdf' bench_request.pk %}" class="btn btn-outline-light">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="me-1" aria-hidden="true">
+          <path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0H4zm5.5 1.5L13 5H9.5V1.5z"/>
+          <path d="M4.5 9.25h1.15c.73 0 1.1.36 1.1 1.01 0 .66-.39 1.02-1.12 1.02H5.2V13H4.5V9.25zm.7.58v.86h.39c.34 0 .52-.14.52-.43 0-.28-.18-.43-.52-.43H5.2zM7.55 9.25h1.08c.98 0 1.55.69 1.55 1.86 0 1.18-.57 1.89-1.55 1.89H7.55V9.25zm.7.58v2.59h.32c.58 0 .89-.46.89-1.31 0-.83-.31-1.28-.89-1.28h-.32zM10.9 9.25h2.15v.58H11.6v1h1.33v.57H11.6V13h-.7V9.25z"/>
+        </svg>Download PDF
+      </a>
+      <form method="post" action="{% url 'benchmarking:request_reprocess' bench_request.pk %}" class="d-inline reprocess-form" onsubmit="return confirm('Re-run the benchmark analysis?');">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-outline-light">
+          <i class="bi bi-arrow-repeat me-1"></i>Re-run Analysis
+        </button>
+      </form>
     </div>
   </div>
-  <div class="d-flex gap-2">
-    {% if bench_request.status == 'COMPLETED' %}
-    <a href="{% url 'benchmarking:request_export' bench_request.pk %}"
-       class="btn btn-sm btn-outline-success">
-      <i class="bi bi-download me-1"></i>Export CSV
-    </a>
-    {% endif %}
-    <form method="post" action="{% url 'benchmarking:request_reprocess' bench_request.pk %}"
-          class="d-inline" onsubmit="return confirm('Re-run the benchmark analysis?');">
-      {% csrf_token %}
-      <button type="submit" class="btn btn-sm btn-outline-secondary">
-        <i class="bi bi-arrow-repeat me-1"></i>Reprocess
-      </button>
-    </form>
+
+  {% if bench_request.status == 'FAILED' %}
+  <div class="notice-card" style="border-color:#fecaca;background:#fff1f2;color:#991b1b;">
+    <i class="bi bi-exclamation-triangle me-1"></i>Analysis failed: {{ bench_request.error_message }}
   </div>
-</div>
+  {% endif %}
 
-{% if bench_request.status == 'FAILED' %}
-<div class="alert alert-danger py-2 px-3 mb-3" style="font-size:.82rem;">
-  <i class="bi bi-exclamation-triangle me-1"></i>
-  Analysis failed: {{ bench_request.error_message }}
-</div>
-{% endif %}
+  {% if bench_request.status == 'PENDING' or bench_request.status == 'PROCESSING' %}
+  <div class="notice-card" style="border-color:#fed7aa;background:#fff7ed;color:#9a3412;">
+    <i class="bi bi-hourglass-split me-1"></i>Analysis is in progress. Refresh this page for updated results.
+  </div>
+  {% endif %}
 
-{% if result and result.live_enriched_at %}
-<div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-start gap-2" style="font-size:.82rem;border-left:3px solid #0d6efd;">
-  <i class="bi bi-globe2 mt-1 text-primary flex-shrink-0"></i>
-  <div>
-    <strong>Live pricing active</strong> -- last enriched {{ result.live_enriched_at|date:"N j, Y, P" }}.
+  {% if result and result.live_enriched_at %}
+  <div class="notice-card">
+    <i class="bi bi-globe2 me-1"></i>
+    Live pricing active -- last enriched {{ result.live_enriched_at|date:"N j, Y, P" }}.
     {% with meta=result.live_enrichment_json %}
-    {{ meta.enriched_items }} of {{ meta.total_items }} lines have live market rates
-    (avg confidence {{ meta.avg_confidence|floatformat:2 }}).
-    {% if meta.unique_citations %}
-    <span class="ms-1">Sources:
-      {% for url in meta.unique_citations|slice:":3" %}
-        <a href="{{ url }}" target="_blank" rel="noopener" class="ms-1" style="font-size:.75rem;">{{ forloop.counter }}</a>
-      {% endfor %}
-    </span>
-    {% endif %}
+      {{ meta.enriched_items }} of {{ meta.total_items }} lines have live market rates.
     {% endwith %}
   </div>
-</div>
-{% endif %}
+  {% endif %}
 
-{% if bench_request.status == 'PENDING' or bench_request.status == 'PROCESSING' %}
-<div class="alert alert-warning py-2 px-3 mb-3" style="font-size:.82rem;">
-  <i class="bi bi-hourglass-split me-1"></i>
-  Analysis is in progress. Refresh to see results.
-</div>
-{% endif %}
-
-<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;">
-  <div class="card-header bg-white border-bottom py-2 px-3">
-    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
-      <i class="bi bi-cloud-upload me-1 text-primary"></i>Upload Vendor Quotation(s)
-    </span>
-  </div>
-  <div class="card-body p-3">
-    <form method="post" action="{% url 'benchmarking:request_add_quotations' bench_request.pk %}" enctype="multipart/form-data" class="row g-2 align-items-end">
-      {% csrf_token %}
-      <div class="col-12 col-md-4">
-        <label class="form-label" style="font-size:.78rem;">Quotation Ref</label>
-        <input type="text" name="quotation_ref" class="form-control form-control-sm" placeholder="Quote reference">
+  <div class="summary-panel">
+    <div class="summary-row">
+      <div class="summary-card summary-card-1">
+        <div class="label">Vendors Compared</div>
+        <div class="value">{{ vendor_cards|length }}</div>
       </div>
-      <div class="col-12 col-md-5">
-        <label class="form-label" style="font-size:.78rem;">PDF or ZIP</label>
-        <input type="file" name="quotation_pdf" accept=".pdf,.zip" class="form-control form-control-sm" required>
+      <div class="summary-card summary-card-2">
+        <div class="label">Total Line Items</div>
+        <div class="value">{{ total_line_items_count }}</div>
       </div>
-      <div class="col-12 col-md-3 d-grid">
-        <button type="submit" class="btn btn-sm btn-primary">
-          <i class="bi bi-cpu me-1"></i>Analyse
-        </button>
+      <div class="summary-card summary-card-3">
+        <div class="label">High Variance Items</div>
+        <div class="value {% if high_variance_items_count > 0 %}status-high{% else %}status-optimal{% endif %}">{{ high_variance_items_count }}</div>
       </div>
-    </form>
-  </div>
-</div>
-
-{% if vendor_cards or quotation_summaries %}
-<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;">
-  <div class="card-header bg-white border-bottom py-2 px-3 d-flex align-items-center justify-content-between">
-    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
-      <i class="bi bi-folder2-open text-warning me-1"></i>Vendor Quotations
-    </span>
-    <div class="d-flex gap-2 align-items-center">
-      {% if vendor_recommendation.recommended %}
-        <span class="badge bg-success" style="font-size:.72rem;"><i class="bi bi-star-fill me-1"></i>Best: {{ vendor_recommendation.best_vendor_name }}</span>
-      {% elif vendor_recommendation %}
-        <span class="badge bg-danger" style="font-size:.72rem;">No Vendor Recommended</span>
-      {% elif best_vendor_summary %}
-        <span class="badge bg-success" style="font-size:.72rem;">Best Vendor: {{ best_vendor_summary.quotation.supplier_name|default:"Unnamed Vendor" }}</span>
-      {% endif %}
-      <span class="badge bg-light text-muted border" style="font-size:.7rem;">{{ vendor_cards|length }} vendor{% if vendor_cards|length != 1 %}s{% endif %}</span>
+      <div class="summary-card summary-card-4">
+        <div class="label">Potential Savings</div>
+        <div class="value status-optimal">{% if potential_savings > 0 %}AED {{ potential_savings|floatformat:0 }}{% else %}--{% endif %}</div>
+      </div>
+      <div class="summary-card summary-card-5">
+        <div class="label">Avg Variance</div>
+        <div class="value {% if avg_variance_pct > 15 %}status-high{% elif avg_variance_pct > 5 %}status-moderate{% else %}status-optimal{% endif %}">{% if avg_variance_pct %}{% if avg_variance_pct > 0 %}+{% endif %}{{ avg_variance_pct|floatformat:1 }}%{% else %}--{% endif %}</div>
+      </div>
     </div>
   </div>
-  <div class="card-body px-3 pt-3 pb-3">
 
-  {# ---- Recommendation summary strip ---- #}
-    {% if vendor_recommendation.summary %}
-    <div class="alert alert-light border mb-3 py-2 px-3" style="font-size:.79rem;">
-      <strong class="text-dark">Analysis:</strong> {{ vendor_recommendation.summary }}
-      {% if vendor_recommendation.market_standards %}
-        <span class="ms-2 text-muted">&mdash;
-          {% for std in vendor_recommendation.market_standards %}{{ std }}{% if not forloop.last %}, {% endif %}{% endfor %}
-        </span>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    {# ---- Folder grid ---- #}
-    <div class="folder-grid mb-3" id="folderGrid">
-      {% for card in vendor_cards %}
-      <div class="folder-card {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}folder-best{% endif %}"
-           onclick="toggleFolder('folder-{{ forloop.counter }}', this)"
-           title="Click to view line items for {{ card.supplier_name }}">
-        <div class="folder-tab"></div>
-        <div class="folder-body">
-          <div class="folder-icon">
-            {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}
-              <i class="bi bi-folder-fill text-success"></i>
-            {% else %}
-              <i class="bi bi-folder-fill text-warning"></i>
-            {% endif %}
-          </div>
-          <div class="folder-vendor">{{ card.supplier_name|default:"Unnamed Vendor" }}</div>
-          <div class="folder-ref">{{ card.quotation_ref|default:"No ref" }}</div>
-          <div class="folder-count">
-            <i class="bi bi-file-earmark-text" style="font-size:.72rem;"></i>
-            {{ card.line_count }} item{% if card.line_count != 1 %}s{% endif %}
-          </div>
-          <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
-            <span class="badge bg-{% if card.status == 'WITHIN_RANGE' %}success{% elif card.status == 'MODERATE' %}warning text-dark{% elif card.status == 'HIGH' %}danger{% else %}secondary{% endif %}" style="font-size:.62rem;">{{ card.status|cut:"_" }}</span>
-            {% if card.deviation_pct is not None %}
-              <span class="badge bg-info text-dark" style="font-size:.62rem;">{{ card.deviation_pct|floatformat:1 }}%</span>
-            {% endif %}
-            {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}
-              <i class="bi bi-star-fill text-success" style="font-size:.7rem;" title="Best Vendor"></i>
-            {% endif %}
-          </div>
-          <div class="folder-chevron"><i class="bi bi-chevron-down" id="chevron-folder-{{ forloop.counter }}"></i> Open</div>
-        </div>
-      </div>
-      {% empty %}
-      <div class="text-muted" style="font-size:.82rem;"><i class="bi bi-info-circle me-1"></i>No vendor quotations found for this request.</div>
-      {% endfor %}
-    </div>
-
-    {# ---- Expandable line-item panels (one per vendor) ---- #}
-    <div id="folderPanels">
-      {% for card in vendor_cards %}
-      <div class="collapse folder-detail-panel mb-3" id="folder-{{ forloop.counter }}">
-        <div class="px-3 pt-2 pb-1 d-flex align-items-center justify-content-between border-bottom">
-          <span class="fw-semibold" style="font-size:.83rem;color:#111827;">
-            <i class="bi bi-folder2-open text-warning me-1"></i>{{ card.supplier_name }}
-            {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}
-              <span class="badge bg-success ms-1" style="font-size:.65rem;"><i class="bi bi-star-fill me-1"></i>Best Vendor</span>
-            {% endif %}
-          </span>
+  <div class="main-grid">
+    <div>
+      <div class="table-card">
+        <div class="card-head">
           <div class="d-flex align-items-center gap-2">
-            {% if card.quotation_document_url %}
-            <button type="button"
-                    class="btn btn-sm btn-outline-primary py-0 px-2"
-                    style="font-size:.7rem;"
-                    onclick="openQuotationPreview('{{ card.quotation_document_url|escapejs }}', '{{ card.supplier_name|escapejs }}')">
-              <i class="bi bi-file-earmark-pdf me-1"></i>View Document
-            </button>
+            <h2 class="card-title">Vendor Comparison</h2>
+            {% if vendor_recommendation.best_vendor_name %}
+            <span class="status-badge badge-optimal"><i class="bi bi-star-fill me-1"></i>Best: {{ vendor_recommendation.best_vendor_name }}</span>
             {% endif %}
-            <span class="text-muted" style="font-size:.72rem;">
-              {{ card.line_count }} item{% if card.line_count != 1 %}s{% endif %}
-              &middot; Ref: {{ card.quotation_ref|default:"--" }}
-              {% if card.deviation_pct is not None %}&middot; Dev: {{ card.deviation_pct|floatformat:1 }}%{% endif %}
-            </span>
           </div>
+          <form method="get" class="filters">
+            <select name="variance" class="form-select form-select-sm" onchange="this.form.submit()">
+              <option value="">All Variance</option>
+              {% for value, label in variance_choices %}
+              <option value="{{ value }}" {% if var_filter == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {% if cat_filter %}<input type="hidden" name="category" value="{{ cat_filter }}">{% endif %}
+          </form>
         </div>
-        <div class="table-responsive">
-          <table class="table table-sm mb-0" style="font-size:.78rem;">
-            <thead style="background:#f1f5f9;">
+        <div class="table-scroll">
+          <div class="table-responsive">
+            <table class="table align-middle mb-0" style="min-width:860px;">
+            <thead>
               <tr>
-                <th class="px-3 py-2">#</th>
-                <th class="py-2">Description</th>
-                <th class="py-2">Category</th>
-                <th class="py-2 text-end">Quoted (AED)</th>
-                <th class="py-2 text-end">Bench Mid (AED)</th>
-                <th class="py-2 text-end">Variance</th>
-                <th class="py-2">Market Ref</th>
+                <th class="text-cell">Vendor</th>
+                <th class="number-cell">Total Quote (AED)</th>
+                <th class="number-cell">Should Cost (AED)</th>
+                <th class="number-cell">% Variance</th>
+                <th class="status-cell">Status</th>
+                <th class="action-cell">Document</th>
               </tr>
             </thead>
             <tbody>
-              {% for item in card.line_items %}
+              {% for card in vendor_cards %}
               <tr>
-                <td class="px-3 py-1 text-muted">{{ item.line_number }}</td>
-                <td class="py-1" style="max-width:260px;"><span title="{{ item.description }}">{{ item.description|truncatechars:80 }}</span></td>
-                <td class="py-1"><span class="badge bg-light text-dark border" style="font-size:.67rem;">{{ item.category }}</span></td>
-                <td class="py-1 text-end">{% if item.quoted_unit_rate %}AED {{ item.quoted_unit_rate|floatformat:2 }}{% else %}--{% endif %}</td>
-                <td class="py-1 text-end">{% if item.benchmark_mid %}AED {{ item.benchmark_mid|floatformat:2 }}{% else %}--{% endif %}</td>
-                <td class="py-1 text-end {% if item.variance_status == 'WITHIN_RANGE' %}variance-within{% elif item.variance_status == 'MODERATE' %}variance-moderate{% elif item.variance_status == 'HIGH' %}variance-high{% else %}variance-review{% endif %}">{{ item.get_variance_display }}</td>
-                <td class="py-1">
-                  {% with lp=item.live_price_json %}
-                    {% if lp and lp.citations %}
-                      {% for url in lp.citations|slice:":2" %}
-                        <a href="{{ url }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:.62rem;">Ref {{ forloop.counter }}</a>
-                      {% endfor %}
-                    {% elif item.corridor_rule_code %}
-                      <span class="text-muted" style="font-size:.7rem;">{{ item.corridor_rule_code }}</span>
-                    {% else %}
-                      <span class="text-muted" style="font-size:.7rem;">--</span>
-                    {% endif %}
-                  {% endwith %}
+                <td class="text-cell">
+                  <div class="fw-semibold">{{ card.supplier_name|default:"Unnamed Vendor" }}</div>
+                  <div style="font-size:0.72rem;color:#6b7280;">{{ card.quotation_ref|default:"" }}</div>
+                </td>
+                <td class="number-cell">{% if card.total_quoted %}{{ card.total_quoted|floatformat:0 }}{% else %}--{% endif %}</td>
+                <td class="number-cell" style="color:#334155;">{% if card.total_benchmark %}{{ card.total_benchmark|floatformat:0 }}{% else %}--{% endif %}</td>
+                <td class="number-cell {% if card.status == 'WITHIN_RANGE' %}status-optimal{% elif card.status == 'MODERATE' %}status-moderate{% elif card.status == 'HIGH' %}status-high{% else %}status-review{% endif %}">
+                  {% if card.deviation_pct is not None %}{% if card.deviation_pct > 0 %}+{% endif %}{{ card.deviation_pct|floatformat:1 }}%{% else %}--{% endif %}
+                </td>
+                <td class="status-cell">
+                  {% if card.status == 'WITHIN_RANGE' %}
+                  <span class="status-badge badge-optimal">Optimal</span>
+                  {% elif card.status == 'MODERATE' %}
+                  <span class="status-badge badge-moderate">Moderate</span>
+                  {% elif card.status == 'HIGH' %}
+                  <span class="status-badge badge-high">High Variance</span>
+                  {% else %}
+                  <span class="status-badge badge-review">Needs Review</span>
+                  {% endif %}
+                </td>
+                <td class="action-cell">
+                  {% if card.quotation_document_url %}
+                  <button type="button" class="btn btn-sm btn-outline-primary" onclick="openQuotationPreview('{{ card.quotation_document_url|escapejs }}', '{{ card.supplier_name|escapejs }}')">
+                    View
+                  </button>
+                  {% else %}
+                  <span class="text-muted">--</span>
+                  {% endif %}
                 </td>
               </tr>
               {% empty %}
-              <tr><td colspan="7" class="text-center text-muted py-3" style="font-size:.78rem;"><i class="bi bi-inbox me-1"></i>No line items extracted yet.</td></tr>
+              <tr>
+                <td colspan="6" class="text-center py-4 text-muted">No vendor quotations available.</td>
+              </tr>
               {% endfor %}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       </div>
-      {% endfor %}
+
+      <div class="table-card">
+        <div class="card-head">
+          <div class="d-flex align-items-center gap-2">
+            <h2 class="card-title">Itemized Cost Analysis</h2>
+            <span class="source-pill">{{ pivot_lines|length }} lines</span>
+          </div>
+          <form method="get" class="filters" id="pivot-filter-form">
+            <select name="vendor" class="form-select form-select-sm" id="pivot-vendor-filter">
+              <option value="">All Vendors</option>
+              {% for vname in vendor_names_ordered %}
+              <option value="{{ vname }}">{{ vname }}</option>
+              {% endfor %}
+            </select>
+            <select name="category" class="form-select form-select-sm" onchange="this.form.submit()">
+              <option value="">All Categories</option>
+              {% for value, label in category_choices %}
+              <option value="{{ value }}" {% if cat_filter == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <select name="variance" class="form-select form-select-sm" onchange="this.form.submit()">
+              <option value="">All Variance</option>
+              {% for value, label in variance_choices %}
+              <option value="{{ value }}" {% if var_filter == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </div>
+        <div class="table-scroll">
+          <div class="table-responsive" style="overflow-x:auto;">
+            <table class="table align-middle mb-0" id="pivot-table" style="min-width:720px;">
+            <thead>
+              <tr>
+                <th class="text-cell" style="min-width:200px;">Item Description</th>
+                <th class="text-cell" style="width:110px;">Category</th>
+                {% for vname in vendor_names_ordered %}
+                <th class="number-cell pivot-vendor-col" data-vendor="{{ vname }}" style="min-width:100px;" title="{{ vname }}">{{ vname }}</th>
+                {% endfor %}
+                <th class="number-cell" style="width:110px;">Benchmark</th>
+                <th class="status-cell" style="width:110px;">Variance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in pivot_lines %}
+              <tr>
+                <td class="text-cell" title="{{ row.description }}">{{ row.description|truncatechars:60 }}</td>
+                <td class="text-cell"><span class="source-pill">{{ row.category }}</span></td>
+                {% for vr in row.rate_list %}
+                <td class="number-cell pivot-vendor-col" data-vendor="{{ vr.vendor_name }}"
+                  style="{% if vr.is_best %}background:#eafaf1;color:#1b8f5a;font-weight:700;{% elif vr.is_worst %}background:#fff1f2;color:#d32f2f;{% endif %}">
+                  {% if vr.rate is not None %}
+                    {{ vr.rate|floatformat:0 }}
+                    {% if vr.variance_pct is not None %}
+                    <br><small style="font-size:0.68rem;opacity:.75;">{% if vr.variance_pct > 0 %}+{% endif %}{{ vr.variance_pct|floatformat:1 }}%</small>
+                    {% endif %}
+                  {% else %}--{% endif %}
+                </td>
+                {% endfor %}
+                <td class="number-cell" style="font-weight:600;color:#334155;">
+                  {% if row.benchmark_mid %}{{ row.benchmark_mid|floatformat:0 }}{% else %}--{% endif %}
+                </td>
+                <td class="status-cell">
+                  {% if row.pivot_variance_status == 'WITHIN_RANGE' %}
+                  <span class="status-badge badge-optimal">Optimal</span>
+                  {% elif row.pivot_variance_status == 'MODERATE' %}
+                  <span class="status-badge badge-moderate">Moderate</span>
+                  {% elif row.pivot_variance_status == 'HIGH' %}
+                  <span class="status-badge badge-high">High</span>
+                  {% else %}
+                  <span class="status-badge badge-review">Review</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="99" class="text-center py-4 text-muted">No itemized data available for the selected filters.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
+    <div class="sidebar">
+      <div class="side-card ai-insights-card">
+        <h2 class="card-title mb-3">AI Insights</h2>
+        <ul class="insight-list">
+          {% for note in insight_items %}
+          <li>{{ note }}</li>
+          {% endfor %}
+        </ul>
+        {% if not insight_items %}
+        <p class="empty-text">Insights will appear after benchmark analysis is complete.</p>
+        {% endif %}
+      </div>
+
+      <div class="side-card">
+        <h2 class="card-title mb-2">High Priority</h2>
+        {% for item in line_items|slice:":8" %}
+          {% if item.variance_status == 'HIGH' %}
+          <div class="priority-item">
+            <div>
+              <p class="priority-name">{{ item.description|truncatechars:36 }}</p>
+              <div class="priority-vendor">Line {{ item.line_number }}{% if item.category %} - {{ item.category }}{% endif %}</div>
+            </div>
+            {% if item.quoted_unit_rate and item.benchmark_mid and item.quoted_unit_rate > item.benchmark_mid %}
+            <span class="pill-btn pill-negotiate">Negotiate</span>
+            {% else %}
+            <span class="pill-btn pill-review">Review</span>
+            {% endif %}
+          </div>
+          {% endif %}
+        {% empty %}
+        {% endfor %}
+        {% if result and result.lines_high == 0 %}
+        <p class="empty-text mt-2">No high variance items. Current pricing profile is stable.</p>
+        {% endif %}
+      </div>
+
+      <div class="side-card">
+        <h2 class="card-title mb-3">Upload Quotations</h2>
+        <form method="post" action="{% url 'benchmarking:request_add_quotations' bench_request.pk %}" enctype="multipart/form-data">
+          {% csrf_token %}
+          <div class="mb-2">
+            <label class="form-label small mb-1">Quotation Ref</label>
+            <input type="text" name="quotation_ref" class="form-control form-control-sm" placeholder="Quote reference">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small mb-1">PDF or ZIP</label>
+            <input type="file" name="quotation_pdf" accept=".pdf,.zip" class="form-control form-control-sm" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm w-100">
+            <i class="bi bi-cloud-upload me-1"></i>Analyze Upload
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% if negotiation_notes %}
+  <div class="side-card mt-2">
+    <h2 class="card-title mb-2">Negotiation Talking Points</h2>
+    <ul class="insight-list">
+      {% for note in negotiation_notes %}
+      <li>{{ note }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="table-card mt-2 mb-1">
+    <div class="accordion" id="downloadHistoryAccordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="downloadHistoryHeading">
+          <button
+            class="accordion-button {% if not show_history %}collapsed{% endif %}"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#downloadHistoryCollapse"
+            aria-expanded="{% if show_history %}true{% else %}false{% endif %}"
+            aria-controls="downloadHistoryCollapse"
+          >
+            Download History
+            <span class="badge bg-secondary ms-2">{{ run_logs|length }}</span>
+            <span class="badge bg-info text-dark ms-1">Runs: {{ analysis_run_count }}</span>
+          </button>
+        </h2>
+        <div
+          id="downloadHistoryCollapse"
+          class="accordion-collapse collapse {% if show_history %}show{% endif %}"
+          aria-labelledby="downloadHistoryHeading"
+          data-bs-parent="#downloadHistoryAccordion"
+        >
+          <div class="accordion-body p-0">
+            {% if run_logs %}
+            <div class="table-scroll">
+              <div class="table-responsive">
+                <table class="table align-middle mb-0" style="min-width:760px;">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Run #</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Triggered By</th>
+                      <th>Date and Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for log in run_logs %}
+                    <tr>
+                      <td>{{ forloop.counter }}</td>
+                      <td>{% if log.run_number %}{{ log.run_number }}{% else %}--{% endif %}</td>
+                      <td>
+                        {% if log.run_type == 'ANALYSIS' %}
+                          <span class="badge bg-primary">Analysis</span>
+                        {% elif log.run_type == 'EXPORT_CSV' %}
+                          <span class="badge bg-success">Excel</span>
+                        {% elif log.run_type == 'EXPORT_PDF' %}
+                          <span class="badge bg-danger">PDF</span>
+                        {% else %}
+                          <span class="badge bg-secondary">{{ log.run_type }}</span>
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if log.status == 'SUCCESS' %}
+                          <span class="badge bg-success">Success</span>
+                        {% else %}
+                          <span class="badge bg-danger">Failed</span>
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if log.triggered_by %}
+                          {{ log.triggered_by.get_full_name|default:log.triggered_by.email }}
+                        {% else %}
+                          System
+                        {% endif %}
+                      </td>
+                      <td>{{ log.created_at|date:"Y-m-d H:i:s" }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {% else %}
+            <div class="p-3 text-muted small">No history yet. Run analysis or export to start tracking.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
-function toggleFolder(panelId, cardEl) {
-  var panel = document.getElementById(panelId);
-  if (!panel) return;
-  var isOpen = panel.classList.contains('show');
-  // close all panels + reset all cards
-  document.querySelectorAll('#folderPanels .collapse').forEach(function(p){ p.classList.remove('show'); });
-  document.querySelectorAll('#folderGrid .folder-card').forEach(function(c){ c.classList.remove('folder-open'); });
-  document.querySelectorAll('[id^="chevron-folder-"]').forEach(function(ch){ ch.className = 'bi bi-chevron-down'; ch.nextSibling && (ch.parentNode.lastChild.textContent = ' Open'); });
-  // toggle open if was closed
-  if (!isOpen) {
-    panel.classList.add('show');
-    cardEl.classList.add('folder-open');
-    var chev = document.getElementById('chevron-' + panelId);
-    if (chev) { chev.className = 'bi bi-chevron-up'; }
-    var chevDiv = cardEl.querySelector('.folder-chevron');
-    if (chevDiv) chevDiv.innerHTML = '<i class="bi bi-chevron-up" id="chevron-' + panelId + '"></i> Close';
-    setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 150);
+// Vendor column filter for pivot table (client-side show/hide)
+document.addEventListener("DOMContentLoaded", function () {
+  var vendorSel = document.getElementById("pivot-vendor-filter");
+  if (!vendorSel) return;
+
+  function applyVendorFilter() {
+    var chosen = vendorSel.value;
+    var cols = document.querySelectorAll(".pivot-vendor-col");
+    cols.forEach(function (el) {
+      if (!chosen || el.getAttribute("data-vendor") === chosen) {
+        el.style.display = "";
+      } else {
+        el.style.display = "none";
+      }
+    });
   }
-}
+
+  vendorSel.addEventListener("change", applyVendorFilter);
+  applyVendorFilter(); // run on load in case of page-back state
+});
 
 function openQuotationPreview(documentUrl, vendorName) {
   var titleEl = document.getElementById('quotationPreviewTitle');
@@ -326,6 +817,21 @@ document.addEventListener('hidden.bs.modal', function (event) {
     }
   }
 });
+
+document.addEventListener("DOMContentLoaded", function () {
+  var shouldOpenHistory = "{{ show_history|yesno:'true,false' }}" === "true";
+  if (!shouldOpenHistory) return;
+
+  var historyEl = document.getElementById("downloadHistoryCollapse");
+  if (!historyEl) return;
+
+  if (window.bootstrap && window.bootstrap.Collapse) {
+    var collapse = new window.bootstrap.Collapse(historyEl, { toggle: false });
+    collapse.show();
+  } else {
+    historyEl.classList.add("show");
+  }
+});
 </script>
 
 <div class="modal fade" id="quotationPreviewModal" tabindex="-1" aria-hidden="true">
@@ -341,204 +847,4 @@ document.addEventListener('hidden.bs.modal', function (event) {
     </div>
   </div>
 </div>
-{% endif %}
-
-{% if result %}
-{# ---- COMMERCIAL SUMMARY ---- #}
-<div class="row g-3 mb-4">
-  <div class="col-6 col-md-3">
-    <div class="stat-card shadow-sm">
-      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Total Quoted</div>
-      <div class="fs-5 fw-bold mt-1" style="color:#111827;">
-        AED {% if result.total_quoted %}{{ result.total_quoted|floatformat:0 }}{% else %}--{% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card shadow-sm">
-      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Benchmark Mid</div>
-      <div class="fs-5 fw-bold mt-1" style="color:#111827;">
-        AED {% if result.total_benchmark_mid %}{{ result.total_benchmark_mid|floatformat:0 }}{% else %}--{% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card shadow-sm">
-      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Overall Deviation</div>
-      <div class="fs-5 fw-bold mt-1
-        {% if result.overall_status == 'WITHIN_RANGE' %}text-success
-        {% elif result.overall_status == 'MODERATE' %}text-warning
-        {% elif result.overall_status == 'HIGH' %}text-danger
-        {% else %}text-secondary{% endif %}">
-        {% if result.overall_deviation_pct is not None %}{{ result.overall_deviation_pct|floatformat:1 }}%{% else %}N/A{% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card shadow-sm">
-      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Overall Status</div>
-      <div class="mt-1">
-        <span class="badge fs-6 bg-{% if result.overall_status == 'WITHIN_RANGE' %}success{% elif result.overall_status == 'MODERATE' %}warning text-dark{% elif result.overall_status == 'HIGH' %}danger{% else %}secondary{% endif %}">
-          {{ result.overall_status|cut:"_" }}
-        </span>
-      </div>
-    </div>
-  </div>
-</div>
-
-{# Line count row #}
-<div class="row g-2 mb-4">
-  <div class="col-6 col-md-3">
-    <div class="d-flex align-items-center gap-2 p-2 rounded border"
-         style="background:#f0fdf4;border-color:#86efac!important;">
-      <i class="bi bi-check-circle text-success"></i>
-      <div>
-        <div class="fw-bold" style="color:#059669;">{{ result.lines_within_range }}</div>
-        <div style="font-size:.72rem;color:#059669;">Within Range</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="d-flex align-items-center gap-2 p-2 rounded border"
-         style="background:#fffbeb;border-color:#fcd34d!important;">
-      <i class="bi bi-exclamation-circle text-warning"></i>
-      <div>
-        <div class="fw-bold" style="color:#d97706;">{{ result.lines_moderate }}</div>
-        <div style="font-size:.72rem;color:#d97706;">Moderate</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="d-flex align-items-center gap-2 p-2 rounded border"
-         style="background:#fef2f2;border-color:#fca5a5!important;">
-      <i class="bi bi-x-circle text-danger"></i>
-      <div>
-        <div class="fw-bold" style="color:#dc2626;">{{ result.lines_high }}</div>
-        <div style="font-size:.72rem;color:#dc2626;">High Variance</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="d-flex align-items-center gap-2 p-2 rounded border"
-         style="background:#f9fafb;border-color:#d1d5db!important;">
-      <i class="bi bi-question-circle text-secondary"></i>
-      <div>
-        <div class="fw-bold" style="color:#6b7280;">{{ result.lines_needs_review }}</div>
-        <div style="font-size:.72rem;color:#6b7280;">Needs Review</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-{# Per-category summary #}
-{% if category_summary %}
-<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;">
-  <div class="card-header bg-white border-bottom py-2 px-3">
-    <span class="fw-bold" style="font-size:.9rem;color:#111827;">By Category</span>
-  </div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0" style="font-size:.8rem;">
-      <thead style="background:#f9fafb;">
-        <tr>
-          <th class="px-3 py-2" style="color:#6b7280;">Category</th>
-          <th class="py-2" style="color:#6b7280;">Quoted (AED)</th>
-          <th class="py-2" style="color:#6b7280;">Benchmark Mid (AED)</th>
-          <th class="py-2" style="color:#6b7280;">Deviation</th>
-          <th class="py-2" style="color:#6b7280;">Lines</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for cat, dat in category_summary.items %}
-        <tr>
-          <td class="px-3 py-2 fw-600">{{ cat }}</td>
-          <td class="py-2">{{ dat.quoted|floatformat:0 }}</td>
-          <td class="py-2">{% if dat.benchmark_mid %}{{ dat.benchmark_mid|floatformat:0 }}{% else %}<span class="text-muted">--</span>{% endif %}</td>
-          <td class="py-2">
-            {% if dat.deviation_pct is not None %}
-              <span class="{% if dat.status == 'WITHIN_RANGE' %}variance-within{% elif dat.status == 'MODERATE' %}variance-moderate{% elif dat.status == 'HIGH' %}variance-high{% else %}variance-review{% endif %}">
-                {{ dat.deviation_pct|floatformat:1 }}%
-              </span>
-            {% else %}
-              <span class="text-muted">--</span>
-            {% endif %}
-          </td>
-          <td class="py-2">{{ dat.count }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
-{# Negotiation notes #}
-{% if negotiation_notes %}
-<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;border-left:4px solid #1665D8!important;">
-  <div class="card-header bg-white border-bottom py-2 px-3">
-    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
-      <i class="bi bi-chat-quote me-1 text-primary"></i>Negotiation Talking Points
-    </span>
-  </div>
-  <div class="card-body p-3">
-    <ul class="mb-0 ps-3" style="font-size:.82rem;color:#374151;line-height:1.8;">
-      {% for note in negotiation_notes %}
-        <li>{{ note }}</li>
-      {% endfor %}
-    </ul>
-  </div>
-</div>
-{% endif %}
-
-{% endif %}{# end if result #}
-
-{% if benchmark_flow_summary %}
-<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;border-left:4px solid #0d6efd!important;">
-  <div class="card-header bg-white border-bottom py-2 px-3 d-flex align-items-center justify-content-between">
-    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
-      <i class="bi bi-diagram-3 me-1 text-primary"></i>Benchmarking Flow Explanation
-    </span>
-    <span class="badge bg-light text-dark border" style="font-size:.7rem;">
-      {{ benchmark_flow_summary.quotation_count }} quotation{% if benchmark_flow_summary.quotation_count != 1 %}s{% endif %}
-    </span>
-  </div>
-  <div class="card-body p-3">
-    <div class="row g-2 mb-3" style="font-size:.78rem;">
-      <div class="col-12 col-md-4">
-        <div class="border rounded p-2 h-100 bg-light">
-          <div class="text-muted" style="font-size:.7rem;">Quotation Mode</div>
-          <div class="fw-semibold text-dark">{{ benchmark_flow_summary.quotation_mode_label }}</div>
-        </div>
-      </div>
-      <div class="col-12 col-md-4">
-        <div class="border rounded p-2 h-100 bg-light">
-          <div class="text-muted" style="font-size:.7rem;">RFQ Mode</div>
-          <div class="fw-semibold text-dark">{{ benchmark_flow_summary.rfq_label }}</div>
-          {% if benchmark_flow_summary.rfq_ref %}
-          <div class="text-muted" style="font-size:.68rem;">Ref: {{ benchmark_flow_summary.rfq_ref }}</div>
-          {% endif %}
-        </div>
-      </div>
-      <div class="col-12 col-md-4">
-        <div class="border rounded p-2 h-100 bg-light">
-          <div class="text-muted" style="font-size:.7rem;">Line Coverage</div>
-          <div class="fw-semibold text-dark">
-            DB {{ benchmark_flow_summary.db_coverage_pct }}% | Market {{ benchmark_flow_summary.market_coverage_pct }}% | Gap {{ benchmark_flow_summary.gap_pct }}%
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="alert alert-light border mb-0 py-2 px-3" style="font-size:.8rem;">
-      <div class="fw-semibold mb-1 text-dark">Detailed reasoning</div>
-      <ul class="mb-0 ps-3" style="line-height:1.7;">
-        {% for note in benchmark_flow_summary.details %}
-          <li>{{ note }}</li>
-        {% endfor %}
-      </ul>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{# ---- CARD-WISE VENDOR LINE ITEMS ---- #}
 {% endblock %}

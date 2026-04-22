@@ -26,6 +26,7 @@ from apps.benchmarking.models import (
     BenchmarkQuotation,
     BenchmarkRequest,
     BenchmarkResult,
+    BenchmarkRunLog,
     Geography,
     LineCategory,
     ScopeType,
@@ -683,14 +684,144 @@ def request_detail(request, pk):
     }
 
     # Category filter
+    # ------------------------------------------------------------------ #
+    # Unfiltered KPI values (computed BEFORE applying URL filters)         #
+    # ------------------------------------------------------------------ #
+    all_line_items_unfiltered = []
+    for q in quotations:
+        all_line_items_unfiltered.extend(list(q.line_items.filter(is_active=True)))
+
+    total_line_items_count = len(all_line_items_unfiltered)
+    high_variance_items_count = sum(
+        1 for li in all_line_items_unfiltered if li.variance_status == "HIGH"
+    )
+    potential_savings = 0.0
+    variance_values = []
+    for li in all_line_items_unfiltered:
+        try:
+            if (
+                li.benchmark_mid is not None
+                and li.quoted_unit_rate is not None
+                and li.quantity is not None
+            ):
+                diff = (float(li.quoted_unit_rate) - float(li.benchmark_mid)) * float(li.quantity)
+                if diff > 0:
+                    potential_savings += diff
+        except (TypeError, ValueError):
+            pass
+        if li.variance_pct is not None:
+            try:
+                variance_values.append(float(li.variance_pct))
+            except (TypeError, ValueError):
+                pass
+    avg_variance_pct = (
+        round(sum(variance_values) / len(variance_values), 1) if variance_values else None
+    )
+
+    # AI insights -- same as negotiation_notes for this system
+    insight_items = negotiation_notes
+
+    # ------------------------------------------------------------------ #
+    # Vendor names ordered (stable across pivot & filter dropdowns)        #
+    # ------------------------------------------------------------------ #
+    vendor_names_ordered = [c["supplier_name"] for c in vendor_cards]
+
+    # ------------------------------------------------------------------ #
+    # Pivot table: group lines by normalised description across vendors    #
+    # ------------------------------------------------------------------ #
+    def _normalise(text):
+        return " ".join((text or "").lower().split())[:120]
+
+    pivot_map = {}
+    for card in vendor_cards:
+        vname = card["supplier_name"]
+        for li in card.get("line_items", []):
+            key = _normalise(li.description)
+            if key not in pivot_map:
+                pivot_map[key] = {
+                    "description": (li.description or "").strip(),
+                    "category": li.category or "UNCATEGORIZED",
+                    "vendor_rates": {},
+                    "benchmark_mid": li.benchmark_mid,
+                    "status_votes": [],
+                }
+            pivot_map[key]["vendor_rates"][vname] = li
+            pivot_map[key]["status_votes"].append(li.variance_status)
+            if pivot_map[key]["benchmark_mid"] is None and li.benchmark_mid is not None:
+                pivot_map[key]["benchmark_mid"] = li.benchmark_mid
+
+    _STATUS_RANK = {"HIGH": 3, "MODERATE": 2, "WITHIN_RANGE": 1, "NEEDS_REVIEW": 0}
+    pivot_lines = []
+    for _norm_desc, row_data in pivot_map.items():
+        vendor_rate_map = row_data["vendor_rates"]
+        rates = [
+            float(li.quoted_unit_rate)
+            for li in vendor_rate_map.values()
+            if li.quoted_unit_rate is not None
+        ]
+        best_rate = min(rates) if rates else None
+        worst_rate = max(rates) if rates else None
+
+        rate_list = []
+        for vname in vendor_names_ordered:
+            li = vendor_rate_map.get(vname)
+            if li is None:
+                rate_list.append(
+                    {"vendor_name": vname, "rate": None, "variance_pct": None, "is_best": False, "is_worst": False}
+                )
+            else:
+                rate = float(li.quoted_unit_rate) if li.quoted_unit_rate is not None else None
+                rate_list.append({
+                    "vendor_name": vname,
+                    "rate": rate,
+                    "variance_pct": float(li.variance_pct) if li.variance_pct is not None else None,
+                    "is_best": (
+                        rate is not None
+                        and best_rate is not None
+                        and rate == best_rate
+                        and len(rates) > 1
+                    ),
+                    "is_worst": (
+                        rate is not None
+                        and worst_rate is not None
+                        and rate == worst_rate
+                        and len(rates) > 1
+                        and best_rate != worst_rate
+                    ),
+                })
+
+        votes = row_data["status_votes"]
+        pivot_variance_status = (
+            max(votes, key=lambda s: _STATUS_RANK.get(s, 0)) if votes else "NEEDS_REVIEW"
+        )
+        pivot_lines.append({
+            "description": row_data["description"],
+            "category": row_data["category"],
+            "rate_list": rate_list,
+            "benchmark_mid": row_data["benchmark_mid"],
+            "pivot_variance_status": pivot_variance_status,
+        })
+
+    # Category filter
     cat_filter = request.GET.get("category", "")
     if cat_filter:
         line_items = [i for i in line_items if i.category == cat_filter]
+        pivot_lines = [pl for pl in pivot_lines if pl["category"] == cat_filter]
 
     # Variance filter
     var_filter = request.GET.get("variance", "")
     if var_filter:
         line_items = [i for i in line_items if i.variance_status == var_filter]
+        pivot_lines = [pl for pl in pivot_lines if pl["pivot_variance_status"] == var_filter]
+
+    # Download history
+    run_logs = list(
+        BenchmarkRunLog.objects.filter(request=bench_request).order_by("-created_at")[:50]
+    )
+    show_history = request.GET.get("show_history") == "1"
+    analysis_run_count = BenchmarkRunLog.objects.filter(
+        request=bench_request, run_type=BenchmarkRunLog.RunType.ANALYSIS
+    ).count()
 
     ctx = _base_ctx(
         bench_request=bench_request,
@@ -717,6 +848,20 @@ def request_detail(request, pk):
         best_vendor_summary=best_vendor_summary,
         no_vendor_recommendation=no_vendor_recommendation,
         benchmark_flow_summary=benchmark_flow_summary,
+        # KPI cards
+        total_line_items_count=total_line_items_count,
+        high_variance_items_count=high_variance_items_count,
+        potential_savings=potential_savings,
+        avg_variance_pct=avg_variance_pct,
+        # Pivot table
+        pivot_lines=pivot_lines,
+        vendor_names_ordered=vendor_names_ordered,
+        # AI insights
+        insight_items=insight_items,
+        # History
+        run_logs=run_logs,
+        show_history=show_history,
+        analysis_run_count=analysis_run_count,
     )
     return render(request, "benchmarking/request_detail.html", ctx)
 
@@ -775,14 +920,24 @@ def request_reprocess(request, pk):
         user=request.user,
         tenant=getattr(request, "tenant", None),
     )
-    if result.get("success"):
+    run_success = bool(result.get("success"))
+    BenchmarkRunLog.objects.create(
+        request=bench_request,
+        tenant=getattr(request, "tenant", None),
+        run_type=BenchmarkRunLog.RunType.ANALYSIS,
+        status=BenchmarkRunLog.RunStatus.SUCCESS if run_success else BenchmarkRunLog.RunStatus.FAILED,
+        triggered_by=request.user,
+        notes=(result.get("error") or "")[:500],
+    )
+    if run_success:
         if live_result and live_result.get("success"):
             messages.success(request, "Reprocessing + live market enrichment completed successfully.")
         else:
             messages.success(request, "Reprocessing completed successfully.")
     else:
         messages.error(request, f"Reprocessing failed: {result.get('error')}")
-    return redirect("benchmarking:request_detail", pk=pk)
+    from django.urls import reverse
+    return redirect(reverse("benchmarking:request_detail", kwargs={"pk": pk}) + "?show_history=1")
 
 
 # --------------------------------------------------------------------------- #
@@ -794,9 +949,43 @@ def request_export(request, pk):
     """Download CSV export of benchmarking results."""
     bench_request = get_object_or_404(_scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)), pk=pk)
     csv_bytes = ExportService.export_request_csv(bench_request)
+    BenchmarkRunLog.objects.create(
+        request=bench_request,
+        tenant=getattr(request, "tenant", None),
+        run_type=BenchmarkRunLog.RunType.EXPORT_CSV,
+        status=BenchmarkRunLog.RunStatus.SUCCESS,
+        triggered_by=request.user,
+    )
     slug = bench_request.title.lower().replace(" ", "_")[:40]
     response = HttpResponse(csv_bytes, content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="benchmark_{slug}.csv"'
+    return response
+
+
+@login_required
+def request_export_pdf(request, pk):
+    """Download a ReportLab PDF report for a benchmarking request."""
+    bench_request = get_object_or_404(
+        _scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)), pk=pk
+    )
+    try:
+        from apps.benchmarking.services.pdf_export_service import BenchmarkPDFExportService
+        pdf_bytes = BenchmarkPDFExportService.generate(bench_request)
+    except Exception:
+        logger.exception("PDF export failed for BenchmarkRequest pk=%s", pk)
+        messages.error(request, "PDF generation failed. Please try again.")
+        return redirect("benchmarking:request_detail", pk=pk)
+
+    BenchmarkRunLog.objects.create(
+        request=bench_request,
+        tenant=getattr(request, "tenant", None),
+        run_type=BenchmarkRunLog.RunType.EXPORT_PDF,
+        status=BenchmarkRunLog.RunStatus.SUCCESS,
+        triggered_by=request.user,
+    )
+    slug = bench_request.title.lower().replace(" ", "_")[:40]
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="benchmark_{slug}.pdf"'
     return response
 
 

@@ -812,10 +812,27 @@ class BenchmarkEngine:
         market_output: dict,
     ) -> None:
         line_decisions = decision_output.get("line_decisions", [])
+        decisions_by_line_pk = {
+            int(d.get("line_pk")): d
+            for d in line_decisions
+            if d.get("line_pk") is not None
+        }
+        decisions_by_line_number = {
+            int(d.get("line_number")): d
+            for d in line_decisions
+            if d.get("line_number") is not None
+        }
         market_line_ids = {
             int(d.get("line_pk"))
             for d in line_decisions
-            if d.get("source") == "MARKET_DATA" and d.get("line_pk") is not None
+            if (
+                d.get("line_pk") is not None
+                and (
+                    d.get("source") == "MARKET_DATA"
+                    or bool(d.get("hybrid_use_market", False))
+                    or str(d.get("pricing_type") or "").strip().upper() == "HYBRID"
+                )
+            )
         }
 
         updates_by_id = {}
@@ -829,6 +846,15 @@ class BenchmarkEngine:
             if market_line_ids and int(line_item.pk) not in market_line_ids:
                 continue
 
+            decision = (
+                decisions_by_line_pk.get(int(line_item.pk))
+                or decisions_by_line_number.get(int(getattr(line_item, "line_number", 0) or 0))
+                or {}
+            )
+            is_hybrid = bool(decision.get("hybrid_use_market", False)) and str(
+                decision.get("pricing_type") or ""
+            ).strip().upper() == "HYBRID"
+
             payload = updates_by_id.get(int(line_item.pk))
             if not payload:
                 continue
@@ -840,10 +866,27 @@ class BenchmarkEngine:
             benchmark_min = Decimal(str(payload.get("benchmark_min") or benchmark_mid))
             benchmark_max = Decimal(str(payload.get("benchmark_max") or benchmark_mid))
 
+            corridor_min = line_item.benchmark_min
+            corridor_mid = line_item.benchmark_mid
+            corridor_max = line_item.benchmark_max
+            corridor_rule_code = line_item.corridor_rule_code or ""
+
+            if is_hybrid and corridor_mid is not None:
+                corridor_mid_d = Decimal(str(corridor_mid))
+                corridor_min_d = Decimal(str(corridor_min if corridor_min is not None else corridor_mid_d))
+                corridor_max_d = Decimal(str(corridor_max if corridor_max is not None else corridor_mid_d))
+
+                benchmark_mid = (corridor_mid_d + benchmark_mid) / Decimal("2")
+                benchmark_min = min(corridor_min_d, benchmark_min)
+                benchmark_max = max(corridor_max_d, benchmark_max)
+
             line_item.benchmark_min = benchmark_min
             line_item.benchmark_mid = benchmark_mid
             line_item.benchmark_max = benchmark_max
-            line_item.corridor_rule_code = ""
+            if is_hybrid and corridor_rule_code:
+                line_item.corridor_rule_code = corridor_rule_code
+            else:
+                line_item.corridor_rule_code = ""
             line_item.benchmark_source = "PERPLEXITY_LIVE"
 
             if line_item.quoted_unit_rate:
@@ -876,6 +919,28 @@ class BenchmarkEngine:
                 "source_note": payload.get("source_note") or existing_payload.get("source_note") or "perplexity_live",
                 "citations": citations,
             }
+            if is_hybrid:
+                merged_payload["hybrid_mode"] = True
+                merged_payload["hybrid_components"] = {
+                    "corridor": {
+                        "benchmark_min": float(corridor_min) if corridor_min is not None else None,
+                        "benchmark_mid": float(corridor_mid) if corridor_mid is not None else None,
+                        "benchmark_max": float(corridor_max) if corridor_max is not None else None,
+                        "corridor_rule_code": corridor_rule_code,
+                    },
+                    "market": {
+                        "benchmark_min": float(payload.get("benchmark_min") or 0.0),
+                        "benchmark_mid": float(payload.get("benchmark_mid") or 0.0),
+                        "benchmark_max": float(payload.get("benchmark_max") or 0.0),
+                        "confidence": float(payload.get("confidence") or 0.0),
+                        "citations": citations,
+                    },
+                    "combined": {
+                        "benchmark_min": float(benchmark_min),
+                        "benchmark_mid": float(benchmark_mid),
+                        "benchmark_max": float(benchmark_max),
+                    },
+                }
             line_item.live_price_json = merged_payload
 
             line_item.save(update_fields=[

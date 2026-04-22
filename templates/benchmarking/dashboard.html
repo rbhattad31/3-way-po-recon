@@ -19,74 +19,47 @@
 
     <small style="opacity:.85;">Cost corridors, variance tracking, and supplier benchmark visibility.</small>
   </div>
+</div>
 
-  <div class="dropdown">
-    <button class="btn btn-light btn-sm dropdown-toggle d-inline-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M7 16V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M12 16V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M17 16V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      Dashboard Switch
-    </button>
-    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width:220px;">
-      <li>
-        <a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'procurement:procurement_dashboard' %}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
-            <rect x="13" y="3" width="8" height="5" rx="1.5" stroke="currentColor" stroke-width="2"/>
-            <rect x="13" y="10" width="8" height="11" rx="1.5" stroke="currentColor" stroke-width="2"/>
-            <rect x="3" y="13" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
-          </svg>
-          Procurement Dashboard
-        </a>
-      </li>
-      <li>
-        <a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'benchmarking:dashboard' %}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path d="M4 19H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <path d="M7 16V11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <path d="M12 16V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <path d="M17 16V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          Benchmarking Dashboard
-        </a>
-      </li>
-    </ul>
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-7">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;overflow:hidden;">
+      <div class="card-header bg-white fw-semibold" style="color:#111827;">Benchmark Workflow</div>
+      <div class="card-body">
+        <div class="d-flex flex-column gap-2" style="font-size:.84rem;color:#374151;">
+          <div><span class="badge bg-primary me-2">1</span>Create or upload request scope and vendor quotations.</div>
+          <div><span class="badge bg-warning text-dark me-2">2</span>Run analysis to compute benchmark corridors and variance.</div>
+          <div><span class="badge bg-success me-2">3</span>Review charts and open detailed request records for action.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-5">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;overflow:hidden;">
+      <div class="card-header bg-white fw-semibold" style="color:#111827;">Quick Actions</div>
+      <div class="card-body d-flex flex-column gap-2">
+        <a href="{% url 'benchmarking:request_create' %}" class="btn btn-sm btn-primary">New Benchmark Request</a>
+        <a href="{% url 'benchmarking:request_list' %}" class="btn btn-sm btn-outline-primary">Open All Requests</a>
+        <a href="{% url 'benchmarking:reports' %}" class="btn btn-sm btn-outline-secondary">View Reports</a>
+      </div>
+    </div>
   </div>
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
-      <div class="card-body py-3 px-3">
-        <div style="font-size:.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;">Total Requests</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#111827;">{{ total_count }}</div>
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+      <div class="card-header bg-white fw-semibold" style="color:#111827;">Request Status Distribution (Pie)</div>
+      <div class="card-body" style="height:320px;">
+        <canvas id="benchmarkStatusPie"></canvas>
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
-      <div class="card-body py-3 px-3">
-        <div style="font-size:.72rem;font-weight:600;color:#2563eb;text-transform:uppercase;letter-spacing:.04em;">Pending</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#2563eb;">{{ pending_count }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
-      <div class="card-body py-3 px-3">
-        <div style="font-size:.72rem;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:.04em;">Completed</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#059669;">{{ completed_count }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
-      <div class="card-body py-3 px-3">
-        <div style="font-size:.72rem;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:.04em;">Failed</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;">{{ failed_count }}</div>
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+      <div class="card-header bg-white fw-semibold" style="color:#111827;">No. of Requests (Bar)</div>
+      <div class="card-body" style="height:320px;">
+        <canvas id="benchmarkStatusBar"></canvas>
       </div>
     </div>
   </div>
@@ -130,4 +103,73 @@
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+  (function () {
+    const labels = ['Pending', 'Processing', 'Completed', 'Failed'];
+    const values = [
+      Number('{{ pending_count|default:0 }}'),
+      Number('{{ processing_count|default:0 }}'),
+      Number('{{ completed_count|default:0 }}'),
+      Number('{{ failed_count|default:0 }}')
+    ];
+    const colors = ['#2563eb', '#f59e0b', '#059669', '#dc2626'];
+
+    const pieCtx = document.getElementById('benchmarkStatusPie');
+    if (pieCtx) {
+      new Chart(pieCtx, {
+        type: 'pie',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: values,
+            backgroundColor: colors,
+            borderColor: '#ffffff',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom' }
+          }
+        }
+      });
+    }
+
+    const barCtx = document.getElementById('benchmarkStatusBar');
+    if (barCtx) {
+      new Chart(barCtx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'No. of Requests',
+            data: values,
+            backgroundColor: colors,
+            borderRadius: 6,
+            maxBarThickness: 52
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          }
+        }
+      });
+    }
+  })();
+</script>
 {% endblock %}
