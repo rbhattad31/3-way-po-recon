@@ -5,6 +5,7 @@ Covers: All Requests, New Request (upload), Detail/Results, Quotations, Reports,
 import json
 import logging
 import os
+import re
 import zipfile
 from datetime import datetime, timezone
 from io import BytesIO
@@ -27,9 +28,12 @@ from apps.benchmarking.models import (
     BenchmarkRequest,
     BenchmarkResult,
     BenchmarkRunLog,
+    CategoryMaster,
     Geography,
     LineCategory,
+    PricingType,
     ScopeType,
+    VarianceThresholdConfig,
     VarianceStatus,
 )
 from apps.benchmarking.services.benchmark_service import BenchmarkEngine
@@ -823,6 +827,276 @@ def request_detail(request, pk):
         request=bench_request, run_type=BenchmarkRunLog.RunType.ANALYSIS
     ).count()
 
+    # ---------------------------------------------------------------------- #
+    # Developer trace -- full end-to-end pipeline traceability               #
+    # ---------------------------------------------------------------------- #
+    from apps.benchmarking.services.benchmark_service import BenchmarkEngine  # noqa: E402
+    from apps.benchmarking.models import BenchmarkCorridorRule  # noqa: E402
+
+    _geo_for_trace = bench_request.geography or "UAE"
+    _threshold_cache: dict = {}  # category -> {within, moderate}
+
+    _ROUTING_LABEL = {
+        "CORRIDOR_DB": "DB_BENCHMARK",
+        "PERPLEXITY_LIVE": "MARKET_DATA",
+        "MANUAL": "MANUAL",
+        "NONE": "NEEDS_REVIEW",
+    }
+
+    # Real agent stage order and metadata
+    _AGENT_STAGE_META = [
+        {
+            "stage_key": "Azure_DI_Extraction",
+            "display_name": "AzureDocumentIntelligenceAgentBM",
+            "short_name": "Azure DI Extraction",
+            "description": "Extracts raw tables, KV pairs, and text from uploaded PDF via Azure Document Intelligence API",
+            "api_call": "Azure AI Document Intelligence -- POST /documentModels/prebuilt-layout:analyze",
+            "color": "#0891b2",
+            "badge_bg": "#0c4a6e",
+            "badge_fg": "#7dd3fc",
+            "icon": "bi-file-earmark-text",
+        },
+        {
+            "stage_key": "Line_Item_Understanding",
+            "display_name": "BenchmarkLineItemUnderstandingAgentBM",
+            "short_name": "Line Item Understanding",
+            "description": "LLM normalizes raw DI rows: filters noise (totals/VAT rows), infers supplier name, standardizes descriptions/qty/rates",
+            "api_call": "Azure OpenAI GPT-4o -- chat completions",
+            "color": "#7c3aed",
+            "badge_bg": "#4c1d95",
+            "badge_fg": "#c4b5fd",
+            "icon": "bi-magic",
+        },
+        {
+            "stage_key": "Decision_Maker",
+            "display_name": "BenchmarkDecisionMakerAgentBM",
+            "short_name": "Decision Maker Agent",
+            "description": "Routes each line item: MARKET_DATA (live Perplexity) or DB_BENCHMARK (corridor table) based on pricing_type + corridor availability",
+            "api_call": "Azure OpenAI GPT-4o -- chat completions + BenchmarkCorridorRule DB query",
+            "color": "#d97706",
+            "badge_bg": "#78350f",
+            "badge_fg": "#fcd34d",
+            "icon": "bi-signpost-split",
+        },
+        {
+            "stage_key": "Market_Data_Analyzer",
+            "display_name": "BenchmarkMarketDataAnalyzerAgentBM",
+            "short_name": "Market Data Analyzer",
+            "description": "Fetches live market pricing for MARKET_DATA-routed lines from Perplexity API; writes live_price_json to each line item",
+            "api_call": "Perplexity API -- POST /chat/completions (sonar model)",
+            "color": "#059669",
+            "badge_bg": "#064e3b",
+            "badge_fg": "#6ee7b7",
+            "icon": "bi-broadcast",
+        },
+        {
+            "stage_key": "Benchmarking_Analyst",
+            "display_name": "BenchmarkingAnalystAgentBM",
+            "short_name": "Benchmarking Analyst",
+            "description": "Synthesizes corridor + market data; computes variance%, classifies WITHIN_RANGE/MODERATE/HIGH using VarianceThresholdConfig from DB",
+            "api_call": "Internal -- BenchmarkCorridorRule + VarianceThresholdConfig DB queries",
+            "color": "#1d4ed8",
+            "badge_bg": "#1e3a8a",
+            "badge_fg": "#93c5fd",
+            "icon": "bi-bar-chart-line",
+        },
+        {
+            "stage_key": "Compliance_Agent",
+            "display_name": "BenchmarkComplianceAgentBM",
+            "short_name": "Compliance Agent",
+            "description": "Validates benchmarked lines against compliance rules; flags HIGH deviation lines; generates compliance notes",
+            "api_call": "Azure OpenAI GPT-4o -- chat completions",
+            "color": "#be185d",
+            "badge_bg": "#831843",
+            "badge_fg": "#f9a8d4",
+            "icon": "bi-shield-check",
+        },
+        {
+            "stage_key": "Vendor_Recommendation",
+            "display_name": "BenchmarkVendorRecommendationAgent",
+            "short_name": "Vendor Recommendation",
+            "description": "Ranks vendors by benchmarked deviation, coverage, and compliance; generates negotiation talking points",
+            "api_call": "Azure OpenAI GPT-4o -- chat completions",
+            "color": "#0f766e",
+            "badge_bg": "#134e4a",
+            "badge_fg": "#5eead4",
+            "icon": "bi-trophy",
+        },
+    ]
+
+    # Query real AgentRun records for this benchmark request
+    _agent_runs_by_stage: dict = {}
+    try:
+        from apps.agents.models import AgentRun
+        _all_agent_runs = list(
+            AgentRun.objects.filter(
+                input_payload__benchmark_request_pk=bench_request.pk,
+            ).order_by("started_at", "pk")
+        )
+        for _ar in _all_agent_runs:
+            _ip = _ar.input_payload or {}
+            _stage_key = _ip.get("agent_stage", "")
+            if _stage_key:
+                # Keep the most recent run for each stage key
+                _agent_runs_by_stage[_stage_key] = _ar
+    except Exception:
+        _all_agent_runs = []
+
+    # Attach real AgentRun data to each stage meta dict
+    dev_pipeline_stages = []
+    for _smeta in _AGENT_STAGE_META:
+        _ar = _agent_runs_by_stage.get(_smeta["stage_key"])
+        _run_data = None
+        if _ar:
+            _op = _ar.output_payload or {}
+            _ip = _ar.input_payload or {}
+            _dur = None
+            if _ar.duration_ms is not None:
+                _dur = f"{_ar.duration_ms}ms" if _ar.duration_ms < 1000 else f"{_ar.duration_ms/1000:.2f}s"
+            _run_data = {
+                "pk": _ar.pk,
+                "status": _ar.status,
+                "started_at": _ar.started_at,
+                "completed_at": _ar.completed_at,
+                "duration_display": _dur,
+                "duration_ms": _ar.duration_ms,
+                "confidence": _ar.confidence,
+                "llm_model_used": _ar.llm_model_used or "N/A",
+                "invocation_reason": _ar.invocation_reason or "",
+                "trace_id": _ar.trace_id or "",
+                "input_payload": _ip,
+                "output_payload": _op,
+                "output_summary": _op.get("summary") or _op.get("message") or "",
+                "error_message": getattr(_ar, "error_message", "") or "",
+            }
+        dev_pipeline_stages.append({**_smeta, "run": _run_data})
+
+    # Per-quotation trace (real data, no fallbacks to "--")
+    dev_trace_quotations = []
+    for _q in bench_request.quotations.filter(is_active=True).order_by("created_at"):
+        _q_line_traces = []
+        for _li in _q.line_items.filter(is_active=True).order_by("line_number"):
+            _cat = _li.category or "UNCATEGORIZED"
+            if _cat not in _threshold_cache:
+                try:
+                    _w, _m = BenchmarkEngine._resolve_variance_thresholds(_cat, _geo_for_trace)
+                except Exception:
+                    _w, _m = 5.0, 15.0
+                _threshold_cache[_cat] = {"within": _w, "moderate": _m}
+            _thresholds = _threshold_cache[_cat]
+
+            _routing = _ROUTING_LABEL.get(_li.benchmark_source or "NONE", "NEEDS_REVIEW")
+
+            # Exact variance formula string
+            _variance_formula = None
+            if _li.quoted_unit_rate is not None and _li.benchmark_mid is not None:
+                try:
+                    _bm = float(_li.benchmark_mid)
+                    _qr = float(_li.quoted_unit_rate)
+                    if _bm != 0:
+                        _cpct = ((_qr - _bm) / _bm) * 100
+                        _variance_formula = (
+                            f"({_qr:.2f} - {_bm:.2f}) / {_bm:.2f} * 100 = {_cpct:+.2f}%"
+                        )
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass
+
+            # Market data
+            _lp = _li.live_price_json or {}
+            _market_price_used = None
+            _market_citations = []
+            if _routing == "MARKET_DATA" and _lp:
+                _market_price_used = _lp.get("price") or _lp.get("mid_rate") or _lp.get("market_mid")
+                _market_citations = (_lp.get("citations") or [])[:5]
+
+            # Full corridor detail from DB
+            _corridor_detail = None
+            if _li.corridor_rule_code:
+                try:
+                    _cr = BenchmarkCorridorRule.objects.filter(
+                        rule_code=_li.corridor_rule_code, is_active=True
+                    ).first()
+                    if _cr:
+                        _corridor_detail = {
+                            "rule_code": _cr.rule_code,
+                            "name": _cr.name,
+                            "scope_type": _cr.scope_type,
+                            "geography": _cr.geography,
+                            "uom": _cr.uom,
+                            "min_rate": float(_cr.min_rate),
+                            "mid_rate": float(_cr.mid_rate),
+                            "max_rate": float(_cr.max_rate),
+                            "currency": _cr.currency,
+                            "keywords": _cr.keywords,
+                            "priority": _cr.priority,
+                        }
+                except Exception:
+                    pass
+
+            _q_line_traces.append({
+                "line_number": _li.line_number,
+                "description": _li.description,
+                "uom": _li.uom or "",
+                "quantity": float(_li.quantity) if _li.quantity is not None else None,
+                "quoted_unit_rate": float(_li.quoted_unit_rate) if _li.quoted_unit_rate is not None else None,
+                "line_amount": float(_li.line_amount) if _li.line_amount is not None else None,
+                "category": _li.category,
+                "classification_source": _li.classification_source,
+                "classification_confidence": _li.classification_confidence,
+                "routing": _routing,
+                "benchmark_source_raw": _li.benchmark_source,
+                "corridor_rule_code": _li.corridor_rule_code,
+                "benchmark_min": float(_li.benchmark_min) if _li.benchmark_min is not None else None,
+                "benchmark_mid": float(_li.benchmark_mid) if _li.benchmark_mid is not None else None,
+                "benchmark_max": float(_li.benchmark_max) if _li.benchmark_max is not None else None,
+                "corridor_detail": _corridor_detail,
+                "thresholds": _thresholds,
+                "variance_formula": _variance_formula,
+                "variance_pct": _li.variance_pct,
+                "variance_status": _li.variance_status,
+                "variance_note": _li.variance_note or "",
+                "market_price_used": _market_price_used,
+                "market_citations": _market_citations,
+                "live_price_json_preview": json.dumps(_lp, default=str)[:500] if _lp else "",
+            })
+
+        # DI extraction metadata from the real di_extraction_json stored on quotation
+        _di = _q.di_extraction_json or {}
+        _di_pages = len(_di.get("pages", [])) if isinstance(_di, dict) else 0
+        _di_tables = len(_di.get("tables", [])) if isinstance(_di, dict) else 0
+        _di_kv_count = len(_di.get("keyValuePairs", [])) if isinstance(_di, dict) else 0
+
+        # Blob status -- show real values, never mask with "--"
+        _blob_name = (_q.blob_name or "").strip()
+        _blob_url = (_q.blob_url or "").strip()
+        _blob_uploaded = bool(_blob_name or _blob_url)
+        _blob_missing_reason = ""
+        if not _blob_uploaded:
+            if _q.document:
+                _blob_missing_reason = "File stored locally (pre-blob-storage era upload, no Azure blob path)"
+            else:
+                _blob_missing_reason = "No file found -- quotation may have been created without a document"
+
+        dev_trace_quotations.append({
+            "quotation_id": _q.pk,
+            "supplier_name": (_q.supplier_name or "").strip() or "(not yet inferred)",
+            "quotation_ref": _q.quotation_ref or "(no ref)",
+            "created_at": _q.created_at,
+            "blob_uploaded": _blob_uploaded,
+            "blob_name": _blob_name or None,
+            "blob_url": _blob_url or None,
+            "blob_missing_reason": _blob_missing_reason,
+            "has_local_file": bool(_q.document),
+            "extraction_status": _q.extraction_status,
+            "extraction_error": (_q.extraction_error or "").strip(),
+            "di_page_count": _di_pages,
+            "di_table_count": _di_tables,
+            "di_kv_count": _di_kv_count,
+            "raw_text_length": len(_q.extracted_text or ""),
+            "line_count": len(_q_line_traces),
+            "line_traces": _q_line_traces,
+        })
+
     ctx = _base_ctx(
         bench_request=bench_request,
         quotations=quotations,
@@ -862,6 +1136,10 @@ def request_detail(request, pk):
         run_logs=run_logs,
         show_history=show_history,
         analysis_run_count=analysis_run_count,
+        # Developer trace
+        dev_trace_quotations=dev_trace_quotations,
+        dev_pipeline_stages=dev_pipeline_stages,
+        dev_request_geography=_geo_for_trace,
     )
     return render(request, "benchmarking/request_detail.html", ctx)
 
@@ -1163,18 +1441,24 @@ def reports(request):
 @login_required
 def configurations(request):
     """Benchmark Configurations -- Category Master, Benchmark Table, Variance Thresholds."""
+    category_items = _build_category_config_items()
+    category_codes = [item["code"] for item in category_items]
     stats = {
-        "category_total": len(LineCategory.CHOICES),
-        "category_active": len(LineCategory.CHOICES),
+        "category_total": len(category_items),
+        "category_active": len([item for item in category_items if item.get("is_active")]),
         "corridor_total": BenchmarkCorridorRule.objects.count(),
         "corridor_active": BenchmarkCorridorRule.objects.filter(is_active=True).count(),
-        "threshold_total": 4,
-        "threshold_active": 4,
+        "threshold_total": VarianceThresholdConfig.objects.count(),
+        "threshold_active": VarianceThresholdConfig.objects.filter(is_active=True).count(),
     }
     scope_choices_with_all = ScopeType.CHOICES + [("ALL", "All Scopes")]
     geo_choices_with_all = Geography.CHOICES + [("ALL", "All Geographies")]
     ctx = _base_ctx(
         stats=stats,
+        category_options_json=json.dumps([
+            {"code": item["code"], "label": item["label"], "is_active": item["is_active"]}
+            for item in category_items
+        ]),
         scope_choices_with_all=scope_choices_with_all,
         geo_choices_with_all=geo_choices_with_all,
         page_title="Benchmark Configurations",
@@ -1190,48 +1474,247 @@ def configurations(request):
 
 _CAT_DESCRIPTIONS = {
     "EQUIPMENT":     "Main HVAC units: VRF/VRV, Chillers, Split ACs, Packaged Units, FCUs, AHUs",
+    "PIPING":        "Copper piping, CHW piping, refrigerant piping, fittings, supports, valves and accessories",
+    "ELECTRICAL":    "Power cabling, MCC/DB interfaces, isolators, control wiring, panels and electrical accessories",
     "CONTROLS":      "BMS/DDC controls, control panels, cabling, sensors, actuators",
     "DUCTING":       "GI ductwork, flexible ducts, grilles, diffusers, louvres",
+    "AIR_DISTRIBUTION": "Diffusers, grilles, dampers, louvers, VAV terminals and air-side distribution accessories",
     "INSULATION":    "Pipe insulation (Armaflex/NBR), duct insulation (glass wool, foam)",
-    "ACCESSORIES":   "Pipes, fittings, valves, dampers, supports, hangers, drain trays",
+    "ACCESSORIES":   "Accessories such as dampers, louvers, volume control parts and related HVAC fittings",
     "INSTALLATION":  "Labour for mechanical installation, fix & fit, pipework, electrical works",
     "TC":            "Testing, balancing, commissioning, startup, handover",
     "UNCATEGORIZED": "Items not yet classified into a specific category",
 }
 
+_CATEGORY_MASTER_DEFAULTS = [
+    {"code": "EQUIPMENT", "name": "Equipment", "pricing_type": PricingType.MARKET, "sort_order": 1},
+    {"code": "DUCTING", "name": "Ducting", "pricing_type": PricingType.HYBRID, "sort_order": 2},
+    {"code": "PIPING", "name": "Piping", "pricing_type": PricingType.HYBRID, "sort_order": 3},
+    {"code": "ELECTRICAL", "name": "Electrical", "pricing_type": PricingType.BENCHMARK, "sort_order": 4},
+    {"code": "CONTROLS", "name": "Controls", "pricing_type": PricingType.MARKET, "sort_order": 5},
+    {"code": "AIR_DISTRIBUTION", "name": "Air Distribution", "pricing_type": PricingType.BENCHMARK, "sort_order": 6},
+    {"code": "INSTALLATION", "name": "Installation", "pricing_type": PricingType.BENCHMARK, "sort_order": 7},
+    {"code": "TC", "name": "Testing & Commissioning", "pricing_type": PricingType.BENCHMARK, "sort_order": 8},
+    {"code": "ACCESSORIES", "name": "Accessories (Dampers, Louvers, etc.)", "pricing_type": PricingType.MARKET, "sort_order": 9},
+    {"code": "INSULATION", "name": "Insulation", "pricing_type": PricingType.HYBRID, "sort_order": 10},
+]
 
-@login_required
-def api_bench_categories(request):
-    """Return all LineCategory enum values with active corridor rule counts."""
+_CATEGORY_TYPE_ACTION_MAP = {
+    PricingType.MARKET: "Fetch prices from marketplace or distributor sources and compute min/avg/max range for comparison.",
+    PricingType.HYBRID: "Use benchmark ranges with optional AI-based regional and material trend adjustments.",
+    PricingType.BENCHMARK: "Use predefined benchmark corridor rates and apply only controlled project-scale adjustments.",
+}
+
+
+def _category_defaults_by_code():
+    return {
+        row["code"]: {
+            "code": row["code"],
+            "name": row["name"],
+            "description": _CAT_DESCRIPTIONS.get(row["code"], ""),
+            "pricing_type": row["pricing_type"],
+            "keywords_csv": "",
+            "sort_order": row["sort_order"],
+            "is_active": True,
+        }
+        for row in _CATEGORY_MASTER_DEFAULTS
+    }
+
+
+def _default_category_sort_order() -> int:
+    existing_max = CategoryMaster.objects.order_by("-sort_order").values_list("sort_order", flat=True).first()
+    if existing_max is None:
+        return 100
+    return int(existing_max) + 1
+
+
+def _validate_category_payload(code: str, name: str, description: str, keywords_csv: str, pricing_type: str, *, exclude_pk=None):
+    if not code:
+        return "Category code is required."
+    if not re.fullmatch(r"[A-Z0-9_]{2,30}", code):
+        return "Category code must use only letters, numbers, or underscore and be 2-30 characters long."
+    if not name:
+        return "Category name is required."
+
+    qs = CategoryMaster.objects.all()
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+
+    if qs.filter(code__iexact=code).exists():
+        return "Category code already exists. Please use a unique code."
+    if qs.filter(name__iexact=name).exists():
+        return "Category name already exists. Please use a different name."
+
+    normalized_description = " ".join((description or "").split()).strip().lower()
+    normalized_keywords = ",".join(
+        sorted({part.strip().lower() for part in (keywords_csv or "").split(",") if part.strip()})
+    )
+    normalized_pricing_type = str(pricing_type or "").strip().upper()
+
+    for row in qs.only("code", "name", "description", "keywords_csv", "pricing_type"):
+        row_description = " ".join((row.description or "").split()).strip().lower()
+        row_keywords = ",".join(
+            sorted({part.strip().lower() for part in (row.keywords_csv or "").split(",") if part.strip()})
+        )
+        if (
+            row.name.strip().lower() == name.strip().lower()
+            and row_description == normalized_description
+            and row_keywords == normalized_keywords
+            and str(row.pricing_type or "").strip().upper() == normalized_pricing_type
+        ):
+            return f"Same category details already exist under code {row.code}."
+    return None
+
+
+def _build_category_config_items(query_text=""):
     from django.db.models import Count
-    q = request.GET.get("q", "").lower()
-    counts = dict(
+
+    q = (query_text or "").strip().lower()
+    defaults = _category_defaults_by_code()
+    db_rows = {
+        row.code: row
+        for row in CategoryMaster.objects.all().order_by("sort_order", "code")
+    }
+    corridor_counts = dict(
         BenchmarkCorridorRule.objects.filter(is_active=True)
-        .values_list("category")
+        .values("category")
         .annotate(cnt=Count("id"))
         .values_list("category", "cnt")
     )
+    corridor_keywords = {}
+    for category, keywords in BenchmarkCorridorRule.objects.filter(is_active=True).exclude(keywords="").values_list("category", "keywords"):
+        corridor_keywords.setdefault(category, [])
+        corridor_keywords[category].extend([k.strip() for k in keywords.split(",") if k.strip()])
+
     items = []
-    for code, label in LineCategory.CHOICES:
-        if q and q not in code.lower() and q not in label.lower():
+    ordered_codes = list(defaults.keys())
+    ordered_codes.extend([code for code in db_rows.keys() if code not in defaults])
+
+    for code in ordered_codes:
+        default_row = defaults.get(code, {})
+        db_row = db_rows.get(code)
+        if not db_row and not default_row:
             continue
-        sample_kw_qs = list(
-            BenchmarkCorridorRule.objects.filter(category=code, is_active=True)
-            .exclude(keywords="")
-            .values_list("keywords", flat=True)[:3]
-        )
-        # flatten first ~6 keywords
-        all_kw = []
-        for kws in sample_kw_qs:
-            all_kw.extend([k.strip() for k in kws.split(",") if k.strip()])
-        sample_keywords = ", ".join(all_kw[:6]) if all_kw else ""
+        label = db_row.name if db_row and db_row.name else default_row.get("name", code.replace("_", " ").title())
+        description = db_row.description if db_row and db_row.description else default_row.get("description", "")
+        pricing_type = str(db_row.pricing_type if db_row and db_row.pricing_type else default_row.get("pricing_type", PricingType.BENCHMARK)).upper()
+        if pricing_type not in {PricingType.MARKET, PricingType.HYBRID, PricingType.BENCHMARK}:
+            pricing_type = PricingType.BENCHMARK
+        sort_order = db_row.sort_order if db_row else default_row.get("sort_order", 100)
+        is_active = db_row.is_active if db_row else default_row.get("is_active", True)
+        own_keywords = db_row.keywords_csv if db_row and db_row.keywords_csv else ""
+        merged_keywords = [k.strip() for k in own_keywords.split(",") if k.strip()]
+        for keyword in corridor_keywords.get(code, []):
+            if keyword not in merged_keywords:
+                merged_keywords.append(keyword)
+        sample_keywords = ", ".join(merged_keywords[:6])
+        haystack = " ".join([
+            code,
+            label,
+            description,
+            own_keywords,
+            sample_keywords,
+            pricing_type,
+        ]).lower()
+        if q and q not in haystack:
+            continue
         items.append({
             "code": code,
             "label": label,
-            "description": _CAT_DESCRIPTIONS.get(code, ""),
-            "rule_count": counts.get(code, 0),
+            "description": description,
+            "keywords_csv": own_keywords,
+            "type": pricing_type,
+            "rule_count": corridor_counts.get(code, 0),
             "sample_keywords": sample_keywords,
+            "what_it_should_do": _CATEGORY_TYPE_ACTION_MAP.get(pricing_type, ""),
+            "is_active": is_active,
+            "sort_order": sort_order,
         })
+    items.sort(key=lambda item: (item["sort_order"], item["label"], item["code"]))
+    return items
+
+
+def _allowed_category_codes():
+    return {
+        item["code"]
+        for item in _build_category_config_items()
+        if item.get("is_active")
+    }
+
+
+@login_required
+def api_bench_categories(request):
+    """Return and update DB-backed CategoryMaster values used by the configurations page."""
+    import json as _json
+
+    if request.method == "POST":
+        try:
+            body = _json.loads(request.body)
+        except Exception:
+            return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
+
+        code = str(body.get("code") or "").strip().upper()
+        pricing_type = str(body.get("type") or "").strip().upper()
+        defaults = _category_defaults_by_code()
+        valid_types = {PricingType.MARKET, PricingType.HYBRID, PricingType.BENCHMARK}
+        if pricing_type not in valid_types:
+            return JsonResponse({"success": False, "message": "Invalid pricing type."}, status=400)
+
+        has_name = "name" in body
+        has_description = "description" in body
+        has_keywords = "keywords_csv" in body
+        custom_name = str(body.get("name") or "").strip()
+        custom_description = str(body.get("description") or "").strip()
+        custom_keywords = str(body.get("keywords_csv") or "").strip()
+        is_active = bool(body.get("is_active", True))
+
+        existing_row = CategoryMaster.objects.filter(code=code).first()
+        effective_name = custom_name or (existing_row.name if existing_row and existing_row.name else defaults.get(code, {}).get("name", code.replace("_", " ").title()))
+        effective_description = custom_description if has_description else (existing_row.description if existing_row else defaults.get(code, {}).get("description", ""))
+        effective_keywords = custom_keywords if has_keywords else (existing_row.keywords_csv if existing_row else "")
+
+        validation_error = _validate_category_payload(
+            code,
+            effective_name,
+            effective_description,
+            effective_keywords,
+            pricing_type,
+            exclude_pk=getattr(existing_row, "pk", None),
+        )
+        if validation_error:
+            return JsonResponse({"success": False, "message": validation_error}, status=400)
+
+        row, created = CategoryMaster.objects.get_or_create(
+            code=code,
+            defaults={
+                "name": effective_name,
+                "description": effective_description,
+                "keywords_csv": effective_keywords,
+                "pricing_type": pricing_type,
+                "sort_order": defaults.get(code, {}).get("sort_order", _default_category_sort_order()),
+                "is_active": is_active,
+                "created_by": request.user,
+            },
+        )
+        row.pricing_type = pricing_type
+        row.name = effective_name
+        row.description = effective_description
+        row.keywords_csv = effective_keywords
+        if created and not getattr(row, "sort_order", None):
+            row.sort_order = defaults.get(code, {}).get("sort_order", _default_category_sort_order())
+        row.is_active = is_active
+        if created and not getattr(row, "created_by_id", None):
+            row.created_by = request.user
+        row.updated_by = request.user
+        row.save()
+        return JsonResponse({
+            "success": True,
+            "message": "Category master saved.",
+            "type": row.pricing_type,
+            "what_it_should_do": _CATEGORY_TYPE_ACTION_MAP.get(row.pricing_type, ""),
+        })
+
+    items = _build_category_config_items(request.GET.get("q", ""))
     return JsonResponse({"items": items})
 
 
@@ -1242,6 +1725,9 @@ def api_bench_categories(request):
 def _corridor_to_dict(r):
     # Build display labels manually (model uses plain str constants, not TextChoices)
     cat_map = dict(LineCategory.CHOICES)
+    db_names = dict(
+        CategoryMaster.objects.values_list("code", "name")
+    )
     geo_map = dict(Geography.CHOICES + [("ALL", "All Geographies")])
     scope_map = dict(ScopeType.CHOICES + [("ALL", "All Scopes")])
     return {
@@ -1249,7 +1735,7 @@ def _corridor_to_dict(r):
         "rule_code": r.rule_code,
         "name": r.name,
         "category": r.category,
-        "category_display": cat_map.get(r.category, r.category),
+        "category_display": db_names.get(r.category) or cat_map.get(r.category, r.category),
         "geography": r.geography,
         "geography_display": geo_map.get(r.geography, r.geography),
         "scope_type": r.scope_type,
@@ -1270,16 +1756,20 @@ def _corridor_to_dict(r):
 def api_bench_corridors(request):
     """GET: list corridor rules. POST (JSON): create a new rule."""
     import json as _json
+    allowed_categories = _allowed_category_codes()
     if request.method == "POST":
         try:
             body = _json.loads(request.body)
         except Exception:
             return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
+        category = str(body.get("category") or "").strip().upper()
+        if category not in allowed_categories:
+            return JsonResponse({"success": False, "message": "Category is not enabled in Category Master."}, status=400)
         try:
             rule = BenchmarkCorridorRule.objects.create(
                 rule_code=body["rule_code"].strip(),
                 name=body["name"].strip(),
-                category=body["category"],
+                category=category,
                 scope_type=body.get("scope_type", "ALL"),
                 geography=body.get("geography", "ALL"),
                 uom=body.get("uom", "").strip(),
@@ -1299,13 +1789,15 @@ def api_bench_corridors(request):
 
     # GET -- list with optional filters
     q = request.GET.get("q", "").lower()
-    cat_filter = request.GET.get("category", "")
+    cat_filter = request.GET.get("category", "").strip().upper()
     geo_filter = request.GET.get("geography", "")
     from django.db.models import Q
-    qs = BenchmarkCorridorRule.objects.all().order_by("category", "geography", "priority")
+    qs = BenchmarkCorridorRule.objects.filter(category__in=allowed_categories).order_by("category", "geography", "priority")
     if q:
         qs = qs.filter(Q(rule_code__icontains=q) | Q(name__icontains=q) | Q(keywords__icontains=q))
     if cat_filter:
+        if cat_filter not in allowed_categories:
+            return JsonResponse({"items": []})
         qs = qs.filter(category=cat_filter)
     if geo_filter:
         qs = qs.filter(geography=geo_filter)
@@ -1316,6 +1808,7 @@ def api_bench_corridors(request):
 def api_bench_corridor_detail(request, pk):
     """GET: single rule detail. POST (JSON): update / toggle / delete."""
     import json as _json
+    allowed_categories = _allowed_category_codes()
     rule = get_object_or_404(BenchmarkCorridorRule, pk=pk)
     if request.method == "GET":
         return JsonResponse(_corridor_to_dict(rule))
@@ -1335,9 +1828,12 @@ def api_bench_corridor_detail(request, pk):
             return JsonResponse({"success": True, "message": f"Rule '{rule.rule_code}' deactivated."})
         if action == "update":
             try:
+                category = str(body.get("category", rule.category) or rule.category).strip().upper()
+                if category not in allowed_categories:
+                    return JsonResponse({"success": False, "message": "Category is not enabled in Category Master."}, status=400)
                 rule.rule_code = (body.get("rule_code") or rule.rule_code).strip()
                 rule.name = (body.get("name") or rule.name).strip()
-                rule.category = body.get("category", rule.category)
+                rule.category = category
                 rule.scope_type = body.get("scope_type", rule.scope_type)
                 rule.geography = body.get("geography", rule.geography)
                 rule.uom = (body.get("uom") or "").strip()
@@ -1363,48 +1859,102 @@ def api_bench_corridor_detail(request, pk):
 
 @login_required
 def api_bench_thresholds(request):
-    """Return the 4 variance bands with live line-item counts."""
-    from django.db.models import Count
-    counts = dict(
-        BenchmarkLineItem.objects.values_list("variance_status")
-        .annotate(cnt=Count("id"))
-        .values_list("variance_status", "cnt")
-    )
-    bands = [
-        {
-            "code": "WITHIN_RANGE",
-            "label": "Within Range",
-            "description": "Quoted rate is within benchmark corridor",
-            "range": "< 5% above mid",
-            "color": "success",
-            "count": counts.get("WITHIN_RANGE", 0),
-        },
-        {
-            "code": "MODERATE",
-            "label": "Moderate Variance",
-            "description": "Quoted rate slightly exceeds benchmark",
-            "range": "5% - 15% above mid",
-            "color": "warning",
-            "count": counts.get("MODERATE", 0),
-        },
-        {
-            "code": "HIGH",
-            "label": "High Variance",
-            "description": "Quoted rate significantly exceeds benchmark",
-            "range": "> 15% above mid",
-            "color": "danger",
-            "count": counts.get("HIGH", 0),
-        },
-        {
-            "code": "NEEDS_REVIEW",
-            "label": "Needs Review",
-            "description": "No benchmark corridor found for this line item",
-            "range": "No benchmark",
-            "color": "secondary",
-            "count": counts.get("NEEDS_REVIEW", 0),
-        },
-    ]
-    return JsonResponse({"items": bands})
+    """Return DB-backed VarianceThresholdConfig rows for the configuration screen."""
+    import json as _json
+
+    category_map = dict(LineCategory.CHOICES + [("ALL", "All Categories")])
+    category_name_map = {item["code"]: item["label"] for item in _build_category_config_items()}
+    category_name_map["ALL"] = "All Categories"
+    geography_map = dict(Geography.CHOICES + [("ALL", "All Geographies")])
+    allowed_categories = _allowed_category_codes()
+    ordered_allowed_categories = [item["code"] for item in _build_category_config_items() if item.get("is_active")]
+
+    if request.method == "POST":
+        try:
+            body = _json.loads(request.body)
+        except Exception:
+            return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
+
+        category = str(body.get("category") or "ALL").strip().upper()
+        geography = str(body.get("geography") or "ALL").strip().upper()
+        notes = str(body.get("notes") or "").strip()
+        valid_categories = allowed_categories.union({"ALL"})
+        valid_geographies = {code for code, _label in Geography.CHOICES}.union({"ALL"})
+
+        if category not in valid_categories:
+            return JsonResponse({"success": False, "message": "Invalid threshold category."}, status=400)
+        if geography not in valid_geographies:
+            return JsonResponse({"success": False, "message": "Invalid geography."}, status=400)
+
+        try:
+            within_range_max_pct = float(body.get("within_range_max_pct"))
+            moderate_max_pct = float(body.get("moderate_max_pct"))
+        except (TypeError, ValueError):
+            return JsonResponse({"success": False, "message": "Threshold values must be valid numbers."}, status=400)
+
+        if within_range_max_pct < 0 or moderate_max_pct < 0:
+            return JsonResponse({"success": False, "message": "Threshold values must be zero or greater."}, status=400)
+        if moderate_max_pct < within_range_max_pct:
+            return JsonResponse({"success": False, "message": "Moderate max must be greater than or equal to within range max."}, status=400)
+
+        row, created = VarianceThresholdConfig.objects.update_or_create(
+            category=category,
+            geography=geography,
+            defaults={
+                "within_range_max_pct": within_range_max_pct,
+                "moderate_max_pct": moderate_max_pct,
+                "notes": notes,
+                "is_active": bool(body.get("is_active", True)),
+                "updated_by": request.user,
+            },
+        )
+        if created and not getattr(row, "created_by_id", None):
+            row.created_by = request.user
+            row.save(update_fields=["created_by"])
+
+        return JsonResponse({
+            "success": True,
+            "message": "Variance threshold saved.",
+            "created": created,
+            "id": row.pk,
+        })
+
+    items = []
+    present_categories = set()
+    for row in VarianceThresholdConfig.objects.filter(category__in=(list(allowed_categories) + ["ALL"])).order_by("category", "geography"):
+        if row.category in allowed_categories:
+            present_categories.add(row.category)
+        items.append({
+            "id": row.pk,
+            "category": row.category,
+            "category_display": category_name_map.get(row.category) or category_map.get(row.category, row.category),
+            "geography": row.geography,
+            "geography_display": geography_map.get(row.geography, row.geography),
+            "within_range_max_pct": row.within_range_max_pct,
+            "moderate_max_pct": row.moderate_max_pct,
+            "notes": row.notes,
+            "is_active": row.is_active,
+        })
+
+    for category_code in ordered_allowed_categories:
+        if category_code in present_categories:
+            continue
+        items.append({
+            "id": None,
+            "category": category_code,
+            "category_display": category_name_map.get(category_code, category_code),
+            "geography": "ALL",
+            "geography_display": geography_map.get("ALL", "All Geographies"),
+            "within_range_max_pct": 5.0,
+            "moderate_max_pct": 15.0,
+            "notes": "Auto-default from Category Master",
+            "is_active": True,
+        })
+
+    category_order_map = {code: idx for idx, code in enumerate(ordered_allowed_categories)}
+    category_order_map["ALL"] = len(ordered_allowed_categories) + 1
+    items.sort(key=lambda item: (category_order_map.get(item["category"], 999), item.get("geography") or ""))
+    return JsonResponse({"items": items})
 
 
 # --------------------------------------------------------------------------- #

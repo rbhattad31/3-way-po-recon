@@ -79,16 +79,19 @@
 <div class="cfg-tab-pane active" id="pane-categories">
   <div class="cfg-toolbar">
     <div style="font-size:.85rem;color:#64748b;font-weight:500;">
-      <i class="bi bi-info-circle me-1"></i>Fixed categories derived from HVAC project line classifications.
+      <i class="bi bi-info-circle me-1"></i>DB-backed category master used by benchmark matching and pricing selection.
     </div>
-    <div>
+    <div class="d-flex gap-2 align-items-center">
       <input type="text" id="cat-search" class="cfg-search-box" placeholder="Search categories..." oninput="debouncedLoadCat()">
+      <button class="btn btn-cfg-add" onclick="openCategoryModal()">
+        <i class="bi bi-plus-lg me-1"></i>Add Category Data
+      </button>
     </div>
   </div>
 
   <div id="cat-loading" class="cfg-loading"><span class="spinner-border spinner-border-sm me-2"></span>Loading...</div>
-  <div class="cfg-table-wrap" id="cat-table-wrap" style="display:none;">
-    <table class="cfg-table">
+  <div class="cfg-table-wrap cfg-table-wrap-scroll-both" id="cat-table-wrap" style="display:none;">
+    <table class="cfg-table cfg-category-table">
       <thead>
         <tr>
           <th style="width:48px;"></th>
@@ -163,18 +166,23 @@
 <div class="cfg-tab-pane" id="pane-thresholds">
   <div class="cfg-toolbar">
     <div style="font-size:.85rem;color:#64748b;font-weight:500;">
-      <i class="bi bi-info-circle me-1"></i>System-defined variance bands applied automatically during benchmark analysis.
+      <i class="bi bi-info-circle me-1"></i>Configured variance thresholds loaded directly from the database.
     </div>
+    <button class="btn btn-cfg-add" onclick="openThresholdModal()">
+      <i class="bi bi-plus-lg me-1"></i>Add Threshold
+    </button>
   </div>
   <div id="thr-loading" class="cfg-loading"><span class="spinner-border spinner-border-sm me-2"></span>Loading...</div>
-  <div class="cfg-table-wrap" id="thr-table-wrap" style="display:none;">
-    <table class="cfg-table">
+  <div class="cfg-table-wrap cfg-table-wrap-scroll-both" id="thr-table-wrap" style="display:none;">
+    <table class="cfg-table cfg-threshold-table">
       <thead>
         <tr>
-          <th style="width:160px;">Status</th>
-          <th>Description</th>
-          <th style="width:160px;">Threshold Range</th>
-          <th>Interpretation</th>
+          <th>Category</th>
+          <th>Geography</th>
+          <th style="width:160px;">Within Range Max</th>
+          <th style="width:160px;">Moderate Max</th>
+          <th>Notes</th>
+          <th style="width:120px;">Status</th>
         </tr>
       </thead>
       <tbody id="thr-tbody"></tbody>
@@ -292,6 +300,150 @@
   </div>
 </div>
 
+<!-- ================================================================ CATEGORY MASTER MODAL -->
+<div class="modal fade" id="modalCategory" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;border:none;box-shadow:0 20px 60px rgba(0,0,0,.18);">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1665D8,#0891b2);border-radius:14px 14px 0 0;padding:1.1rem 1.4rem;">
+        <h5 class="modal-title text-white fw-semibold" id="modalCategoryTitle"><i class="bi bi-grid me-2"></i>Add Category Data</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-3">
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Category Code <span class="text-danger">*</span></label>
+            <input type="text" id="cat-modal-code" class="form-control form-control-cfg" placeholder="Example: SPARE_PARTS" oninput="syncCategoryModalFromSelection()" style="text-transform:uppercase;">
+            <div class="mt-1 text-muted" style="font-size:.76rem;">
+              Enter a free category code using letters, numbers, or underscore only.
+            </div>
+            <div class="mt-2" id="cat-modal-code-examples" style="display:flex;flex-wrap:wrap;gap:.4rem;"></div>
+            <div class="mt-1 text-muted" style="font-size:.76rem;">
+              Example codes: <strong>EQUIPMENT</strong>, <strong>DUCTING</strong>, <strong>PIPING</strong>, <strong>CONTROLS</strong>, <strong>SPARE_PARTS</strong>.
+            </div>
+          </div>
+          <div>
+            <label class="form-label-cfg">Pricing Type <span class="text-danger">*</span></label>
+            <select id="cat-modal-type" class="form-control form-control-cfg">
+              <option value="MARKET">MARKET</option>
+              <option value="HYBRID">HYBRID</option>
+              <option value="BENCHMARK">BENCHMARK</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Category Name <span class="text-danger">*</span></label>
+            <input type="text" id="cat-modal-name" class="form-control form-control-cfg" placeholder="Enter category name">
+          </div>
+          <div class="d-flex align-items-end">
+            <div class="text-muted" style="font-size:.78rem;padding:.7rem .8rem;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;width:100%;">
+              Display order is managed automatically. No sort order input is required.
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label-cfg">Description</label>
+          <textarea id="cat-modal-description" class="form-control form-control-cfg" rows="3" placeholder="Describe how this category should be used..."></textarea>
+        </div>
+
+        <div class="mt-2">
+          <label class="form-label-cfg">Keywords <small class="text-muted">(comma-separated)</small></label>
+          <input type="text" id="cat-modal-keywords" class="form-control form-control-cfg" placeholder="e.g. chiller, condensing unit, thermostat">
+          <div class="mt-1 text-muted" style="font-size:.76rem;">
+            Example: chiller, vrf, condensing unit, copper pipe, diffuser.
+          </div>
+        </div>
+
+        <div class="cfg-form-row mt-2">
+          <div class="d-flex align-items-end">
+            <div class="form-check form-check-cfg">
+              <input class="form-check-input" type="checkbox" id="cat-modal-active" checked>
+              <label class="form-check-label" for="cat-modal-active">Active</label>
+            </div>
+          </div>
+          <div>
+            <label class="form-label-cfg">Expected Process</label>
+            <div id="cat-modal-action-help" style="font-size:.78rem;color:#475569;min-height:42px;padding:.7rem .8rem;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9;padding:.85rem 1.3rem;">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="btnSaveCategory" class="btn btn-sm btn-primary px-4 fw-semibold" onclick="saveCategoryConfig()">
+          <i class="bi bi-check2 me-1"></i>Save Category
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ VARIANCE THRESHOLD MODAL -->
+<div class="modal fade" id="modalThreshold" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;border:none;box-shadow:0 20px 60px rgba(0,0,0,.18);">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1665D8,#0891b2);border-radius:14px 14px 0 0;padding:1.1rem 1.4rem;">
+        <h5 class="modal-title text-white fw-semibold" id="modalThresholdTitle"><i class="bi bi-bar-chart-steps me-2"></i>Add Variance Threshold</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-3">
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Category <span class="text-danger">*</span></label>
+            <select id="thr-modal-category" class="form-control form-control-cfg">
+              <option value="ALL">All Categories</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Geography <span class="text-danger">*</span></label>
+            <select id="thr-modal-geography" class="form-control form-control-cfg">
+              <option value="ALL">All Geographies</option>
+              {% for code, label in geo_choices_with_all %}
+              {% if code != "ALL" %}<option value="{{ code }}">{{ label }}</option>{% endif %}
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Within Range Max % <span class="text-danger">*</span></label>
+            <input type="number" id="thr-modal-within" class="form-control form-control-cfg" step="0.01" min="0" placeholder="5.00">
+          </div>
+          <div>
+            <label class="form-label-cfg">Moderate Max % <span class="text-danger">*</span></label>
+            <input type="number" id="thr-modal-moderate" class="form-control form-control-cfg" step="0.01" min="0" placeholder="15.00">
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label-cfg">Notes</label>
+          <textarea id="thr-modal-notes" class="form-control form-control-cfg" rows="3" placeholder="Explain why this threshold is needed..."></textarea>
+        </div>
+
+        <div class="cfg-form-row mt-2">
+          <div class="d-flex align-items-end">
+            <div class="form-check form-check-cfg">
+              <input class="form-check-input" type="checkbox" id="thr-modal-active" checked>
+              <label class="form-check-label" for="thr-modal-active">Active</label>
+            </div>
+          </div>
+          <div style="font-size:.78rem;color:#64748b;display:flex;align-items:end;">
+            Saving the same category + geography combination updates the existing threshold row.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9;padding:.85rem 1.3rem;">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="btnSaveThreshold" class="btn btn-sm btn-primary px-4 fw-semibold" onclick="saveThresholdConfig()">
+          <i class="bi bi-check2 me-1"></i>Save Threshold
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ================================================================ DELETE CONFIRM MODAL -->
 <div class="modal fade" id="modalDelete" tabindex="-1">
   <div class="modal-dialog modal-sm modal-dialog-centered">
@@ -326,22 +478,30 @@ const URLS = {
 };
 
 // ================================================================ CATEGORY DATA
-const LINE_CATEGORIES = [
-  { code: "EQUIPMENT",     label: "Equipment",     color: "#1665D8", icon: "bi-cpu" },
-  { code: "CONTROLS",      label: "Controls",      color: "#0891b2", icon: "bi-toggles" },
-  { code: "DUCTING",       label: "Ducting",       color: "#0369a1", icon: "bi-wind" },
-  { code: "PIPING",        label: "Piping",        color: "#0f766e", icon: "bi-bezier2" },
-  { code: "ELECTRICAL",    label: "Electrical",    color: "#b45309", icon: "bi-lightning-charge" },
-  { code: "AIR_DISTRIBUTION", label: "Air Distribution", color: "#0ea5e9", icon: "bi-fan" },
-  { code: "INSULATION",    label: "Insulation",    color: "#d97706", icon: "bi-layers" },
-  { code: "ACCESSORIES",   label: "Accessories",   color: "#6b7280", icon: "bi-tools" },
-  { code: "INSTALLATION",  label: "Installation",  color: "#16a34a", icon: "bi-hammer" },
-  { code: "TC",            label: "TC",            color: "#7c3aed", icon: "bi-clipboard-check" },
-  { code: "UNCATEGORIZED", label: "Uncategorized", color: "#9ca3af", icon: "bi-question-circle" },
-];
+const INITIAL_CATEGORY_OPTIONS = JSON.parse('{{ category_options_json|escapejs }}');
+const CATEGORY_STYLE_MAP = {
+  EQUIPMENT: { color: "#1665D8", icon: "bi-cpu" },
+  DUCTING: { color: "#0369a1", icon: "bi-wind" },
+  PIPING: { color: "#0f766e", icon: "bi-bezier2" },
+  ELECTRICAL: { color: "#b45309", icon: "bi-lightning-charge" },
+  CONTROLS: { color: "#0891b2", icon: "bi-toggles" },
+  AIR_DISTRIBUTION: { color: "#0ea5e9", icon: "bi-fan" },
+  INSULATION: { color: "#d97706", icon: "bi-layers" },
+  ACCESSORIES: { color: "#6b7280", icon: "bi-tools" },
+  INSTALLATION: { color: "#16a34a", icon: "bi-hammer" },
+  TC: { color: "#7c3aed", icon: "bi-clipboard-check" }
+};
+var dbCategories = Array.isArray(INITIAL_CATEGORY_OPTIONS) ? INITIAL_CATEGORY_OPTIONS.slice() : [];
+var categoryConfigItems = [];
+var thresholdConfigItems = [];
 
-const CAT_MAP = {};
-LINE_CATEGORIES.forEach(function(c){ CAT_MAP[c.code] = c; });
+function getCategoryStyle(code){
+  return CATEGORY_STYLE_MAP[code] || { color: '#6b7280', icon: 'bi-question-circle' };
+}
+
+function getActiveCategoryOptions(){
+  return (dbCategories || []).filter(function(item){ return item.is_active !== false; });
+}
 
 const TYPE_ACTION_MAP = {
   MARKET: 'Fetch prices from marketplace or distributor sources and compute min/avg/max range for comparison.',
@@ -379,22 +539,39 @@ function debouncedLoadCorr(){ clearTimeout(corrTimer); corrTimer = setTimeout(lo
 
 // ================================================================ POPULATE CATEGORY DROPDOWN
 function populateCatDropdown(current){
+  var categories = getActiveCategoryOptions();
   var sel = document.getElementById('corr-category');
   sel.innerHTML = '';
-  LINE_CATEGORIES.forEach(function(c){
+  categories.forEach(function(c){
     var opt = document.createElement('option');
     opt.value = c.code; opt.textContent = c.label;
     if (c.code === current) opt.selected = true;
     sel.appendChild(opt);
   });
-  // populate corridors filter once
+
   var f = document.getElementById('corr-cat-filter');
-  if (f && f.options.length <= 1){
-    LINE_CATEGORIES.forEach(function(c){
-      var o = document.createElement('option'); o.value = c.code; o.textContent = c.label;
+  if (f){
+    var currentFilter = f.value;
+    f.innerHTML = '<option value="">All Categories</option>';
+    categories.forEach(function(c){
+      var o = document.createElement('option');
+      o.value = c.code;
+      o.textContent = c.label;
+      if (c.code === currentFilter) o.selected = true;
       f.appendChild(o);
     });
   }
+}
+
+function syncCategoryOptions(items, current){
+  dbCategories = (items || []).map(function(item){
+    return {
+      code: item.code,
+      label: item.label,
+      is_active: item.is_active !== false
+    };
+  });
+  populateCatDropdown(current || '');
 }
 
 // ================================================================ LOAD CATEGORIES
@@ -404,8 +581,10 @@ function loadCategories(){
   $.get(URLS.categories, { q: q }, function(data){
     $('#cat-loading').hide();
     if (!data.items || !data.items.length){ $('#cat-empty').show(); return; }
+    categoryConfigItems = data.items || [];
+    syncCategoryOptions(data.items, document.getElementById('corr-category').value || '');
     var rows = data.items.map(function(it){
-      var cat = CAT_MAP[it.code] || { color:'#6b7280', icon:'bi-question-circle' };
+      var cat = getCategoryStyle(it.code);
       var typeTone = { MARKET: 'info', HYBRID: 'primary', BENCHMARK: 'secondary' }[it.type] || 'secondary';
       var typeOptions = [
         '<option value="MARKET"' + (it.type === 'MARKET' ? ' selected' : '') + '>MARKET</option>',
@@ -477,9 +656,9 @@ function loadCorridors(){
   $.get(URLS.corridors, { q: q, category: cat, geography: geo }, function(data){
     $('#corr-loading').hide();
     if (!data.items || !data.items.length){ $('#corr-empty').show(); return; }
-    populateCatDropdown('');
+    populateCatDropdown(document.getElementById('corr-category').value || '');
     var rows = data.items.map(function(it){
-      var cat = CAT_MAP[it.category] || { color:'#6b7280' };
+      var cat = getCategoryStyle(it.category);
       var badge = '<span class="badge rounded-pill px-2" style="background:' + cat.color + ';font-size:.72rem;">' + it.category_display + '</span>';
       var status = it.is_active
         ? '<span class="badge badge-active">Active</span>'
@@ -516,29 +695,194 @@ function loadThresholds(){
   $.get(URLS.thresholds, function(data){
     $('#thr-loading').hide();
     if (!data.items || !data.items.length){ $('#thr-empty').show(); return; }
-    var interpretations = {
-      WITHIN_RANGE: 'Quotation is competitive. Proceed to award.',
-      MODERATE:     'Minor negotiation recommended before awarding.',
-      HIGH:         'Significant negotiation or re-quoting strongly advised.',
-      NEEDS_REVIEW: 'Manual categorization or market check required.',
-    };
-    var barColors = { WITHIN_RANGE:'#16a34a', MODERATE:'#d97706', HIGH:'#dc2626', NEEDS_REVIEW:'#6b7280' };
-    var barWidths = { WITHIN_RANGE:'95%', MODERATE:'60%', HIGH:'30%', NEEDS_REVIEW:'15%' };
+    thresholdConfigItems = data.items || [];
     var rows = data.items.map(function(it){
-      var color  = barColors[it.code] || '#6b7280';
-      var width  = barWidths[it.code]  || '20%';
-      var interp = interpretations[it.code] || '';
+      var status = it.is_active
+        ? '<span class="badge badge-active">Active</span>'
+        : '<span class="badge badge-inactive">Inactive</span>';
       return '<tr>'
-        + '<td><span class="badge bg-' + it.color + ' px-2 py-1" style="font-size:.78rem;">' + it.label + '</span>'
-        + '<div class="band-bar mt-1" style="background:' + color + ';width:' + width + ';opacity:.7;"></div></td>'
-        + '<td style="font-size:.82rem;color:#475569;">' + it.description + '</td>'
-        + '<td><code style="font-size:.78rem;background:#f1f5f9;padding:2px 6px;border-radius:4px;">' + it.range + '</code></td>'
-        + '<td style="font-size:.82rem;color:#64748b;">' + interp + '</td>'
+        + '<td style="font-size:.82rem;color:#0f172a;">' + it.category_display + '</td>'
+        + '<td style="font-size:.82rem;color:#475569;">' + it.geography_display + '</td>'
+        + '<td><code style="font-size:.78rem;background:#ecfdf5;color:#166534;padding:2px 6px;border-radius:4px;">&lt;= ' + it.within_range_max_pct + '%</code></td>'
+        + '<td><code style="font-size:.78rem;background:#fff7ed;color:#c2410c;padding:2px 6px;border-radius:4px;">&lt;= ' + it.moderate_max_pct + '%</code></td>'
+        + '<td style="font-size:.82rem;color:#64748b;">' + (it.notes || '<span class="text-muted">--</span>') + '</td>'
+        + '<td>' + status + '</td>'
         + '</tr>';
     });
     $('#thr-tbody').html(rows.join(''));
     $('#thr-table-wrap').show();
   }).fail(function(){ showToast('Failed to load thresholds.', 'danger'); $('#thr-loading').hide(); });
+}
+
+// ================================================================ CATEGORY MASTER MODAL
+function buildCategoryModalOptions(selectedCode){
+  var items = categoryConfigItems && categoryConfigItems.length ? categoryConfigItems : (dbCategories || []);
+  var exampleHtml = (items || []).slice(0, 6).map(function(item){
+    var code = item.code || '';
+    return '<span class="badge rounded-pill text-bg-light border" style="font-size:.72rem;cursor:default;">' + code + '</span>';
+  }).join('');
+  $('#cat-modal-code-examples').html(exampleHtml);
+  $('#cat-modal-code').val(selectedCode || '');
+}
+
+function getCategoryConfigItem(code){
+  var items = categoryConfigItems || [];
+  for (var i = 0; i < items.length; i += 1){
+    if (items[i].code === code) return items[i];
+  }
+  return null;
+}
+
+function syncCategoryModalFromSelection(){
+  var code = ($('#cat-modal-code').val() || '').trim().toUpperCase();
+  $('#cat-modal-code').val(code);
+  var item = getCategoryConfigItem(code);
+  if (!item){
+    if (!$('#cat-modal-type').val()){
+      $('#cat-modal-type').val('BENCHMARK');
+    }
+    $('#cat-modal-active').prop('checked', true);
+    $('#cat-modal-action-help').html(
+      code
+        ? 'New category code detected. Add the name and details, then save. Example codes: <strong>EQUIPMENT</strong>, <strong>DUCTING</strong>, <strong>PIPING</strong>, <strong>SPARE_PARTS</strong>.'
+        : 'Enter a new category code and name. Example codes: <strong>EQUIPMENT</strong>, <strong>DUCTING</strong>, <strong>PIPING</strong>, <strong>SPARE_PARTS</strong>.'
+    );
+    return;
+  }
+  $('#cat-modal-name').val(item.label || '');
+  $('#cat-modal-description').val(item.description || '');
+  $('#cat-modal-keywords').val(item.keywords_csv || '');
+  $('#cat-modal-type').val(item.type || 'BENCHMARK');
+  $('#cat-modal-active').prop('checked', item.is_active !== false);
+  $('#cat-modal-action-help').text(item.what_it_should_do || TYPE_ACTION_MAP[item.type] || '');
+}
+
+function openCategoryModal(code){
+  var selectedCode = code || '';
+  buildCategoryModalOptions(selectedCode);
+  $('#modalCategoryTitle').html('<i class="bi bi-grid me-2"></i>Add Category Data');
+  if (!selectedCode){
+    $('#cat-modal-name').val('');
+    $('#cat-modal-description').val('');
+    $('#cat-modal-keywords').val('');
+    $('#cat-modal-type').val('BENCHMARK');
+    $('#cat-modal-active').prop('checked', true);
+  }
+  syncCategoryModalFromSelection();
+  new bootstrap.Modal(document.getElementById('modalCategory')).show();
+}
+
+function saveCategoryConfig(){
+  var payload = {
+    code: ($('#cat-modal-code').val() || '').trim().toUpperCase(),
+    name: $('#cat-modal-name').val().trim(),
+    description: $('#cat-modal-description').val().trim(),
+    keywords_csv: $('#cat-modal-keywords').val().trim(),
+    type: $('#cat-modal-type').val(),
+    is_active: $('#cat-modal-active').prop('checked')
+  };
+
+  if (!payload.code || !payload.name || !payload.type){
+    showToast('Category code, name, and pricing type are required.', 'warning');
+    return;
+  }
+
+  if (!/^[A-Z0-9_]{2,30}$/.test(payload.code)){
+    showToast('Category code must use only letters, numbers, or underscore.', 'warning');
+    return;
+  }
+
+  $('#btnSaveCategory').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
+  $.ajax({
+    url: URLS.categories,
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(resp){
+      $('#btnSaveCategory').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Category');
+      if (resp.success){
+        bootstrap.Modal.getInstance(document.getElementById('modalCategory')).hide();
+        showToast(resp.message || 'Category master saved.', 'success');
+        loadCategories();
+        loadCorridors();
+      } else {
+        showToast(resp.message || 'Category save failed.', 'danger');
+      }
+    },
+    error: function(xhr){
+      $('#btnSaveCategory').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Category');
+      showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Category save failed.', 'danger');
+    }
+  });
+}
+
+// ================================================================ THRESHOLD MODAL
+function populateThresholdCategoryDropdown(selectedCategory){
+  var items = categoryConfigItems && categoryConfigItems.length ? categoryConfigItems : (dbCategories || []);
+  var html = ['<option value="ALL"' + (selectedCategory === 'ALL' ? ' selected' : '') + '>ALL - All Categories</option>'];
+  (items || []).forEach(function(item){
+    html.push('<option value="' + item.code + '"' + (item.code === selectedCategory ? ' selected' : '') + '>' + item.code + ' - ' + (item.label || item.code) + '</option>');
+  });
+  $('#thr-modal-category').html(html.join(''));
+}
+
+function openThresholdModal(item){
+  var current = item || {
+    category: 'ALL',
+    geography: 'ALL',
+    within_range_max_pct: 5.0,
+    moderate_max_pct: 15.0,
+    notes: '',
+    is_active: true
+  };
+  populateThresholdCategoryDropdown(current.category || 'ALL');
+  $('#modalThresholdTitle').html('<i class="bi bi-bar-chart-steps me-2"></i>Add Variance Threshold');
+  $('#thr-modal-geography').val(current.geography || 'ALL');
+  $('#thr-modal-within').val(current.within_range_max_pct);
+  $('#thr-modal-moderate').val(current.moderate_max_pct);
+  $('#thr-modal-notes').val(current.notes || '');
+  $('#thr-modal-active').prop('checked', current.is_active !== false);
+  new bootstrap.Modal(document.getElementById('modalThreshold')).show();
+}
+
+function saveThresholdConfig(){
+  var payload = {
+    category: $('#thr-modal-category').val(),
+    geography: $('#thr-modal-geography').val(),
+    within_range_max_pct: $('#thr-modal-within').val(),
+    moderate_max_pct: $('#thr-modal-moderate').val(),
+    notes: $('#thr-modal-notes').val().trim(),
+    is_active: $('#thr-modal-active').prop('checked')
+  };
+
+  if (!payload.category || !payload.geography || payload.within_range_max_pct === '' || payload.moderate_max_pct === ''){
+    showToast('Category, geography, and threshold values are required.', 'warning');
+    return;
+  }
+
+  $('#btnSaveThreshold').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
+  $.ajax({
+    url: URLS.thresholds,
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(resp){
+      $('#btnSaveThreshold').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Threshold');
+      if (resp.success){
+        bootstrap.Modal.getInstance(document.getElementById('modalThreshold')).hide();
+        showToast(resp.message || 'Variance threshold saved.', 'success');
+        loadThresholds();
+      } else {
+        showToast(resp.message || 'Threshold save failed.', 'danger');
+      }
+    },
+    error: function(xhr){
+      $('#btnSaveThreshold').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Threshold');
+      showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Threshold save failed.', 'danger');
+    }
+  });
 }
 
 // ================================================================ CORRIDOR CRUD
@@ -697,8 +1041,8 @@ function getCsrf(){
 
 // ================================================================ INIT
 $(function(){
-  loadTab('categories');
   populateCatDropdown('EQUIPMENT');
+  loadTab('categories');
   setTimeout(loadCorridors, 100);
 });
 </script>

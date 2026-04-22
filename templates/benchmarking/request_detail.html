@@ -771,6 +771,327 @@
   </div>
 </div>
 
+<!-- ===================================================================== DEVELOPER OPTIONS PANEL -->
+<div class="table-card mt-2 mb-3" id="devOptionsWrap">
+  <div class="accordion" id="devOptionsAccordion">
+    <div class="accordion-item" style="border:1.5px solid #6366f1;border-radius:10px;overflow:hidden;">
+      <h2 class="accordion-header" id="devOptionsHeading">
+        <button
+          class="accordion-button collapsed"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#devOptionsCollapse"
+          aria-expanded="false"
+          aria-controls="devOptionsCollapse"
+          style="background:linear-gradient(90deg,#1e1b4b 0%,#312e81 100%);color:#e0e7ff;font-weight:600;letter-spacing:.02em;"
+        >
+          <i class="bi bi-cpu me-2" style="color:#a5b4fc;font-size:1.1rem;"></i>
+          Developer Options &mdash; Full Pipeline Trace
+          <span class="badge ms-2" style="background:#4f46e5;font-size:.7rem;">{{ dev_pipeline_stages|length }} agents</span>
+          <span class="badge ms-1" style="background:#0891b2;font-size:.7rem;">{{ bench_request.geography }}</span>
+          <span class="badge ms-1" style="background:{% if bench_request.status == 'COMPLETED' %}#166534{% elif bench_request.status == 'FAILED' %}#991b1b{% elif bench_request.status == 'PROCESSING' %}#92400e{% else %}#374151{% endif %};font-size:.7rem;">{{ bench_request.status }}</span>
+        </button>
+      </h2>
+      <div id="devOptionsCollapse" class="accordion-collapse collapse" aria-labelledby="devOptionsHeading">
+        <div class="accordion-body p-0" style="background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono','Fira Mono','Courier New',monospace;">
+
+          <!-- ============================================================ REQUEST META -->
+          <div class="p-3 border-bottom" style="border-color:#1e293b!important;">
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span style="background:#1d4ed8;border-radius:5px;padding:2px 8px;font-size:.65rem;font-weight:800;color:#bfdbfe;letter-spacing:.1em;font-family:sans-serif;">REQUEST</span>
+              <span style="color:#93c5fd;font-weight:700;font-size:.82rem;font-family:sans-serif;">Benchmark Request &mdash; Creation &amp; Configuration</span>
+            </div>
+            <div class="row g-2" style="font-size:.72rem;">
+              <div class="col-6 col-md-3"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Request PK</div><code style="color:#a5b4fc;">{{ bench_request.pk }}</code></div></div>
+              <div class="col-6 col-md-3"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Created At</div><code style="color:#6ee7b7;">{{ bench_request.created_at|date:"Y-m-d H:i:s" }}</code></div></div>
+              <div class="col-6 col-md-3"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Submitted By</div><code style="color:#fcd34d;">{% if bench_request.submitted_by %}{{ bench_request.submitted_by.email }}{% else %}Unknown{% endif %}</code></div></div>
+              <div class="col-6 col-md-3"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Status</div><code style="color:{% if bench_request.status == 'COMPLETED' %}#4ade80{% elif bench_request.status == 'FAILED' %}#f87171{% elif bench_request.status == 'PROCESSING' %}#fbbf24{% else %}#94a3b8{% endif %};">{{ bench_request.status }}</code></div></div>
+              <div class="col-6 col-md-2"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Geography</div><code style="color:#67e8f9;">{{ bench_request.geography }}</code></div></div>
+              <div class="col-6 col-md-2"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Scope Type</div><code style="color:#67e8f9;">{{ bench_request.scope_type }}</code></div></div>
+              <div class="col-6 col-md-2"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Store Type</div><code style="color:#f0abfc;">{{ bench_request.store_type|default:"(not set)" }}</code></div></div>
+              <div class="col-6 col-md-3"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">RFQ Source / Ref</div><code style="color:#fdba74;">{{ bench_request.rfq_source|default:"none" }} / {{ bench_request.rfq_ref|default:"(none)" }}</code></div></div>
+              <div class="col-6 col-md-3"><div style="background:#1e293b;border-radius:5px;padding:7px 10px;"><div style="color:#64748b;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Tenant</div><code style="color:#94a3b8;">{% if bench_request.tenant %}{{ bench_request.tenant.name }} (pk={{ bench_request.tenant.pk }}){% else %}None{% endif %}</code></div></div>
+              {% if bench_request.error_message %}
+              <div class="col-12"><div style="background:#1a0505;border:1px solid #7f1d1d;border-radius:5px;padding:7px 10px;"><div style="color:#fca5a5;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;font-family:sans-serif;">Pipeline Error Message</div><code style="color:#fca5a5;word-break:break-all;font-size:.7rem;">{{ bench_request.error_message }}</code></div></div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- ============================================================ REAL AGENT RUN TIMELINE -->
+          <div class="p-3 border-bottom" style="border-color:#1e293b!important;">
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span style="background:#065f46;border-radius:5px;padding:2px 8px;font-size:.65rem;font-weight:800;color:#6ee7b7;letter-spacing:.1em;font-family:sans-serif;">AGENTS</span>
+              <span style="color:#6ee7b7;font-weight:700;font-size:.82rem;font-family:sans-serif;">Live Agent Run Records (from AgentRun table)</span>
+            </div>
+            {% for stage in dev_pipeline_stages %}
+            <div class="mb-2" style="background:#111827;border-radius:8px;overflow:hidden;border-left:3px solid {{ stage.color }};">
+              <!-- Stage header -->
+              <div class="d-flex align-items-center justify-content-between px-3 py-2" style="background:#1a2233;">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <i class="bi {{ stage.icon }}" style="color:{{ stage.color }};font-size:.9rem;"></i>
+                  <span style="color:#e2e8f0;font-weight:700;font-size:.78rem;font-family:sans-serif;">{{ forloop.counter }}. {{ stage.display_name }}</span>
+                  <span style="background:{{ stage.badge_bg }};color:{{ stage.badge_fg }};font-size:.6rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">{{ stage.short_name }}</span>
+                  {% if stage.run %}
+                    {% if stage.run.status == "COMPLETED" %}
+                      <span style="background:#14532d;color:#86efac;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">COMPLETED</span>
+                    {% elif stage.run.status == "FAILED" %}
+                      <span style="background:#450a0a;color:#fca5a5;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">FAILED</span>
+                    {% elif stage.run.status == "RUNNING" %}
+                      <span style="background:#164e63;color:#67e8f9;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">RUNNING</span>
+                    {% else %}
+                      <span style="background:#374151;color:#9ca3af;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">{{ stage.run.status }}</span>
+                    {% endif %}
+                  {% else %}
+                    <span style="background:#374151;color:#6b7280;font-size:.6rem;padding:2px 6px;border-radius:4px;font-family:sans-serif;">NO RUN RECORD</span>
+                  {% endif %}
+                </div>
+                {% if stage.run and stage.run.duration_display %}
+                <span style="color:#64748b;font-size:.68rem;">{{ stage.run.duration_display }}</span>
+                {% endif %}
+              </div>
+              <!-- Stage body -->
+              <div class="px-3 py-2" style="font-size:.7rem;">
+                <div style="color:#64748b;font-family:sans-serif;margin-bottom:6px;font-size:.68rem;">{{ stage.description }}</div>
+                <div class="mb-1"><span style="color:#475569;font-family:sans-serif;">API / Service:</span> <code style="color:#7dd3fc;font-size:.67rem;">{{ stage.api_call }}</code></div>
+                {% if stage.run %}
+                <div class="row g-1 mt-1" style="font-size:.68rem;">
+                  <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">AgentRun PK:</span> <code style="color:#a5b4fc;">{{ stage.run.pk }}</code></div>
+                  <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Model:</span> <code style="color:#fcd34d;">{{ stage.run.llm_model_used }}</code></div>
+                  <div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Confidence:</span> <code style="color:{% if stage.run.confidence >= 0.8 %}#4ade80{% elif stage.run.confidence >= 0.5 %}#fbbf24{% else %}#f87171{% endif %};">{{ stage.run.confidence|floatformat:2 }}</code></div>
+                  {% if stage.run.started_at %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Started:</span> <code style="color:#94a3b8;">{{ stage.run.started_at|date:"H:i:s" }}</code></div>{% endif %}
+                  {% if stage.run.completed_at %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Completed:</span> <code style="color:#94a3b8;">{{ stage.run.completed_at|date:"H:i:s" }}</code></div>{% endif %}
+                  {% if stage.run.trace_id %}<div class="col-auto"><span style="color:#475569;font-family:sans-serif;">Trace ID:</span> <code style="color:#64748b;">{{ stage.run.trace_id }}</code></div>{% endif %}
+                </div>
+                {% if stage.run.output_summary %}
+                <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">Output Summary:</span> <code style="color:#86efac;font-size:.68rem;">{{ stage.run.output_summary|truncatechars:200 }}</code></div>
+                {% endif %}
+                {% if stage.run.error_message %}
+                <div class="mt-1" style="background:#1a0505;border-radius:4px;padding:4px 8px;"><span style="color:#fca5a5;font-family:sans-serif;font-size:.67rem;">Error: {{ stage.run.error_message|truncatechars:300 }}</span></div>
+                {% endif %}
+                <!-- Input payload -->
+                <details style="margin-top:5px;">
+                  <summary style="color:#475569;cursor:pointer;font-family:sans-serif;font-size:.67rem;user-select:none;">&#9656; Input payload</summary>
+                  <pre style="background:#0a0f1e;color:#6ee7b7;font-size:.62rem;padding:6px 8px;border-radius:4px;margin-top:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{{ stage.run.input_payload }}</pre>
+                </details>
+                <!-- Output payload -->
+                <details style="margin-top:3px;">
+                  <summary style="color:#475569;cursor:pointer;font-family:sans-serif;font-size:.67rem;user-select:none;">&#9656; Output payload</summary>
+                  <pre style="background:#0a0f1e;color:#93c5fd;font-size:.62rem;padding:6px 8px;border-radius:4px;margin-top:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;">{{ stage.run.output_payload }}</pre>
+                </details>
+                {% else %}
+                <div style="color:#475569;font-family:sans-serif;font-size:.68rem;margin-top:4px;">
+                  No AgentRun record found for this stage. Run analysis to generate records.
+                </div>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- ============================================================ PER-VENDOR TRACE -->
+          {% for qtrace in dev_trace_quotations %}
+          <div class="p-3 {% if not forloop.last %}border-bottom{% endif %}" style="border-color:#1e293b!important;">
+            <!-- Vendor header -->
+            <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+              <span style="background:#1d4ed8;border-radius:5px;padding:2px 10px;font-size:.65rem;font-weight:800;color:#dbeafe;letter-spacing:.1em;font-family:sans-serif;">VENDOR {{ forloop.counter }}</span>
+              <span style="color:#f0f9ff;font-weight:700;font-size:.85rem;font-family:sans-serif;">{{ qtrace.supplier_name }}</span>
+              <span style="color:#475569;font-size:.72rem;font-family:sans-serif;">ref: <code style="color:#94a3b8;">{{ qtrace.quotation_ref }}</code></span>
+              <span style="color:#475569;font-size:.72rem;font-family:sans-serif;">uploaded: <code style="color:#6ee7b7;">{{ qtrace.created_at|date:"Y-m-d H:i:s" }}</code></span>
+              <span style="color:#475569;font-size:.72rem;font-family:sans-serif;">quotation_pk: <code style="color:#a5b4fc;">{{ qtrace.quotation_id }}</code></span>
+            </div>
+
+            <!-- Stage 1: Blob Upload -->
+            <div class="row g-2 mb-2" style="font-size:.72rem;">
+              <div class="col-md-6">
+                <div style="background:#111827;border-radius:7px;padding:10px 12px;border-left:3px solid {% if qtrace.blob_uploaded %}#22c55e{% else %}#ef4444{% endif %};">
+                  <div style="color:#64748b;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px;font-family:sans-serif;">
+                    <i class="bi bi-cloud-upload me-1"></i>Stage 1 &mdash; Azure Blob Storage Upload
+                  </div>
+                  <div class="mb-1">
+                    {% if qtrace.blob_uploaded %}
+                    <span style="background:#14532d;color:#86efac;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">UPLOADED</span>
+                    {% else %}
+                    <span style="background:#450a0a;color:#fca5a5;font-size:.6rem;padding:2px 6px;border-radius:4px;font-weight:700;font-family:sans-serif;">NOT IN BLOB</span>
+                    {% endif %}
+                    {% if qtrace.has_local_file %}
+                    <span style="background:#1e3a5f;color:#7dd3fc;font-size:.6rem;padding:2px 6px;border-radius:4px;margin-left:4px;font-family:sans-serif;">LOCAL FILE EXISTS</span>
+                    {% endif %}
+                  </div>
+                  {% if qtrace.blob_name %}
+                  <div><span style="color:#64748b;font-family:sans-serif;">blob_name:</span> <code style="color:#a5b4fc;word-break:break-all;font-size:.67rem;">{{ qtrace.blob_name }}</code></div>
+                  {% endif %}
+                  {% if qtrace.blob_url %}
+                  <div class="mt-1"><span style="color:#64748b;font-family:sans-serif;">blob_url:</span> <code style="color:#67e8f9;word-break:break-all;font-size:.62rem;">{{ qtrace.blob_url|truncatechars:90 }}</code></div>
+                  {% endif %}
+                  {% if qtrace.blob_missing_reason %}
+                  <div class="mt-1" style="color:#f59e0b;font-size:.66rem;font-family:sans-serif;">{{ qtrace.blob_missing_reason }}</div>
+                  {% endif %}
+                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">HTTP call (upload):</span> <code style="background:#0a0f1e;color:#86efac;padding:1px 5px;border-radius:3px;font-size:.62rem;">POST /api/v1/benchmarking/requests/{{ bench_request.pk }}/add_quotations/</code></div>
+                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">HTTP call (run):</span> <code style="background:#0a0f1e;color:#86efac;padding:1px 5px;border-radius:3px;font-size:.62rem;">POST /benchmarking/{{ bench_request.pk }}/run/</code></div>
+                </div>
+              </div>
+
+              <!-- Stage 2: DI Extraction -->
+              <div class="col-md-6">
+                <div style="background:#111827;border-radius:7px;padding:10px 12px;border-left:3px solid {% if qtrace.extraction_status == 'DONE' %}#22c55e{% elif qtrace.extraction_status == 'FAILED' %}#ef4444{% else %}#f59e0b{% endif %};">
+                  <div style="color:#64748b;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px;font-family:sans-serif;">
+                    <i class="bi bi-file-earmark-text me-1"></i>Stage 2 &mdash; AzureDocumentIntelligenceAgentBM
+                  </div>
+                  <div class="mb-1">
+                    <span style="background:{% if qtrace.extraction_status == 'DONE' %}#14532d{% elif qtrace.extraction_status == 'FAILED' %}#450a0a{% else %}#78350f{% endif %};color:{% if qtrace.extraction_status == 'DONE' %}#86efac{% elif qtrace.extraction_status == 'FAILED' %}#fca5a5{% else %}#fcd34d{% endif %};font-size:.6rem;padding:2px 7px;border-radius:4px;font-weight:700;font-family:sans-serif;">{{ qtrace.extraction_status }}</span>
+                  </div>
+                  <div class="d-flex flex-wrap gap-3 mt-1">
+                    <div><span style="color:#64748b;font-family:sans-serif;">Pages:</span> <code style="color:#67e8f9;">{{ qtrace.di_page_count }}</code></div>
+                    <div><span style="color:#64748b;font-family:sans-serif;">Tables found:</span> <code style="color:#67e8f9;">{{ qtrace.di_table_count }}</code></div>
+                    <div><span style="color:#64748b;font-family:sans-serif;">KV pairs:</span> <code style="color:#67e8f9;">{{ qtrace.di_kv_count }}</code></div>
+                    <div><span style="color:#64748b;font-family:sans-serif;">Text chars:</span> <code style="color:#67e8f9;">{{ qtrace.raw_text_length }}</code></div>
+                  </div>
+                  {% if qtrace.extraction_error %}
+                  <div class="mt-1" style="background:#1a0505;border-radius:4px;padding:4px 6px;"><code style="color:#fca5a5;font-size:.65rem;word-break:break-all;">{{ qtrace.extraction_error }}</code></div>
+                  {% endif %}
+                  <div class="mt-1"><span style="color:#475569;font-family:sans-serif;">External call:</span> <code style="background:#0a0f1e;color:#7dd3fc;padding:1px 5px;border-radius:3px;font-size:.62rem;">Azure DI POST .../prebuilt-layout:analyze (blob_url as input)</code></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stages 3-6: Line-by-line trace -->
+            <div style="background:#111827;border-radius:8px;overflow:hidden;margin-top:8px;">
+              <div class="d-flex align-items-center justify-content-between px-3 py-2" style="background:#1a2233;">
+                <div>
+                  <span style="color:#93c5fd;font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-family:sans-serif;">
+                    Stages 3&ndash;6: BenchmarkLineItemUnderstandingAgentBM &rarr; BenchmarkDecisionMakerAgentBM &rarr; Market/Corridor &rarr; Variance
+                  </span>
+                  <span class="ms-2" style="color:#475569;font-size:.68rem;font-family:sans-serif;">{{ qtrace.line_count }} line(s) extracted</span>
+                </div>
+              </div>
+              {% if qtrace.line_traces %}
+              <div style="overflow-x:auto;">
+                <table style="width:100%;font-size:.68rem;border-collapse:collapse;">
+                  <thead>
+                    <tr style="background:#0f172a;color:#64748b;font-size:.58rem;letter-spacing:.06em;text-transform:uppercase;font-family:sans-serif;">
+                      <th style="padding:6px 8px;white-space:nowrap;">#</th>
+                      <th style="padding:6px 8px;">Description</th>
+                      <th style="padding:6px 8px;">UOM</th>
+                      <th style="padding:6px 8px;">Qty</th>
+                      <th style="padding:6px 8px;">Quoted Rate</th>
+                      <th style="padding:6px 8px;">Category</th>
+                      <th style="padding:6px 8px;">Class. Source</th>
+                      <th style="padding:6px 8px;">Decision</th>
+                      <th style="padding:6px 8px;">benchmark_source (DB)</th>
+                      <th style="padding:6px 8px;">Corridor Rule</th>
+                      <th style="padding:6px 8px;">Min</th>
+                      <th style="padding:6px 8px;color:#67e8f9;">Mid</th>
+                      <th style="padding:6px 8px;">Max</th>
+                      <th style="padding:6px 8px;">Threshold &lt;= Within</th>
+                      <th style="padding:6px 8px;">Threshold &lt;= Moderate</th>
+                      <th style="padding:6px 8px;min-width:260px;">Variance Formula</th>
+                      <th style="padding:6px 8px;">Variance%</th>
+                      <th style="padding:6px 8px;">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for lt in qtrace.line_traces %}
+                    <tr style="border-bottom:1px solid #1e293b;{% cycle 'background:#0f172a;' 'background:#0b1120;' %}">
+                      <td style="padding:7px 8px;color:#475569;">{{ lt.line_number }}</td>
+                      <td style="padding:7px 8px;color:#e2e8f0;max-width:180px;word-break:break-word;">{{ lt.description|truncatechars:70 }}</td>
+                      <td style="padding:7px 8px;color:#94a3b8;">{{ lt.uom|default:"--" }}</td>
+                      <td style="padding:7px 8px;color:#94a3b8;">{% if lt.quantity is not None %}{{ lt.quantity }}{% else %}<span style="color:#374151;">null</span>{% endif %}</td>
+                      <td style="padding:7px 8px;color:#fcd34d;font-weight:700;">{% if lt.quoted_unit_rate is not None %}{{ lt.quoted_unit_rate|floatformat:2 }}{% else %}<span style="color:#374151;">null</span>{% endif %}</td>
+                      <td style="padding:7px 8px;">
+                        <span style="background:#1e3a5f;color:#93c5fd;padding:2px 5px;border-radius:3px;font-size:.6rem;white-space:nowrap;">{{ lt.category }}</span>
+                      </td>
+                      <td style="padding:7px 8px;">
+                        {% if lt.classification_source == "AI" %}<span style="background:#4c1d95;color:#c4b5fd;padding:2px 5px;border-radius:3px;font-size:.6rem;">AI (GPT-4o)</span>
+                        {% elif lt.classification_source == "KEYWORD" %}<span style="background:#0c4a6e;color:#7dd3fc;padding:2px 5px;border-radius:3px;font-size:.6rem;">KEYWORD</span>
+                        {% else %}<span style="background:#374151;color:#d1d5db;padding:2px 5px;border-radius:3px;font-size:.6rem;">{{ lt.classification_source }}</span>{% endif %}
+                        {% if lt.classification_confidence %}<span style="color:#475569;"> {{ lt.classification_confidence|floatformat:0 }}%</span>{% endif %}
+                      </td>
+                      <td style="padding:7px 8px;">
+                        {% if lt.routing == "DB_BENCHMARK" %}<span style="background:#14532d;color:#86efac;padding:2px 6px;border-radius:3px;font-size:.6rem;font-weight:700;white-space:nowrap;">DB BENCHMARK</span>
+                        {% elif lt.routing == "MARKET_DATA" %}<span style="background:#0c4a6e;color:#7dd3fc;padding:2px 6px;border-radius:3px;font-size:.6rem;font-weight:700;white-space:nowrap;">MARKET DATA</span>
+                        {% elif lt.routing == "MANUAL" %}<span style="background:#451a03;color:#fdba74;padding:2px 6px;border-radius:3px;font-size:.6rem;font-weight:700;">MANUAL</span>
+                        {% else %}<span style="background:#1f2937;color:#6b7280;padding:2px 6px;border-radius:3px;font-size:.6rem;">NEEDS REVIEW</span>{% endif %}
+                      </td>
+                      <td style="padding:7px 8px;"><code style="color:#64748b;font-size:.62rem;">{{ lt.benchmark_source_raw }}</code></td>
+                      <td style="padding:7px 8px;">
+                        {% if lt.corridor_rule_code %}<code style="color:#a5b4fc;font-size:.63rem;">{{ lt.corridor_rule_code }}</code>{% if lt.corridor_detail %}<div style="color:#475569;font-size:.57rem;margin-top:1px;">{{ lt.corridor_detail.scope_type }}/{{ lt.corridor_detail.geography }}/{{ lt.corridor_detail.uom }}</div>{% endif %}
+                        {% else %}<span style="color:#374151;">none</span>{% endif %}
+                      </td>
+                      <td style="padding:7px 8px;color:#94a3b8;">{% if lt.benchmark_min is not None %}{{ lt.benchmark_min|floatformat:2 }}{% else %}<span style="color:#374151;">null</span>{% endif %}</td>
+                      <td style="padding:7px 8px;color:#67e8f9;font-weight:700;">{% if lt.benchmark_mid is not None %}{{ lt.benchmark_mid|floatformat:2 }}{% else %}<span style="color:#374151;">null</span>{% endif %}</td>
+                      <td style="padding:7px 8px;color:#94a3b8;">{% if lt.benchmark_max is not None %}{{ lt.benchmark_max|floatformat:2 }}{% else %}<span style="color:#374151;">null</span>{% endif %}</td>
+                      <td style="padding:7px 8px;color:#4ade80;">&lt;= {{ lt.thresholds.within }}%</td>
+                      <td style="padding:7px 8px;color:#fbbf24;">&lt;= {{ lt.thresholds.moderate }}%</td>
+                      <td style="padding:7px 8px;min-width:260px;">
+                        {% if lt.variance_formula %}
+                          <code style="color:#c4b5fd;font-size:.63rem;display:block;line-height:1.5;">{{ lt.variance_formula }}</code>
+                          <span style="color:#374151;font-size:.58rem;">formula: (quoted - mid) / mid * 100</span>
+                        {% elif lt.market_price_used %}
+                          <code style="color:#7dd3fc;font-size:.63rem;">market_mid = {{ lt.market_price_used }}</code>
+                          {% if lt.market_citations %}<div style="color:#475569;font-size:.58rem;margin-top:2px;">{% for c in lt.market_citations %}<div>&bull; {{ c|truncatechars:55 }}</div>{% endfor %}</div>{% endif %}
+                        {% else %}
+                          <span style="color:#374151;font-size:.63rem;">no benchmark data &mdash; {{ lt.variance_status }}</span>
+                        {% endif %}
+                      </td>
+                      <td style="padding:7px 8px;font-weight:700;color:{% if lt.variance_status == 'WITHIN_RANGE' %}#4ade80{% elif lt.variance_status == 'MODERATE' %}#fbbf24{% elif lt.variance_status == 'HIGH' %}#f87171{% else %}#475569{% endif %};">
+                        {% if lt.variance_pct is not None %}{{ lt.variance_pct|floatformat:2 }}%{% else %}<span style="color:#374151;">null</span>{% endif %}
+                      </td>
+                      <td style="padding:7px 8px;">
+                        {% if lt.variance_status == "WITHIN_RANGE" %}<span style="background:#14532d;color:#86efac;padding:2px 5px;border-radius:3px;font-size:.6rem;font-weight:700;white-space:nowrap;">WITHIN RANGE</span>
+                        {% elif lt.variance_status == "MODERATE" %}<span style="background:#78350f;color:#fcd34d;padding:2px 5px;border-radius:3px;font-size:.6rem;font-weight:700;">MODERATE</span>
+                        {% elif lt.variance_status == "HIGH" %}<span style="background:#450a0a;color:#fca5a5;padding:2px 5px;border-radius:3px;font-size:.6rem;font-weight:700;">HIGH</span>
+                        {% else %}<span style="background:#1f2937;color:#6b7280;padding:2px 5px;border-radius:3px;font-size:.6rem;">NEEDS REVIEW</span>{% endif %}
+                      </td>
+                    </tr>
+                    <!-- Corridor expanded sub-row -->
+                    {% if lt.corridor_detail %}
+                    <tr style="background:#070d1a;">
+                      <td colspan="3" style="padding:3px 8px 5px 20px;color:#475569;font-size:.6rem;font-family:sans-serif;">
+                        <i class="bi bi-arrow-return-right me-1"></i>Corridor: <code style="color:#a5b4fc;">{{ lt.corridor_detail.rule_code }}</code> &mdash; {{ lt.corridor_detail.name }}
+                      </td>
+                      <td colspan="4" style="padding:3px 8px 5px;">
+                        <code style="color:#6ee7b7;font-size:.6rem;">min={{ lt.corridor_detail.min_rate|floatformat:2 }}</code>
+                        <code style="color:#67e8f9;font-size:.6rem;margin:0 4px;">mid={{ lt.corridor_detail.mid_rate|floatformat:2 }}</code>
+                        <code style="color:#f9a8d4;font-size:.6rem;">max={{ lt.corridor_detail.max_rate|floatformat:2 }}</code>
+                        <span style="color:#475569;font-size:.58rem;margin-left:4px;">{{ lt.corridor_detail.currency }}/{{ lt.corridor_detail.uom }}</span>
+                      </td>
+                      <td colspan="11" style="padding:3px 8px 5px;font-size:.6rem;color:#475569;font-family:sans-serif;">
+                        scope=<code style="color:#fdba74;font-size:.6rem;">{{ lt.corridor_detail.scope_type }}</code>
+                        geo=<code style="color:#fdba74;font-size:.6rem;">{{ lt.corridor_detail.geography }}</code>
+                        priority=<code style="color:#94a3b8;font-size:.6rem;">{{ lt.corridor_detail.priority }}</code>
+                        keywords=<code style="color:#64748b;font-size:.58rem;">{{ lt.corridor_detail.keywords|truncatechars:80|default:"none" }}</code>
+                      </td>
+                    </tr>
+                    {% endif %}
+                    <!-- Market data expanded sub-row -->
+                    {% if lt.live_price_json_preview %}
+                    <tr style="background:#040c1a;">
+                      <td colspan="18" style="padding:3px 8px 6px 20px;">
+                        <span style="color:#7dd3fc;font-size:.6rem;font-weight:700;font-family:sans-serif;"><i class="bi bi-broadcast me-1"></i>Perplexity live_price_json (BenchmarkLineItem.live_price_json):</span>
+                        <code style="color:#6ee7b7;font-size:.6rem;margin-left:6px;word-break:break-all;">{{ lt.live_price_json_preview }}</code>
+                      </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              {% else %}
+              <div class="p-3" style="color:#475569;font-size:.75rem;font-family:sans-serif;">No line items — run analysis first (Azure DI extraction + Line Item Understanding agent).</div>
+              {% endif %}
+            </div>
+          </div>
+          {% empty %}
+          <div class="p-4 text-center" style="color:#475569;font-size:.82rem;font-family:sans-serif;">No quotations uploaded to this request yet.</div>
+          {% endfor %}
+
+        </div><!-- /accordion-body -->
+      </div><!-- /collapse -->
+    </div><!-- /accordion-item -->
+  </div><!-- /accordion -->
+</div>
+<!-- ===================================================================== END DEVELOPER OPTIONS -->
+
 <script>
 // Vendor column filter for pivot table (client-side show/hide)
 document.addEventListener("DOMContentLoaded", function () {

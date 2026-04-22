@@ -57,8 +57,11 @@ class RequestStatus:
 
 class LineCategory:
     EQUIPMENT = "EQUIPMENT"
+    PIPING = "PIPING"
+    ELECTRICAL = "ELECTRICAL"
     CONTROLS = "CONTROLS"
     DUCTING = "DUCTING"
+    AIR_DISTRIBUTION = "AIR_DISTRIBUTION"
     INSULATION = "INSULATION"
     ACCESSORIES = "ACCESSORIES"
     INSTALLATION = "INSTALLATION"
@@ -66,10 +69,13 @@ class LineCategory:
     UNCATEGORIZED = "UNCATEGORIZED"
     CHOICES = [
         ("EQUIPMENT", "Equipment"),
+        ("PIPING", "Piping"),
+        ("ELECTRICAL", "Electrical"),
         ("CONTROLS", "Controls"),
         ("DUCTING", "Ducting"),
+        ("AIR_DISTRIBUTION", "Air Distribution"),
         ("INSULATION", "Insulation"),
-        ("ACCESSORIES", "Accessories"),
+        ("ACCESSORIES", "Accessories (Dampers, Louvers, etc.)"),
         ("INSTALLATION", "Installation"),
         ("TC", "Testing & Commissioning"),
         ("UNCATEGORIZED", "Uncategorized"),
@@ -91,9 +97,11 @@ class VarianceStatus:
 
 class PricingType:
     MARKET = "MARKET"
+    HYBRID = "HYBRID"
     BENCHMARK = "BENCHMARK"
     CHOICES = [
         ("MARKET", "Market (live external research)"),
+        ("HYBRID", "Hybrid (benchmark plus market context)"),
         ("BENCHMARK", "Benchmark (internal configured corridor)"),
     ]
 
