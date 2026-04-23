@@ -225,3 +225,19 @@ fix_nadec_auto_close.py
 .pdf
 .xlsx
 .log
+# Generated scripts - do not commit
+scripts/generate_*.py
+scripts/*_starting_*.py
+scripts/seed_*.py
+
+# Benchmarking - generated seed/demo files
+apps/benchmarking/management/commands/seed_static_benchmark_case.py
+
+# Generated/benchmark media files
+media/benchmarking/
+media/hvac_forms/
+media/invoices/
+
+# Generated documentation
+INTEGRATION_SUMMARY.md
+email integration/

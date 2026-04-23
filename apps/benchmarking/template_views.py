@@ -546,15 +546,6 @@ def request_create(request):
                 generated_rfq_list=_get_generated_rfqs(getattr(request, "tenant", None)),
             ))
 
-        if errors:
-            for err in errors:
-                messages.error(request, err)
-            return render(request, "benchmarking/request_create.html", _base_ctx(
-                posted=request.POST,
-                page_title="New Benchmarking Request",
-                generated_rfq_list=_get_generated_rfqs(getattr(request, "tenant", None)),
-            ))
-
         # Create request
         bench_request = BenchmarkRequest.objects.create(
             title=title,
