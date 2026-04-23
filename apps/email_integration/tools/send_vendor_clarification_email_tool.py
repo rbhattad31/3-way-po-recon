@@ -1,12 +1,13 @@
 """AP wrapper tool: send a governed clarification email to a vendor."""
 from __future__ import annotations
 
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import MailboxConfig
 from apps.email_integration.services.outbound_email_service import OutboundEmailService
 
 
+@register_tool
 class SendVendorClarificationEmailTool(BaseTool):
     name = "send_vendor_clarification_email"
     description = (

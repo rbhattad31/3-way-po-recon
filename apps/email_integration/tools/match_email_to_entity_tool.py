@@ -1,10 +1,11 @@
 """Tool to infer entity links from message content."""
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 from apps.email_integration.services.entity_linking_service import EntityLinkingService
 
 
+@register_tool
 class MatchEmailToEntityTool(BaseTool):
     name = "match_email_to_entity"
     description = "Infer AP or procurement entity references from email text."

@@ -1,9 +1,10 @@
 """Tool to return deterministic body preview summary for an email."""
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 
 
+@register_tool
 class EmailBodySummaryTool(BaseTool):
     name = "email_body_summary"
     description = "Return deterministic preview summary for an email body."

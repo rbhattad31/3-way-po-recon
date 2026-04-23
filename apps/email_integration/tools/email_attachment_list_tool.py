@@ -1,9 +1,10 @@
 """Tool to list attachments for an email message."""
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailAttachment
 
 
+@register_tool
 class EmailAttachmentListTool(BaseTool):
     name = "email_attachment_list"
     description = "List normalized attachments for a given email message."

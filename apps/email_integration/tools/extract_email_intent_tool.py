@@ -1,10 +1,11 @@
 """Tool to classify and infer intent for an email message."""
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 from apps.email_integration.services.classification_service import ClassificationService
 
 
+@register_tool
 class ExtractEmailIntentTool(BaseTool):
     name = "extract_email_intent"
     description = "Extract deterministic classification and intent for email content."

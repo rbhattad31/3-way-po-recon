@@ -1,10 +1,11 @@
 """Tool to send governed outbound templated email."""
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import MailboxConfig
 from apps.email_integration.services.outbound_email_service import OutboundEmailService
 
 
+@register_tool
 class SendTemplatedEmailTool(BaseTool):
     name = "send_templated_email"
     description = "Send email using approved templates and mailbox configuration."

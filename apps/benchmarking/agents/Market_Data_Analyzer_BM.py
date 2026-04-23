@@ -249,7 +249,7 @@ class BenchmarkMarketDataAnalyzerAgentBM:
 		if not api_key:
 			return None
 
-		auto_fetch_enabled = bool(getattr(settings, "BENCHMARKING_MARKET_AUTO_FETCH_ENABLED", False))
+		auto_fetch_enabled = bool(getattr(settings, "BENCHMARKING_MARKET_AUTO_FETCH_ENABLED", True))
 		if not auto_fetch_enabled:
 			return None
 

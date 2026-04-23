@@ -134,9 +134,9 @@ class BenchmarkVendorRecommendationAgent:
                 "quotation_id": None,
                 "best_vendor_name": "",
                 "score": best["score"],
-                "confidence": 0.6,
+                "confidence": 0.5,
                 "summary": (
-                    f"Top evaluated vendor '{best_vendor_name}' is not recommended: "
+                    f"No vendor recommended. Top evaluated vendor '{best_vendor_name}' failed checks: "
                     + "; ".join(failed_checks)
                     + "."
                 ),
@@ -185,6 +185,22 @@ class BenchmarkVendorRecommendationAgent:
             benchmarked_line_count = int(card.get("benchmarked_line_count", 0) or 0)
             high_ratio = high_count / float(max(benchmarked_line_count, 1))
 
+            line_details = []
+            raw_lines = card.get("line_items") or []
+            for li in raw_lines[:15]:
+                line_details.append(
+                    {
+                        "line_number": getattr(li, "line_number", None),
+                        "description": str(getattr(li, "description", "") or "")[:180],
+                        "category": str(getattr(li, "category", "") or "UNCATEGORIZED"),
+                        "quoted_unit_rate": getattr(li, "quoted_unit_rate", None),
+                        "benchmark_mid": getattr(li, "benchmark_mid", None),
+                        "variance_pct": getattr(li, "variance_pct", None),
+                        "variance_status": str(getattr(li, "variance_status", "") or "NEEDS_REVIEW"),
+                        "benchmark_source": str(getattr(li, "benchmark_source", "") or "NONE"),
+                    }
+                )
+
             llm_ranked.append(
                 {
                     "quotation_id": card.get("quotation_id"),
@@ -197,6 +213,7 @@ class BenchmarkVendorRecommendationAgent:
                     "high_count": high_count,
                     "high_ratio": round(high_ratio, 4),
                     "live_reference_count": card.get("live_reference_count", 0),
+                    "line_details": line_details,
                 }
             )
 
@@ -211,6 +228,7 @@ class BenchmarkVendorRecommendationAgent:
                 "Recommend a vendor only when benchmark alignment and variance quality are acceptable.",
                 "If no vendor qualifies, return recommended=false and explain the top blocker.",
                 "Use only provided data.",
+                "Do not force a recommendation when quality is poor.",
                 "Return strict JSON only.",
             ],
             "required_output_schema": {
@@ -231,7 +249,7 @@ class BenchmarkVendorRecommendationAgent:
                         role="system",
                         content="You are a procurement vendor recommendation analyst. Return JSON only.",
                     ),
-                    LLMMessage(role="user", content=json.dumps(prompt)),
+                    LLMMessage(role="user", content=json.dumps(prompt, default=str)),
                 ],
                 response_format={"type": "json_object"},
             )
@@ -319,7 +337,7 @@ class BenchmarkVendorRecommendationAgent:
         return [
             (
                 "Benchmark alignment threshold <= "
-                f"{cls.DEVIATION_THRESHOLD_PCT:.0f}% absolute deviation "
+                f"{cls._deviation_threshold_pct():.0f}% absolute deviation "
                 f"(observed: {observed_alignment}; {line_scope})."
             ),
             (

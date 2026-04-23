@@ -1,12 +1,13 @@
 """Procurement wrapper tool: link email message to a supplier quotation."""
 from __future__ import annotations
 
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 from apps.email_integration.enums import EmailActionStatus, EmailActionType, EmailDomainContext, EmailLinkStatus
 
 
+@register_tool
 class AttachEmailToSupplierQuotationTool(BaseTool):
     name = "attach_email_to_supplier_quotation"
     description = (

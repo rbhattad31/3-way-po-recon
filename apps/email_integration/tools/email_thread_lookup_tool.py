@@ -1,9 +1,10 @@
 """Tool to fetch thread details by thread id."""
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailThread
 
 
+@register_tool
 class EmailThreadLookupTool(BaseTool):
     name = "email_thread_lookup"
     description = "Look up email thread metadata and context by thread id."

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import re
 
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 from apps.email_integration.services.classification_service import ClassificationService
 
 
+@register_tool
 class ExtractSupplierResponseFieldsTool(BaseTool):
     name = "extract_supplier_response_fields"
     description = (

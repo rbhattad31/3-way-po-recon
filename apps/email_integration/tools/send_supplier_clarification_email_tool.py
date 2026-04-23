@@ -1,12 +1,13 @@
 """Procurement wrapper tool: send a governed supplier clarification email."""
 from __future__ import annotations
 
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import MailboxConfig
 from apps.email_integration.services.outbound_email_service import OutboundEmailService
 
 
+@register_tool
 class SendSupplierClarificationEmailTool(BaseTool):
     name = "send_supplier_clarification_email"
     description = (

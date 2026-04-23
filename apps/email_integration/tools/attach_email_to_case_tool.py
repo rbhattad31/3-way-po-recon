@@ -1,12 +1,13 @@
 """AP wrapper tool: link an email message to an existing AP case."""
 from __future__ import annotations
 
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 from apps.email_integration.enums import EmailDomainContext, EmailLinkStatus
 
 
+@register_tool
 class AttachEmailToCaseTool(BaseTool):
     name = "attach_email_to_case"
     description = "Link an email message or thread to an existing AP case. Records an EmailAction and updates thread domain context."

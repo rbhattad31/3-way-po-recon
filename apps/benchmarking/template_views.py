@@ -522,8 +522,6 @@ def request_create(request):
             errors.append("Request title is required.")
         if rfq_source == "system" and not rfq_ref:
             errors.append("Please select a system RFQ reference.")
-        if rfq_source == "upload" and not request.FILES.get("rfq_upload_file"):
-            errors.append("Please upload an RFQ PDF file.")
         if rfq_source == "manual" and not rfq_ref:
             errors.append("Manual RFQ reference is required.")
 
@@ -532,8 +530,6 @@ def request_create(request):
             extracted_files, upload_validation_error = _extract_pdf_files_from_uploads(uploads)
             if upload_validation_error:
                 errors.append(upload_validation_error)
-            elif len(extracted_files) < 4:
-                errors.append("Please upload at least 4 quotation PDFs for benchmarking.")
         else:
             errors.append("Please upload quotation files (PDF or ZIP).")
 
@@ -799,7 +795,56 @@ def request_detail(request, pk):
             "live_reference_count": live_reference_count,
         })
 
-    vendor_recommendation = BenchmarkVendorRecommendationAgent.recommend(vendor_cards)
+    vendor_recommendation = {}
+    try:
+        from apps.agents.models import AgentRun
+        _latest_vendor_run = (
+            AgentRun.objects.filter(
+                input_payload__benchmark_request_pk=bench_request.pk,
+                input_payload__agent_stage="Vendor_Recommendation",
+            )
+            .order_by("-started_at", "-pk")
+            .first()
+        )
+        if _latest_vendor_run:
+            _payload = _latest_vendor_run.output_payload or {}
+            if isinstance(_payload, dict):
+                vendor_recommendation = _payload
+    except Exception:
+        pass
+
+    if not vendor_recommendation:
+        _best_card = None
+        _best_score = None
+        for _card in vendor_cards:
+            _dev = _card.get("deviation_pct")
+            if _dev is None:
+                continue
+            _score = abs(float(_dev))
+            if _best_score is None or _score < _best_score:
+                _best_score = _score
+                _best_card = _card
+        if _best_card:
+            vendor_recommendation = {
+                "recommended": False,
+                "quotation_id": _best_card.get("quotation_id"),
+                "best_vendor_name": _best_card.get("supplier_name") or "",
+                "score": 0.0,
+                "confidence": 0.5,
+                "summary": (
+                    f"Best deviation candidate is '{_best_card.get('supplier_name')}', "
+                    "but no cached recommendation is available yet. Reprocess to regenerate AI recommendation."
+                ),
+            }
+        else:
+            vendor_recommendation = {
+                "recommended": False,
+                "quotation_id": None,
+                "best_vendor_name": "",
+                "score": 0.0,
+                "confidence": 0.5,
+                "summary": "No cached recommendation is available yet. Reprocess to generate recommendation.",
+            }
     best_vendor_summary = None
     if vendor_recommendation.get("recommended"):
         best_q_id = vendor_recommendation.get("quotation_id")
@@ -808,6 +853,12 @@ def request_detail(request, pk):
             None,
         )
     no_vendor_recommendation = not bool(vendor_recommendation.get("recommended"))
+
+    best_vendor_header_name = str(vendor_recommendation.get("best_vendor_name") or "").strip()
+    best_vendor_header_mode = "recommended" if bool(vendor_recommendation.get("recommended")) else "evaluated"
+    if not best_vendor_header_name:
+        best_vendor_header_name = "Not Available"
+        best_vendor_header_mode = "none"
 
     result = None
     category_summary = {}
@@ -997,6 +1048,33 @@ def request_detail(request, pk):
     except Exception:
         pass
 
+    if not insight_items:
+        _db_count = len([li for li in line_items if li.benchmark_source == "CORRIDOR_DB"])
+        _market_count = len([li for li in line_items if li.benchmark_source == "PERPLEXITY_LIVE"])
+        _unresolved_count = len([li for li in line_items if li.benchmark_mid is None])
+        _total = len(line_items)
+        _db_pct = round((_db_count / float(_total)) * 100.0, 1) if _total else 0.0
+        _market_pct = round((_market_count / float(_total)) * 100.0, 1) if _total else 0.0
+        _unresolved_pct = round((_unresolved_count / float(_total)) * 100.0, 1) if _total else 0.0
+
+        _dynamic_vendor = vendor_recommendation if isinstance(vendor_recommendation, dict) else {}
+
+        insight_items = [
+            (
+                f"Coverage summary: DB benchmark {_db_pct}%, live market {_market_pct}%, "
+                f"unresolved {_unresolved_pct}% across {_total} line(s)."
+            )
+        ]
+
+        _vendor_summary = str(_dynamic_vendor.get("summary") or "").strip()
+        if _vendor_summary:
+            insight_items.append(_vendor_summary)
+
+        if high_variance_items_count > 0:
+            insight_items.append(
+                f"High variance watchlist: {high_variance_items_count} line(s) exceed threshold and need negotiation/review."
+            )
+
     # Negotiation talking points: prefer persisted result notes, fallback to Negotiation_Talking_Points AgentRun payload
     if not negotiation_notes:
         try:
@@ -1036,27 +1114,52 @@ def request_detail(request, pk):
         vname = card["supplier_name"]
         for li in card.get("line_items", []):
             key = _normalise(li.description)
+            _live_json = li.live_price_json or {}
+            _hybrid_components = _live_json.get("hybrid_components") or {}
+            _hybrid_market = (_hybrid_components.get("market") or {}) if isinstance(_hybrid_components, dict) else {}
+            _hybrid_corridor = (_hybrid_components.get("corridor") or {}) if isinstance(_hybrid_components, dict) else {}
+            _hybrid_mode = bool(_live_json.get("hybrid_mode"))
+
+            _market_price = None
+            _benchmark_price = None
+
+            if li.benchmark_source == "PERPLEXITY_LIVE":
+                _market_price = _live_json.get("benchmark_mid")
+                if _market_price is None and _hybrid_mode:
+                    _market_price = _hybrid_market.get("benchmark_mid")
+                if _market_price is None:
+                    _market_price = li.benchmark_mid
+
+                if _hybrid_mode:
+                    _benchmark_price = _hybrid_corridor.get("benchmark_mid")
+            elif li.benchmark_source == "CORRIDOR_DB":
+                _benchmark_price = li.benchmark_mid
+
             if key not in pivot_map:
                 pivot_map[key] = {
                     "description": (li.description or "").strip(),
                     "category": li.category or "UNCATEGORIZED",
                     "vendor_rates": {},
-                    "benchmark_mid": li.benchmark_mid,
+                    "benchmark_mid": _benchmark_price,
+                    "market_price": _market_price,
                     "status_votes": [],
+                    "benchmark_source": li.benchmark_source,
                 }
             pivot_map[key]["vendor_rates"][vname] = li
             pivot_map[key]["status_votes"].append(li.variance_status)
-            if pivot_map[key]["benchmark_mid"] is None and li.benchmark_mid is not None:
-                pivot_map[key]["benchmark_mid"] = li.benchmark_mid
+            if pivot_map[key]["benchmark_mid"] is None and _benchmark_price is not None:
+                pivot_map[key]["benchmark_mid"] = _benchmark_price
+            if pivot_map[key]["market_price"] is None and _market_price is not None:
+                pivot_map[key]["market_price"] = _market_price
 
     _STATUS_RANK = {"HIGH": 3, "MODERATE": 2, "WITHIN_RANGE": 1, "NEEDS_REVIEW": 0}
     pivot_lines = []
     for _norm_desc, row_data in pivot_map.items():
         vendor_rate_map = row_data["vendor_rates"]
         rates = [
-            float(li.quoted_unit_rate)
+            float(li.quoted_unit_rate if li.quoted_unit_rate is not None else li.line_amount)
             for li in vendor_rate_map.values()
-            if li.quoted_unit_rate is not None
+            if (li.quoted_unit_rate is not None or li.line_amount is not None)
         ]
         best_rate = min(rates) if rates else None
         worst_rate = max(rates) if rates else None
@@ -1069,7 +1172,11 @@ def request_detail(request, pk):
                     {"vendor_name": vname, "rate": None, "variance_pct": None, "is_best": False, "is_worst": False}
                 )
             else:
-                rate = float(li.quoted_unit_rate) if li.quoted_unit_rate is not None else None
+                rate = None
+                if li.quoted_unit_rate is not None:
+                    rate = float(li.quoted_unit_rate)
+                elif li.line_amount is not None:
+                    rate = float(li.line_amount)
                 rate_list.append({
                     "vendor_name": vname,
                     "rate": rate,
@@ -1097,6 +1204,7 @@ def request_detail(request, pk):
             "description": row_data["description"],
             "category": row_data["category"],
             "rate_list": rate_list,
+            "market_price": row_data.get("market_price"),
             "benchmark_mid": row_data["benchmark_mid"],
             "pivot_variance_status": pivot_variance_status,
         })
@@ -1740,6 +1848,8 @@ def request_detail(request, pk):
         quotation_summaries=quotation_summaries,
         vendor_cards=vendor_cards,
         vendor_recommendation=vendor_recommendation,
+        best_vendor_header_name=best_vendor_header_name,
+        best_vendor_header_mode=best_vendor_header_mode,
         best_vendor_summary=best_vendor_summary,
         no_vendor_recommendation=no_vendor_recommendation,
         benchmark_flow_summary=benchmark_flow_summary,
@@ -1854,6 +1964,7 @@ def request_reprocess(request, pk):
         bench_request=bench_request,
         user=request.user,
         tenant=getattr(request, "tenant", None),
+        force_reextract=True,
     )
     run_success = bool(result.get("success"))
     BenchmarkRunLog.objects.create(

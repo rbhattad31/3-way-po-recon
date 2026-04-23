@@ -1,12 +1,13 @@
 """AP wrapper tool: extract APPROVE / REJECT intent from an email reply."""
 from __future__ import annotations
 
-from apps.tools.registry.base import BaseTool, ToolResult
+from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 from apps.email_integration.models import EmailMessage
 from apps.email_integration.services.classification_service import ClassificationService
 
 
+@register_tool
 class ExtractCaseApprovalFromEmailTool(BaseTool):
     name = "extract_case_approval_from_email"
     description = (

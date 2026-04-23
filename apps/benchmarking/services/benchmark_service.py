@@ -55,6 +55,28 @@ class BenchmarkEngine:
         model = str(getattr(settings, "LLM_MODEL_NAME", "") or "").strip()
         return model or "unknown"
 
+    @staticmethod
+    def _get_cached_stage_output(*, bench_request: BenchmarkRequest, stage_name: str) -> Optional[dict]:
+        try:
+            from apps.agents.models import AgentRun
+
+            run = (
+                AgentRun.objects.filter(
+                    input_payload__benchmark_request_pk=bench_request.pk,
+                    input_payload__agent_stage=stage_name,
+                    status="COMPLETED",
+                )
+                .order_by("-started_at", "-pk")
+                .first()
+            )
+            if not run:
+                return None
+            payload = run.output_payload or {}
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            logger.debug("BenchmarkEngine: unable to read cached stage output", exc_info=True)
+            return None
+
     @classmethod
     def _resolve_variance_thresholds(cls, category: Optional[str] = None, geography: Optional[str] = None) -> tuple[float, float]:
         """Resolve variance thresholds from DB.
@@ -499,27 +521,39 @@ class BenchmarkEngine:
 
         # Stage 2: Decision Maker - RUNS SECOND, decides what data to fetch
         stage_name = "Decision_Maker"
-        stage_run_id = cls._start_agent_run(
-            bench_request,
-            user=user,
-            trace_id=trace_id,
-            invocation_reason=f"{stage_name}:execute",
-            parent_run_id=parent_agent_run_id,
-            input_payload_extra={"agent_stage": stage_name},
-        )
         decision_output = {}
-        try:
-            decision_output = BenchmarkDecisionMakerAgentBM.decide_for_line_items(
-                line_items=line_items,
-                geography=bench_request.geography,
-                scope_type=bench_request.scope_type,
+        if not force_reextract:
+            cached_decision = cls._get_cached_stage_output(bench_request=bench_request, stage_name=stage_name)
+            if cached_decision:
+                decision_output = cached_decision
+                outputs["decision"] = decision_output
+                logger.info("Decision Maker: reused cached output for request %s", bench_request.pk)
+            else:
+                cached_decision = None
+        else:
+            cached_decision = None
+
+        if cached_decision is None:
+            stage_run_id = cls._start_agent_run(
+                bench_request,
+                user=user,
+                trace_id=trace_id,
+                invocation_reason=f"{stage_name}:execute",
+                parent_run_id=parent_agent_run_id,
+                input_payload_extra={"agent_stage": stage_name},
             )
-            outputs["decision"] = decision_output
-            cls._complete_agent_run(stage_run_id, confidence=0.8, summary="Decision making completed", output=decision_output)
-            logger.info("Decision Maker: %s", decision_output.get("summary", "completed"))
-        except Exception as exc:
-            logger.exception("Decision Maker failed: %s", exc)
-            cls._fail_agent_run(stage_run_id, error=str(exc))
+            try:
+                decision_output = BenchmarkDecisionMakerAgentBM.decide_for_line_items(
+                    line_items=line_items,
+                    geography=bench_request.geography,
+                    scope_type=bench_request.scope_type,
+                )
+                outputs["decision"] = decision_output
+                cls._complete_agent_run(stage_run_id, confidence=0.8, summary="Decision making completed", output=decision_output)
+                logger.info("Decision Maker: %s", decision_output.get("summary", "completed"))
+            except Exception as exc:
+                logger.exception("Decision Maker failed: %s", exc)
+                cls._fail_agent_run(stage_run_id, error=str(exc))
 
         # Stage 3: Market Data Analyzer - USES Decision Maker output to guide data fetching
         stage_name = "Market_Data_Analyzer"
@@ -568,6 +602,17 @@ class BenchmarkEngine:
             logger.info("Corridor rates applied to line items based on Decision Maker routing")
         except Exception as exc:
             logger.exception("Corridor application failed (non-fatal): %s", exc)
+
+        # Refresh line/vendor state after source routing + benchmark application so
+        # downstream stages (analyst/compliance/recommendation/AI) run on final values.
+        line_items = list(
+            BenchmarkLineItem.objects.filter(
+                quotation__request=bench_request,
+                quotation__is_active=True,
+                is_active=True,
+            )
+        )
+        vendor_cards = cls._build_vendor_cards(bench_request=bench_request)
 
         # Stage 4: Benchmarking Analyst
         stage_name = "Benchmarking_Analyst"
@@ -637,69 +682,91 @@ class BenchmarkEngine:
 
         # Stage 7: AI Insights Analyzer
         stage_name = "AI_Insights_Analyzer"
-        stage_run_id = cls._start_agent_run(
-            bench_request,
-            user=user,
-            trace_id=trace_id,
-            invocation_reason=f"{stage_name}:execute",
-            parent_run_id=parent_agent_run_id,
-            input_payload_extra={"agent_stage": stage_name},
-            llm_model_used=cls._configured_llm_model(),
-        )
-        try:
-            ai_output = BenchmarkAIAnalyzerAgentBM.analyze(
-                bench_request=bench_request,
-                line_items=line_items,
-                vendor_cards=vendor_cards,
-                decision_output=outputs.get("decision", {}),
-                market_output=outputs.get("market_data", {}),
-                analyst_output=outputs.get("analyst", {}),
-                compliance_output=outputs.get("compliance", {}),
-                vendor_output=outputs.get("vendor_recommendation", {}),
+        if not force_reextract:
+            cached_ai = cls._get_cached_stage_output(bench_request=bench_request, stage_name=stage_name)
+            if cached_ai:
+                outputs["ai_insights"] = cached_ai
+                logger.info("AI Insights Analyzer: reused cached output for request %s", bench_request.pk)
+            else:
+                cached_ai = None
+        else:
+            cached_ai = None
+
+        if cached_ai is None:
+            stage_run_id = cls._start_agent_run(
+                bench_request,
+                user=user,
+                trace_id=trace_id,
+                invocation_reason=f"{stage_name}:execute",
+                parent_run_id=parent_agent_run_id,
+                input_payload_extra={"agent_stage": stage_name},
+                llm_model_used=cls._configured_llm_model(),
             )
-            outputs["ai_insights"] = ai_output
-            cls._complete_agent_run(
-                stage_run_id,
-                confidence=float(ai_output.get("confidence", 0.75) or 0.75),
-                summary=ai_output.get("summary", "AI insights generated"),
-                output=ai_output,
-            )
-            logger.info("AI Insights Analyzer: %s", ai_output.get("summary", "completed"))
-        except Exception as exc:
-            logger.exception("AI Insights Analyzer failed: %s", exc)
-            cls._fail_agent_run(stage_run_id, error=str(exc))
+            try:
+                ai_output = BenchmarkAIAnalyzerAgentBM.analyze(
+                    bench_request=bench_request,
+                    line_items=line_items,
+                    vendor_cards=vendor_cards,
+                    decision_output=outputs.get("decision", {}),
+                    market_output=outputs.get("market_data", {}),
+                    analyst_output=outputs.get("analyst", {}),
+                    compliance_output=outputs.get("compliance", {}),
+                    vendor_output=outputs.get("vendor_recommendation", {}),
+                )
+                outputs["ai_insights"] = ai_output
+                cls._complete_agent_run(
+                    stage_run_id,
+                    confidence=float(ai_output.get("confidence", 0.75) or 0.75),
+                    summary=ai_output.get("summary", "AI insights generated"),
+                    output=ai_output,
+                )
+                logger.info("AI Insights Analyzer: %s", ai_output.get("summary", "completed"))
+            except Exception as exc:
+                logger.exception("AI Insights Analyzer failed: %s", exc)
+                cls._fail_agent_run(stage_run_id, error=str(exc))
 
         # Stage 8: Negotiation Talking Points
         stage_name = "Negotiation_Talking_Points"
-        stage_run_id = cls._start_agent_run(
-            bench_request,
-            user=user,
-            trace_id=trace_id,
-            invocation_reason=f"{stage_name}:execute",
-            parent_run_id=parent_agent_run_id,
-            input_payload_extra={"agent_stage": stage_name},
-            llm_model_used=cls._configured_llm_model(),
-        )
-        try:
-            negotiation_output = BenchmarkNegotiationTalkingPointsAgentBM.generate(
-                bench_request=bench_request,
-                line_items=line_items,
-                vendor_cards=vendor_cards,
-                ai_output=outputs.get("ai_insights", {}),
-                compliance_output=outputs.get("compliance", {}),
-                vendor_output=outputs.get("vendor_recommendation", {}),
+        if not force_reextract:
+            cached_negotiation = cls._get_cached_stage_output(bench_request=bench_request, stage_name=stage_name)
+            if cached_negotiation:
+                outputs["negotiation_talking_points"] = cached_negotiation
+                logger.info("Negotiation Talking Points: reused cached output for request %s", bench_request.pk)
+            else:
+                cached_negotiation = None
+        else:
+            cached_negotiation = None
+
+        if cached_negotiation is None:
+            stage_run_id = cls._start_agent_run(
+                bench_request,
+                user=user,
+                trace_id=trace_id,
+                invocation_reason=f"{stage_name}:execute",
+                parent_run_id=parent_agent_run_id,
+                input_payload_extra={"agent_stage": stage_name},
+                llm_model_used=cls._configured_llm_model(),
             )
-            outputs["negotiation_talking_points"] = negotiation_output
-            cls._complete_agent_run(
-                stage_run_id,
-                confidence=float(negotiation_output.get("confidence", 0.75) or 0.75),
-                summary=negotiation_output.get("summary", "Negotiation talking points generated"),
-                output=negotiation_output,
-            )
-            logger.info("Negotiation Talking Points: %s", negotiation_output.get("summary", "completed"))
-        except Exception as exc:
-            logger.exception("Negotiation Talking Points failed: %s", exc)
-            cls._fail_agent_run(stage_run_id, error=str(exc))
+            try:
+                negotiation_output = BenchmarkNegotiationTalkingPointsAgentBM.generate(
+                    bench_request=bench_request,
+                    line_items=line_items,
+                    vendor_cards=vendor_cards,
+                    ai_output=outputs.get("ai_insights", {}),
+                    compliance_output=outputs.get("compliance", {}),
+                    vendor_output=outputs.get("vendor_recommendation", {}),
+                )
+                outputs["negotiation_talking_points"] = negotiation_output
+                cls._complete_agent_run(
+                    stage_run_id,
+                    confidence=float(negotiation_output.get("confidence", 0.75) or 0.75),
+                    summary=negotiation_output.get("summary", "Negotiation talking points generated"),
+                    output=negotiation_output,
+                )
+                logger.info("Negotiation Talking Points: %s", negotiation_output.get("summary", "completed"))
+            except Exception as exc:
+                logger.exception("Negotiation Talking Points failed: %s", exc)
+                cls._fail_agent_run(stage_run_id, error=str(exc))
 
         outputs["line_item_count"] = len(line_items)
         logger.info("BenchmarkEngine: Pipeline completed with %d agent stages", len(outputs))

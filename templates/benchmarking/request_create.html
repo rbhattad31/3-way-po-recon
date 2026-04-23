@@ -213,16 +213,16 @@
               </div>
               <div class="col-12">
                 <label class="form-label fw-600" style="font-size:.82rem;">
-                  Quotation File (PDF or ZIP)
+                  Quotation Files (PDF or ZIP)
                 </label>
                 <div class="border rounded p-3 text-center" id="dropZone"
                      style="border-style:dashed!important;border-color:#d1d5db;background:#f9fafb;cursor:pointer;">
                   <i class="bi bi-cloud-upload fs-2 text-primary d-block mb-1"></i>
                   <div style="font-size:.82rem;color:#374151;">
-                    Drag & drop file here, or <label for="quotation_pdf" style="color:#1665D8;cursor:pointer;text-decoration:underline;">browse</label>
+                    Drag & drop files here, or <label for="quotation_pdfs" style="color:#1665D8;cursor:pointer;text-decoration:underline;">browse</label>
                   </div>
-                  <div style="font-size:.73rem;color:#9ca3af;">Single PDF or ZIP of PDFs (max 50 files in ZIP).</div>
-                  <input type="file" id="quotation_pdf" name="quotation_pdf" accept=".pdf,.zip"
+                  <div style="font-size:.73rem;color:#9ca3af;">Select PDF or one ZIP containing PDFs (max 50 files in ZIP)</div>
+                  <input type="file" id="quotation_pdfs" name="quotation_pdfs" accept=".pdf,.zip" multiple
                          class="form-control mt-2" style="font-size:.82rem;">
                 </div>
                 <div id="fileNameDisplay" class="mt-1 text-success" style="font-size:.78rem;"></div>
@@ -291,9 +291,15 @@
     });
   }
 
-  document.getElementById('quotation_pdf').addEventListener('change', function() {
-    const name = this.files[0] ? this.files[0].name : '';
-    document.getElementById('fileNameDisplay').textContent = name ? 'Selected: ' + name : '';
+  document.getElementById('quotation_pdfs').addEventListener('change', function() {
+    const count = this.files.length;
+    const names = count > 0
+      ? Array.from(this.files).slice(0, 3).map(f => f.name).join(', ')
+      : '';
+    const suffix = count > 3 ? (' +' + (count - 3) + ' more') : '';
+    document.getElementById('fileNameDisplay').textContent = count > 0
+      ? ('Selected: ' + count + ' file(s) - ' + names + suffix)
+      : '';
   });
   document.getElementById('benchmarkForm').addEventListener('submit', function() {
     const btn = document.getElementById('submitBtn');

@@ -282,6 +282,9 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 # Model: sonar-pro (live web search + citations)
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar")
+BENCHMARKING_MARKET_AUTO_FETCH_ENABLED = (
+    os.getenv("BENCHMARKING_MARKET_AUTO_FETCH_ENABLED", "true").lower() == "true"
+)
 # Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
 # When False (default), the deterministic PolicyEngine is always used.
 AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"

@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 class BenchmarkAIAnalyzerAgentBM:
 	"""Generate detailed AI insights from benchmark pipeline outputs."""
 
+	@staticmethod
+	def _json_safe(value: Any) -> Any:
+		try:
+			return json.loads(json.dumps(value, default=str))
+		except Exception:
+			return value
+
 	@classmethod
 	def analyze(
 		cls,
@@ -28,6 +35,16 @@ class BenchmarkAIAnalyzerAgentBM:
 		compliance_output: dict,
 		vendor_output: dict,
 	) -> dict:
+		llm_context = cls._build_llm_context(
+			bench_request=bench_request,
+			line_items=line_items,
+			vendor_cards=vendor_cards,
+			decision_output=decision_output,
+			market_output=market_output,
+			analyst_output=analyst_output,
+			compliance_output=compliance_output,
+			vendor_output=vendor_output,
+		)
 		deterministic = cls._analyze_deterministic(
 			bench_request=bench_request,
 			line_items=line_items,
@@ -38,22 +55,129 @@ class BenchmarkAIAnalyzerAgentBM:
 			compliance_output=compliance_output,
 			vendor_output=vendor_output,
 		)
-		llm_output = cls._analyze_with_llm(deterministic=deterministic)
+		llm_output = cls._analyze_with_llm(deterministic=deterministic, llm_context=llm_context)
 		if llm_output:
 			return llm_output
 		return deterministic
 
 	@classmethod
-	def _analyze_with_llm(cls, *, deterministic: dict) -> Optional[dict]:
+	def _build_llm_context(
+		cls,
+		*,
+		bench_request,
+		line_items: list,
+		vendor_cards: list,
+		decision_output: dict,
+		market_output: dict,
+		analyst_output: dict,
+		compliance_output: dict,
+		vendor_output: dict,
+	) -> dict:
+		total_lines = len(line_items)
+		status_counts = {"WITHIN_RANGE": 0, "MODERATE": 0, "HIGH": 0, "NEEDS_REVIEW": 0}
+		source_counts = {"CORRIDOR_DB": 0, "PERPLEXITY_LIVE": 0, "NONE": 0, "OTHER": 0}
+		line_snapshot = []
+
+		for li in line_items:
+			status = str(getattr(li, "variance_status", "NEEDS_REVIEW") or "NEEDS_REVIEW").strip().upper()
+			if status not in status_counts:
+				status = "NEEDS_REVIEW"
+			status_counts[status] += 1
+
+			source = str(getattr(li, "benchmark_source", "NONE") or "NONE").strip().upper()
+			if source in source_counts:
+				source_counts[source] += 1
+			else:
+				source_counts["OTHER"] += 1
+
+			if len(line_snapshot) < 20:
+				_live_json = getattr(li, "live_price_json", None) or {}
+				_citation_count = len((_live_json.get("citations") or [])) if isinstance(_live_json, dict) else 0
+				line_snapshot.append(
+					{
+						"line_number": getattr(li, "line_number", 0),
+						"description": (getattr(li, "description", "") or "")[:180],
+						"category": getattr(li, "category", "") or "UNCATEGORIZED",
+						"quoted_unit_rate": getattr(li, "quoted_unit_rate", None),
+						"benchmark_mid": getattr(li, "benchmark_mid", None),
+						"benchmark_source": source,
+						"variance_pct": getattr(li, "variance_pct", None),
+						"variance_status": status,
+						"market_citation_count": _citation_count,
+					}
+				)
+
+		vendor_snapshot = []
+		for card in vendor_cards:
+			vendor_snapshot.append(
+				{
+					"supplier_name": card.get("supplier_name"),
+					"quotation_id": card.get("quotation_id"),
+					"line_count": card.get("line_count"),
+					"benchmarked_line_count": card.get("benchmarked_line_count"),
+					"deviation_pct": card.get("deviation_pct"),
+					"status": card.get("status"),
+					"status_counts": card.get("status_counts") or {},
+					"live_reference_count": card.get("live_reference_count", 0),
+				}
+			)
+
+		routed = (decision_output or {}).get("routing_totals") or {}
+		coverage = {
+			"db_pct": round((source_counts["CORRIDOR_DB"] / float(total_lines)) * 100.0, 1) if total_lines else 0.0,
+			"market_pct": round((source_counts["PERPLEXITY_LIVE"] / float(total_lines)) * 100.0, 1) if total_lines else 0.0,
+			"unresolved_pct": round((source_counts["NONE"] / float(total_lines)) * 100.0, 1) if total_lines else 0.0,
+		}
+
+		return cls._json_safe(
+			{
+				"request": {
+					"request_pk": getattr(bench_request, "pk", None),
+					"title": getattr(bench_request, "title", "") or "",
+					"geography": getattr(bench_request, "geography", "") or "",
+					"scope_type": getattr(bench_request, "scope_type", "") or "",
+					"status": getattr(bench_request, "status", "") or "",
+				},
+				"totals": {
+					"line_count": total_lines,
+					"vendor_count": len(vendor_cards),
+					"variance_status_counts": status_counts,
+					"benchmark_source_counts": source_counts,
+					"coverage": coverage,
+				},
+				"routing": {
+					"decision_routing_totals": routed,
+					"decision_sample": ((decision_output or {}).get("line_decisions") or [])[:12],
+				},
+				"vendor_recommendation": vendor_output or {},
+				"compliance": compliance_output or {},
+				"analyst": analyst_output or {},
+				"market": {
+					"summary": (market_output or {}).get("summary"),
+					"confidence": (market_output or {}).get("confidence"),
+					"fetch_stats": (market_output or {}).get("market_fetch_stats") or {},
+					"top_risk_lines": (market_output or {}).get("top_risk_lines") or [],
+				},
+				"vendors": vendor_snapshot,
+				"line_items_sample": line_snapshot,
+			}
+		)
+
+	@classmethod
+	def _analyze_with_llm(cls, *, deterministic: dict, llm_context: dict) -> Optional[dict]:
 		payload = {
-			"task": "Create AI insights for a procurement benchmarking request detail page.",
+			"task": "Create realistic and dynamic AI insights for a procurement benchmarking request detail page.",
 			"rules": [
 				"Use only the provided input facts.",
-				"Generate concise, practical, action-oriented insights for AP and procurement users.",
+				"Generate concise, practical, action-oriented insights for AP and procurement users with concrete evidence from vendors and lines.",
+				"Do not repeat generic text; use the actual request metrics, variance mix, routing, and recommendation/compliance details.",
 				"Do not include markdown.",
 				"Return strict JSON only.",
 			],
-			"input": deterministic,
+			"input": {
+				"summary_fallback": deterministic,
+				"request_data": llm_context,
+			},
 			"required_output_schema": {
 				"summary": "string",
 				"confidence": "float_0_to_1",
@@ -70,7 +194,7 @@ class BenchmarkAIAnalyzerAgentBM:
 						role="system",
 						content="You are a senior procurement benchmarking analyst. Return JSON only.",
 					),
-					LLMMessage(role="user", content=json.dumps(payload)),
+					LLMMessage(role="user", content=json.dumps(payload, default=str)),
 				],
 				response_format={"type": "json_object"},
 			)
@@ -78,12 +202,46 @@ class BenchmarkAIAnalyzerAgentBM:
 			if not isinstance(parsed, dict):
 				return None
 
-			summary = str(parsed.get("summary") or "").strip()
-			insights = [str(x).strip() for x in (parsed.get("insights") or []) if str(x).strip()]
-			risk_flags = [str(x).strip() for x in (parsed.get("risk_flags") or []) if str(x).strip()]
-			actions = [str(x).strip() for x in (parsed.get("actions") or []) if str(x).strip()]
+			summary = str(parsed.get("summary") or parsed.get("executive_summary") or "").strip()
 
-			if not summary or not insights:
+			raw_insights = (
+				parsed.get("insights")
+				or parsed.get("key_insights")
+				or parsed.get("key_findings")
+				or parsed.get("findings")
+				or []
+			)
+			raw_risks = (
+				parsed.get("risk_flags")
+				or parsed.get("risks")
+				or parsed.get("risk_items")
+				or []
+			)
+			raw_actions = (
+				parsed.get("actions")
+				or parsed.get("recommendations")
+				or parsed.get("next_actions")
+				or []
+			)
+
+			if isinstance(raw_insights, str):
+				raw_insights = [raw_insights]
+			if isinstance(raw_risks, str):
+				raw_risks = [raw_risks]
+			if isinstance(raw_actions, str):
+				raw_actions = [raw_actions]
+
+			insights = [str(x).strip() for x in raw_insights if str(x).strip()]
+			risk_flags = [str(x).strip() for x in raw_risks if str(x).strip()]
+			actions = [str(x).strip() for x in raw_actions if str(x).strip()]
+
+			if not summary:
+				summary = str(parsed.get("analysis") or parsed.get("narrative") or "").strip()
+
+			if not insights and summary:
+				insights = [summary]
+
+			if not summary and not insights:
 				return None
 
 			try:
@@ -99,7 +257,7 @@ class BenchmarkAIAnalyzerAgentBM:
 				"risk_flags": risk_flags[:8],
 				"actions": actions[:8],
 				"source": "llm",
-				"input_snapshot": deterministic.get("input_snapshot") or {},
+				"input_snapshot": llm_context,
 			}
 		except Exception:
 			logger.exception("Benchmark AI Analyzer LLM path failed; deterministic fallback used")
@@ -148,6 +306,7 @@ class BenchmarkAIAnalyzerAgentBM:
 
 		recommended_vendor = str(vendor_output.get("best_vendor_name") or "").strip()
 		recommended = bool(vendor_output.get("recommended"))
+		vendor_reco_summary = str(vendor_output.get("summary") or "").strip()
 
 		compliance_status = str(compliance_output.get("status") or "UNKNOWN")
 		analyst_decision = str(analyst_output.get("decision") or "").strip()
@@ -171,11 +330,38 @@ class BenchmarkAIAnalyzerAgentBM:
 			insights.append(f"Vendor recommendation selected '{recommended_vendor}' based on current benchmark signals.")
 		else:
 			insights.append("No final vendor recommendation was made due to benchmark quality or risk thresholds.")
+		if vendor_reco_summary:
+			insights.append(vendor_reco_summary)
 
 		if compliance_status:
 			insights.append(f"Compliance assessment status: {compliance_status}.")
 		if analyst_decision:
 			insights.append(f"Benchmarking analyst decision: {analyst_decision}.")
+
+		top_high = sorted(
+			high_lines,
+			key=lambda li: abs(float(getattr(li, "variance_pct", 0.0) or 0.0)),
+			reverse=True,
+		)[:3]
+		if top_high:
+			top_high_text = "; ".join(
+				[
+					f"L{getattr(li, 'line_number', 0)} {str(getattr(li, 'description', '') or '')[:40]} ({float(getattr(li, 'variance_pct', 0.0) or 0.0):+.1f}%)"
+					for li in top_high
+				]
+			)
+			insights.append(f"Top high-variance lines: {top_high_text}.")
+
+		vendor_deviation_lines = []
+		for card in vendor_cards[:5]:
+			vname = str(card.get("supplier_name") or "Unknown Vendor")
+			dev = card.get("deviation_pct")
+			if dev is None:
+				vendor_deviation_lines.append(f"{vname}: n/a")
+			else:
+				vendor_deviation_lines.append(f"{vname}: {float(dev):+.1f}%")
+		if vendor_deviation_lines:
+			insights.append("Vendor deviation snapshot: " + " | ".join(vendor_deviation_lines) + ".")
 
 		if unresolved_lines:
 			risk_flags.append(
