@@ -203,7 +203,7 @@ class BenchmarkVendorRecommendationAgent:
         prompt = {
             "task": "Select vendor recommendation from scored benchmark vendors.",
             "thresholds": {
-                "deviation_threshold_pct": cls.DEVIATION_THRESHOLD_PCT,
+                "deviation_threshold_pct": cls._deviation_threshold_pct(),
                 "high_variance_ratio_threshold": cls.HIGH_VARIANCE_RATIO_THRESHOLD,
             },
             "ranked_vendors": llm_ranked,
