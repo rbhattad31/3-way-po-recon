@@ -100,6 +100,7 @@
           <th>Type</th>
           <th>In Process</th>
           <th>Sample Keywords</th>
+          <th class="cfg-col-actions">Actions</th>
         </tr>
       </thead>
       <tbody id="cat-tbody"></tbody>
@@ -166,7 +167,7 @@
 <div class="cfg-tab-pane" id="pane-thresholds">
   <div class="cfg-toolbar">
     <div style="font-size:.85rem;color:#64748b;font-weight:500;">
-      <i class="bi bi-info-circle me-1"></i>Configured variance thresholds loaded directly from the database.
+      <i class="bi bi-info-circle me-1"></i>Variance bands  with Min Range, Max Range, Variance Status.
     </div>
     <button class="btn btn-cfg-add" onclick="openThresholdModal()">
       <i class="bi bi-plus-lg me-1"></i>Add Threshold
@@ -177,12 +178,10 @@
     <table class="cfg-table cfg-threshold-table">
       <thead>
         <tr>
-          <th>Category</th>
-          <th>Geography</th>
-          <th style="width:160px;">Within Range Max</th>
-          <th style="width:160px;">Moderate Max</th>
-          <th>Notes</th>
-          <th style="width:120px;">Status</th>
+          <th style="width:220px;">Min Range</th>
+          <th style="width:220px;">Max Range</th>
+          <th>Variance Status</th>
+          <th class="cfg-col-actions">Actions</th>
         </tr>
       </thead>
       <tbody id="thr-tbody"></tbody>
@@ -378,31 +377,41 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body p-3">
+        <input type="hidden" id="thr-edit-id">
         <div class="cfg-form-row">
           <div>
-            <label class="form-label-cfg">Category <span class="text-danger">*</span></label>
-            <input type="text" id="thr-modal-category" class="form-control form-control-cfg" placeholder="Enter category">
+            <label class="form-label-cfg">Category</label>
+            <input type="text" id="thr-modal-category" class="form-control form-control-cfg" value="ALL" readonly>
           </div>
           <div>
-            <label class="form-label-cfg">Geography <span class="text-danger">*</span></label>
+            <label class="form-label-cfg">Geography</label>
             <select id="thr-modal-geography" class="form-control form-control-cfg">
-              <option value="">Select Geography</option>
               <option value="ALL">All Geographies</option>
-              {% for code, label in geo_choices_with_all %}
-              {% if code != "ALL" %}<option value="{{ code }}">{{ label }}</option>{% endif %}
-              {% endfor %}
             </select>
           </div>
         </div>
 
         <div class="cfg-form-row">
           <div>
-            <label class="form-label-cfg">Within Range Max % <span class="text-danger">*</span></label>
-            <input type="number" id="thr-modal-within" class="form-control form-control-cfg" step="0.01" min="0" placeholder="5.00">
+            <label class="form-label-cfg">Variance Status <span class="text-danger">*</span></label>
+            <select id="thr-modal-status" class="form-control form-control-cfg">
+              <option value="">Select status</option>
+              <option value="WITHIN_RANGE">Optimal</option>
+              <option value="MODERATE">Moderate</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+          <div></div>
+        </div>
+
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Min Range % <span class="text-danger">*</span></label>
+            <input type="number" id="thr-modal-within" class="form-control form-control-cfg" step="0.01" min="0" placeholder="0.00">
           </div>
           <div>
-            <label class="form-label-cfg">Moderate Max % <span class="text-danger">*</span></label>
-            <input type="number" id="thr-modal-moderate" class="form-control form-control-cfg" step="0.01" min="0" placeholder="15.00">
+            <label class="form-label-cfg">Max Range % <span class="text-danger">*</span></label>
+            <input type="number" id="thr-modal-moderate" class="form-control form-control-cfg" step="0.01" min="0" placeholder="5.00">
           </div>
         </div>
 
@@ -419,7 +428,7 @@
             </div>
           </div>
           <div style="font-size:.78rem;color:#64748b;display:flex;align-items:end;">
-            Saving the same category + geography combination updates the existing threshold row.
+            Saving the same variance status updates that specific band row.
           </div>
         </div>
       </div>
@@ -464,6 +473,7 @@ const URLS = {
   corridors:  "{% url 'benchmarking:api_bench_corridors' %}",
   corridor:   function(pk){ return "{% url 'benchmarking:api_bench_corridor_detail' pk=0 %}".replace('/0/', '/' + pk + '/'); },
   thresholds: "{% url 'benchmarking:api_bench_thresholds' %}",
+  threshold:  function(pk){ return "{% url 'benchmarking:api_bench_threshold_detail' pk=0 %}".replace('/0/', '/' + pk + '/'); },
 };
 
 // ================================================================ CATEGORY DATA
@@ -590,11 +600,48 @@ function loadCategories(){
         + '</td>'
         + '<td id="cat-action-' + it.code + '" style="font-size:.78rem;color:#475569;max-width:360px;">' + (it.what_it_should_do || '<span class="text-muted">--</span>') + '</td>'
         + '<td style="font-size:.78rem;color:#64748b;max-width:260px;">' + (it.sample_keywords || '<span class="text-muted">--</span>') + '</td>'
+        + '<td class="cfg-col-actions">'
+        + '<button class="btn btn-xs btn-outline-primary me-1" style="font-size:.75rem;padding:2px 7px;" onclick="openCategoryModal(\'' + it.code + '\')" title="Edit"><i class="bi bi-pencil"></i></button>'
+        + '<button class="btn btn-xs me-1" style="font-size:.75rem;padding:2px 7px;border:1px solid #e2e8f0;" onclick="toggleCategory(\'' + it.code + '\', ' + (it.is_active ? 'true' : 'false') + ', \'' + (it.type || 'BENCHMARK') + '\')" title="Toggle"><i class="bi ' + (it.is_active ? 'bi-toggle-on text-success' : 'bi-toggle-off text-secondary') + '"></i></button>'
+        + '<button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:2px 7px;" onclick="deactivateCategory(\'' + it.code + '\', \'' + (it.type || 'BENCHMARK') + '\')" title="Deactivate"><i class="bi bi-trash"></i></button>'
+        + '</td>'
         + '</tr>';
     });
     $('#cat-tbody').html(rows.join(''));
     $('#cat-table-wrap').show();
   }).fail(function(){ showToast('Failed to load categories.', 'danger'); $('#cat-loading').hide(); });
+}
+
+function _saveCategoryActiveState(code, type, isActive, successMessage){
+  $.ajax({
+    url: URLS.categories,
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify({ code: code, type: type || 'BENCHMARK', is_active: isActive }),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(resp){
+      if (resp.success){
+        showToast(successMessage || resp.message || 'Category updated.', 'success');
+        loadCategories();
+        loadCorridors();
+        loadThresholds();
+      } else {
+        showToast(resp.message || 'Category update failed.', 'danger');
+      }
+    },
+    error: function(xhr){
+      showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Category update failed.', 'danger');
+    }
+  });
+}
+
+function toggleCategory(code, isCurrentlyActive, type){
+  _saveCategoryActiveState(code, type, !isCurrentlyActive, 'Category status updated.');
+}
+
+function deactivateCategory(code, type){
+  if (!confirm('Deactivate category ' + code + '?')) return;
+  _saveCategoryActiveState(code, type, false, 'Category deactivated.');
 }
 
 function saveCategoryType(code){
@@ -685,19 +732,27 @@ function loadThresholds(){
     $('#thr-loading').hide();
     if (!data.items || !data.items.length){ $('#thr-empty').show(); return; }
     thresholdConfigItems = data.items || [];
-    var rows = data.items.map(function(it){
+    var rows = thresholdConfigItems.map(function(it){
       var status = it.is_active
-        ? '<span class="badge badge-active">Active</span>'
-        : '<span class="badge badge-inactive">Inactive</span>';
+        ? '<span class="badge badge-active">' + (it.variance_status_display || it.variance_status || '') + '</span>'
+        : '<span class="badge badge-inactive">' + (it.variance_status_display || it.variance_status || '') + '</span>';
+      var toggleIcon = it.is_active ? 'bi-toggle-on text-success' : 'bi-toggle-off text-secondary';
+      var toggleText = it.is_active ? 'Active' : 'Inactive';
+      var itJson = JSON.stringify(it).replace(/'/g, "&#39;");
       return '<tr>'
-        + '<td style="font-size:.82rem;color:#0f172a;">' + it.category_display + '</td>'
-        + '<td style="font-size:.82rem;color:#475569;">' + it.geography_display + '</td>'
-        + '<td><code style="font-size:.78rem;background:#ecfdf5;color:#166534;padding:2px 6px;border-radius:4px;">&lt;= ' + it.within_range_max_pct + '%</code></td>'
-        + '<td><code style="font-size:.78rem;background:#fff7ed;color:#c2410c;padding:2px 6px;border-radius:4px;">&lt;= ' + it.moderate_max_pct + '%</code></td>'
-        + '<td style="font-size:.82rem;color:#64748b;">' + (it.notes || '<span class="text-muted">--</span>') + '</td>'
-        + '<td>' + status + '</td>'
+        + '<td style="font-size:.85rem;color:#0f172a;font-weight:500;">' + parseFloat(it.within_range_max_pct || 0).toFixed(2) + '%</td>'
+        + '<td style="font-size:.85rem;color:#0f172a;font-weight:500;">' + parseFloat(it.moderate_max_pct || 0).toFixed(2) + '%</td>'
+        + '<td style="font-size:.82rem;color:#334155;">' + status + '</td>'
+        + '<td class="cfg-col-actions">'
+        + '<button class="btn btn-xs btn-outline-primary me-1" style="font-size:.75rem;padding:2px 7px;" onclick=\'openThresholdModal(' + itJson + ')\' title="Edit"><i class="bi bi-pencil"></i> Edit</button>'
+        + '<button class="btn btn-xs me-1" style="font-size:.75rem;padding:2px 7px;border:1px solid #e2e8f0;" onclick="toggleThreshold(' + it.id + ')" title="Toggle active"><i class="bi ' + toggleIcon + '"></i> ' + toggleText + '</button>'
+        + '<button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:2px 7px;" onclick="deleteThreshold(' + it.id + ')" title="Delete"><i class="bi bi-trash"></i> Delete</button>'
+        + '</td>'
         + '</tr>';
     });
+
+    $('#pane-thresholds .cfg-toolbar .btn-cfg-add').html('<i class="bi bi-plus-lg me-1"></i>Add Threshold').attr('onclick', 'openThresholdModal()');
+
     $('#thr-tbody').html(rows.join(''));
     $('#thr-table-wrap').show();
   }).fail(function(){ showToast('Failed to load thresholds.', 'danger'); $('#thr-loading').hide(); });
@@ -803,37 +858,53 @@ function saveCategoryConfig(){
 // ================================================================ THRESHOLD MODAL
 function openThresholdModal(item){
   item = item || null;
-  $('#modalThresholdTitle').html('<i class="bi bi-bar-chart-steps me-2"></i>Add Variance Threshold');
-  $('#thr-modal-category').val('');
-  $('#thr-modal-geography').val('');
-  $('#thr-modal-within').val('');
-  $('#thr-modal-moderate').val('');
-  $('#thr-modal-notes').val('');
-  $('#thr-modal-active').prop('checked', false);
+  if (item){
+    $('#modalThresholdTitle').html('<i class="bi bi-pencil me-2"></i>Edit Variance Threshold');
+    $('#thr-edit-id').val(item.id || '');
+    $('#thr-modal-category').val('ALL').prop('readonly', true);
+    $('#thr-modal-geography').val('ALL').prop('disabled', true);
+    $('#thr-modal-status').val(item.variance_status || '');
+    $('#thr-modal-within').val(item.within_range_max_pct);
+    $('#thr-modal-moderate').val(item.moderate_max_pct);
+    $('#thr-modal-notes').val(item.notes || '');
+    $('#thr-modal-active').prop('checked', item.is_active !== false);
+  } else {
+    $('#modalThresholdTitle').html('<i class="bi bi-bar-chart-steps me-2"></i>Add Variance Threshold');
+    $('#thr-edit-id').val('');
+    $('#thr-modal-category').val('ALL').prop('readonly', true);
+    $('#thr-modal-geography').val('ALL').prop('disabled', true);
+    $('#thr-modal-status').val('');
+    $('#thr-modal-within').val('');
+    $('#thr-modal-moderate').val('');
+    $('#thr-modal-notes').val('');
+    $('#thr-modal-active').prop('checked', false);
+  }
   new bootstrap.Modal(document.getElementById('modalThreshold')).show();
 }
 
 function saveThresholdConfig(){
+  var editId = $('#thr-edit-id').val();
   var payload = {
-    category: $('#thr-modal-category').val(),
-    geography: $('#thr-modal-geography').val(),
+    category: 'ALL',
+    geography: 'ALL',
+    variance_status: $('#thr-modal-status').val(),
     within_range_max_pct: $('#thr-modal-within').val(),
     moderate_max_pct: $('#thr-modal-moderate').val(),
     notes: $('#thr-modal-notes').val().trim(),
     is_active: $('#thr-modal-active').prop('checked')
   };
 
-  if (!payload.category || !payload.geography || payload.within_range_max_pct === '' || payload.moderate_max_pct === ''){
-    showToast('Category, geography, and threshold values are required.', 'warning');
+  if (!payload.variance_status || payload.within_range_max_pct === '' || payload.moderate_max_pct === ''){
+    showToast('Variance status, min range, and max range are required.', 'warning');
     return;
   }
 
   $('#btnSaveThreshold').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
   $.ajax({
-    url: URLS.thresholds,
+    url: editId ? URLS.threshold(editId) : URLS.thresholds,
     method: 'POST',
     contentType: 'application/json',
-    data: JSON.stringify(payload),
+    data: JSON.stringify(editId ? Object.assign({ _action: 'update' }, payload) : payload),
     headers: { 'X-CSRFToken': getCsrf() },
     success: function(resp){
       $('#btnSaveThreshold').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Threshold');
@@ -848,6 +919,49 @@ function saveThresholdConfig(){
     error: function(xhr){
       $('#btnSaveThreshold').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Threshold');
       showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Threshold save failed.', 'danger');
+    }
+  });
+}
+
+function toggleThreshold(id){
+  $.ajax({
+    url: URLS.threshold(id),
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify({ _action: 'toggle' }),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(resp){
+      if (resp.success){
+        showToast(resp.message || 'Threshold status updated.', 'success');
+        loadThresholds();
+      } else {
+        showToast(resp.message || 'Threshold update failed.', 'danger');
+      }
+    },
+    error: function(xhr){
+      showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Threshold update failed.', 'danger');
+    }
+  });
+}
+
+function deleteThreshold(id){
+  if (!confirm('Deactivate this threshold?')) return;
+  $.ajax({
+    url: URLS.threshold(id),
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify({ _action: 'delete' }),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(resp){
+      if (resp.success){
+        showToast(resp.message || 'Threshold deactivated.', 'success');
+        loadThresholds();
+      } else {
+        showToast(resp.message || 'Threshold deactivation failed.', 'danger');
+      }
+    },
+    error: function(xhr){
+      showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Threshold deactivation failed.', 'danger');
     }
   });
 }

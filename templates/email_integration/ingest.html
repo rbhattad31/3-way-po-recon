@@ -1,0 +1,472 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | {{ page_title }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:dashboard' %}" class="text-decoration-none">Functionality Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ page_title }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
+    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+  </div>
+  <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
+</div>
+
+<div class="alert alert-light border mb-3" role="alert">
+  Only verified mailboxes available to your workspace access are listed below.
+</div>
+
+<div id="ingest_status_banner" class="d-none alert mb-3" role="alert">
+  <span id="ingest_status_text"></span>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-semibold">Select Email to Ingest</div>
+  <div class="card-body">
+    <form id="ingest_manual_form" method="post" class="row g-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="ingest_manual_email">
+      <input type="hidden" name="provider_message_id" id="provider_message_id" value="">
+      
+      <div class="col-12 col-md-6">
+        <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
+        <select name="mailbox_id" id="mailbox_id" class="form-select" required>
+          <option value="">Select verified mailbox</option>
+          {% for mailbox in verified_mailboxes %}
+          <option value="{{ mailbox.pk }}">{{ mailbox.name }} ({{ mailbox.mailbox_address }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label mb-1" style="font-size:.78rem;">Sender Email</label>
+        <select name="from_email" id="from_email" class="form-select" required>
+          <option value="">Select sender email</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label mb-1" style="font-size:.78rem;">Sender Name</label>
+        <select name="from_name" id="from_name" class="form-select" required>
+          <option value="">Select sender name</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label mb-1" style="font-size:.78rem;">Subject</label>
+        <select name="subject" id="subject" class="form-select" required>
+          <option value="">Select subject</option>
+        </select>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label mb-1" style="font-size:.78rem;">Attachment</label>
+        <select name="selected_attachment_name" id="selected_attachment_id" class="form-select" required>
+          <option value="">Select attachment</option>
+        </select>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label mb-1" style="font-size:.78rem;">Additional Message (Optional)</label>
+        <textarea name="body_text" class="form-control" rows="3" placeholder="Add optional notes or context"></textarea>
+      </div>
+
+      <div class="col-12 d-flex justify-content-end gap-2">
+        <a href="{% url 'email_integration:dashboard' %}" class="btn btn-outline-secondary">Cancel</a>
+        <button class="btn btn-primary" type="submit">Run Agent</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mt-3">
+  <div class="card-header bg-white fw-semibold">Demo Inbox Preview</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-lg-5">
+        <div class="border rounded p-2 bg-light-subtle" style="min-height:360px;">
+          <div class="small text-muted mb-2">Top 10 recent emails. Click one to preview and run the agent.</div>
+          <div id="demo_inbox_list" class="list-group"></div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-7">
+        <div id="demo_message_preview" class="border rounded p-3" style="min-height:360px;">
+          <div class="text-muted">Select a mailbox, then click a message to preview it here.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var mailboxSelect    = document.getElementById('mailbox_id');
+    var ingestForm       = document.getElementById('ingest_manual_form');
+    var emailSelect      = document.getElementById('from_email');
+    var nameSelect       = document.getElementById('from_name');
+    var subjectSelect    = document.getElementById('subject');
+    var attachmentSelect = document.getElementById('selected_attachment_id');
+    var providerMessageIdInput = document.getElementById('provider_message_id');
+    var statusBanner     = document.getElementById('ingest_status_banner');
+    var statusText       = document.getElementById('ingest_status_text');
+    var inboxList        = document.getElementById('demo_inbox_list');
+    var messagePreview   = document.getElementById('demo_message_preview');
+
+    /* ---- helpers ---- */
+    function showStatus(msg, type) {
+      statusBanner.className = 'alert mb-3 ' + (
+        type === 'loading' ? 'alert-info' :
+        type === 'success' ? 'alert-success' :
+        type === 'error'   ? 'alert-danger'  : 'd-none'
+      );
+      statusText.innerHTML = msg || '';
+      if (type === 'hidden') statusBanner.className = 'd-none';
+    }
+
+    function setDisabled(sel, yes) {
+      sel.disabled = yes;
+      sel.style.opacity = yes ? '0.5' : '1';
+    }
+
+    function clearSelect(sel, placeholder) {
+      sel.innerHTML = '<option value="">' + placeholder + '</option>';
+    }
+
+    var dropdownDataUrl = '{% url "email_integration:ingest_dropdown_data" %}';
+    var inboxPreviewUrl = '{% url "email_integration:ingest_inbox_preview" %}';
+
+    function callGraph(params, callback) {
+      var qs  = new URLSearchParams(params).toString();
+      var url = dropdownDataUrl + '?' + qs;
+      callJson(url, callback);
+    }
+
+    function callInboxPreview(params, callback) {
+      var qs  = new URLSearchParams(params).toString();
+      var url = inboxPreviewUrl + '?' + qs;
+      callJson(url, callback);
+    }
+
+    function callJson(url, callback) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+      xhr.withCredentials = true;
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        if (xhr.status === 0) {
+          callback(null, 'Network error - cannot reach server.');
+          return;
+        }
+        var ct = xhr.getResponseHeader('Content-Type') || '';
+        if (ct.indexOf('application/json') === -1) {
+          callback(null, 'Session expired. Please refresh and log in again. (HTTP ' + xhr.status + ')');
+          return;
+        }
+        try {
+          var data = JSON.parse(xhr.responseText);
+          callback(data, data.error || null);
+        } catch (e) {
+          callback(null, 'Unexpected response: ' + xhr.responseText.substring(0, 120));
+        }
+      };
+      xhr.send();
+    }
+
+    function escapeHtml(value) {
+      return (value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function ensureSelectedOption(sel, value, label) {
+      if (!value) {
+        sel.value = '';
+        return;
+      }
+      var found = false;
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === value) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        var opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label || value;
+        sel.appendChild(opt);
+      }
+      sel.value = value;
+    }
+
+    function fillSelect(sel, items, emptyMsg, renderFn) {
+      clearSelect(sel, items.length ? sel.options[0].text : emptyMsg);
+      items.forEach(function (item) {
+        var opt = document.createElement('option');
+        renderFn(opt, item);
+        sel.appendChild(opt);
+      });
+    }
+
+    function refreshAttachments() {
+      var mailboxId = mailboxSelect.value.trim();
+      var email = emailSelect.value.trim();
+      var name = nameSelect.value.trim();
+      var subj = subjectSelect.value.trim();
+      providerMessageIdInput.value = '';
+
+      clearSelect(attachmentSelect, 'Select attachment');
+      if (!mailboxId || (!email && !name && !subj)) {
+        setDisabled(attachmentSelect, true);
+        showStatus('', 'hidden');
+        return;
+      }
+
+      showStatus(
+        '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>'
+        + 'Fetching attachments for selected filter(s)&hellip;',
+        'loading'
+      );
+      setDisabled(attachmentSelect, true);
+
+      callGraph(
+        { mailbox_id: mailboxId, sender_email: email, sender_name: name, subject: subj },
+        function (result, err) {
+          setDisabled(attachmentSelect, false);
+          if (err || !result) {
+            showStatus('Error fetching attachments: ' + (err || 'Unknown error'), 'error');
+            return;
+          }
+          var atts = result.data || [];
+          if (!atts.length) {
+            showStatus('No attachments found for the selected filter(s).', 'error');
+            return;
+          }
+          fillSelect(attachmentSelect, atts, 'No attachments', function (opt, att) {
+            opt.value = att.filename;
+            opt.textContent = att.timestamp ? (att.filename + ' - ' + att.timestamp) : att.filename;
+          });
+          showStatus(
+            '\u2713 ' + atts.length + ' attachment(s) loaded for selected filter(s).',
+            'success'
+          );
+        }
+      );
+    }
+
+    function renderInboxList(items) {
+      if (!items.length) {
+        inboxList.innerHTML = '<div class="text-muted small p-2">No demo messages found.</div>';
+        return;
+      }
+      inboxList.innerHTML = '';
+      items.forEach(function (item) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'list-group-item list-group-item-action';
+        btn.setAttribute('data-provider-message-id', item.provider_message_id || '');
+        btn.innerHTML =
+          '<div class="fw-semibold text-truncate">' + escapeHtml(item.subject || '(No subject)') + '</div>' +
+          '<div class="small text-muted text-truncate">' + escapeHtml(item.from_name || item.from_email || 'Unknown sender') + '</div>' +
+          '<div class="small text-muted">' + escapeHtml(item.received_at || '') + (item.has_attachments ? ' | Attachment' : '') + '</div>';
+        btn.addEventListener('click', function () {
+          loadMessagePreview(item.provider_message_id || '');
+          var selected = inboxList.querySelector('.active');
+          if (selected) selected.classList.remove('active');
+          btn.classList.add('active');
+        });
+        inboxList.appendChild(btn);
+      });
+    }
+
+    function fillAttachmentsFromPreview(atts) {
+      clearSelect(attachmentSelect, 'Select attachment');
+      if (!atts || !atts.length) {
+        setDisabled(attachmentSelect, true);
+        return;
+      }
+      fillSelect(attachmentSelect, atts, 'No attachments', function (opt, att) {
+        opt.value = att.filename;
+        opt.textContent = att.timestamp ? (att.filename + ' - ' + att.timestamp) : att.filename;
+      });
+      setDisabled(attachmentSelect, false);
+    }
+
+    function renderMessagePreview(item) {
+      var body = item.body_text || item.body_preview || 'No preview available.';
+      var attachments = item.attachments || [];
+      var attachmentsHtml = '';
+      if (attachments.length) {
+        var rows = attachments.map(function (att) {
+          var label = att.timestamp ? (att.filename + ' - ' + att.timestamp) : att.filename;
+          return '<li class="list-group-item py-1 px-2 small">' + escapeHtml(label) + '</li>';
+        }).join('');
+        attachmentsHtml =
+          '<div class="mt-3">'
+          + '<div class="small fw-semibold mb-1">Attachments (' + attachments.length + ')</div>'
+          + '<ul class="list-group">' + rows + '</ul>'
+          + '</div>';
+      } else {
+        attachmentsHtml =
+          '<div class="mt-3 small text-muted">No attachments found for this message.</div>';
+      }
+      messagePreview.innerHTML =
+        '<div class="mb-2"><div class="h6 mb-1">' + escapeHtml(item.subject || '(No subject)') + '</div>' +
+        '<div class="small text-muted">From: ' + escapeHtml(item.from_name || '-') + ' &lt;' + escapeHtml(item.from_email || '-') + '&gt;</div>' +
+        '<div class="small text-muted">Received: ' + escapeHtml(item.received_at || '-') + '</div></div>' +
+        '<div class="border rounded bg-light p-3" style="white-space:pre-wrap; max-height:240px; overflow:auto;">' + escapeHtml(body) + '</div>' +
+        attachmentsHtml +
+        '<div class="small text-muted mt-2">Select an attachment below, then click Run_Extraction_Agent.</div>' +
+        '<div class="mt-2"><button type="button" id="run_extraction_agent_btn" class="btn btn-sm btn-primary">Run_Extraction_Agent</button></div>';
+    }
+
+    messagePreview.addEventListener('click', function (e) {
+      if (!e.target || e.target.id !== 'run_extraction_agent_btn') return;
+      var mailboxId = mailboxSelect.value.trim();
+      var attachmentName = attachmentSelect.value.trim();
+      if (!mailboxId) {
+        showStatus('Please select a mailbox first.', 'error');
+        return;
+      }
+      if (!providerMessageIdInput.value.trim()) {
+        showStatus('Please select a message from the demo inbox first.', 'error');
+        return;
+      }
+      if (!attachmentName) {
+        showStatus('Please select an attachment before running extraction.', 'error');
+        return;
+      }
+      showStatus('Running extraction agent and redirecting to extraction page...', 'loading');
+      if (ingestForm) {
+        ingestForm.submit();
+      }
+    });
+
+    function loadInboxPreviewList(mailboxId) {
+      inboxList.innerHTML = '<div class="small text-muted p-2">Loading top 10 recent emails...</div>';
+      messagePreview.innerHTML = '<div class="text-muted">Click a message to preview it here.</div>';
+      callInboxPreview({ mailbox_id: mailboxId }, function (result, err) {
+        if (err || !result) {
+          inboxList.innerHTML = '<div class="text-danger small p-2">Failed to load inbox preview.</div>';
+          return;
+        }
+        renderInboxList(result.data || []);
+      });
+    }
+
+    function loadMessagePreview(providerMessageId) {
+      var mailboxId = mailboxSelect.value.trim();
+      if (!mailboxId || !providerMessageId) return;
+
+      providerMessageIdInput.value = providerMessageId;
+      messagePreview.innerHTML = '<div class="text-muted">Loading message preview...</div>';
+      callInboxPreview({ mailbox_id: mailboxId, provider_message_id: providerMessageId }, function (result, err) {
+        if (err || !result || !result.data) {
+          messagePreview.innerHTML = '<div class="text-danger">Failed to load message preview: ' + escapeHtml(err || 'Unknown error') + '</div>';
+          return;
+        }
+        var item = result.data;
+        ensureSelectedOption(emailSelect, item.from_email || '', item.from_email || '');
+        ensureSelectedOption(nameSelect, item.from_name || '', item.from_name || '(No name)');
+        ensureSelectedOption(subjectSelect, item.subject || '', item.subject || '(No subject)');
+        fillAttachmentsFromPreview(item.attachments || []);
+        if ((item.attachments || []).length === 1) {
+          attachmentSelect.value = item.attachments[0].filename;
+        }
+        renderMessagePreview(item);
+        showStatus('Message selected. Choose attachment if needed, then click Run Agent.', 'success');
+      });
+    }
+
+    /* ===== STEP 1: mailbox selected ===========================
+       One Graph call returns sender_emails + sender_names + subjects
+       all at once. A spinner banner shows while waiting.           */
+    mailboxSelect.addEventListener('change', function () {
+      var mailboxId = mailboxSelect.value.trim();
+      providerMessageIdInput.value = '';
+
+      /* reset all downstream dropdowns */
+      clearSelect(emailSelect,      'Select sender email');
+      clearSelect(nameSelect,       'Select sender name');
+      clearSelect(subjectSelect,    'Select subject');
+      clearSelect(attachmentSelect, 'Select attachment');
+      setDisabled(emailSelect, true);
+      setDisabled(nameSelect,  true);
+      setDisabled(subjectSelect, true);
+      setDisabled(attachmentSelect, true);
+
+      if (!mailboxId) { showStatus('', 'hidden'); return; }
+
+      /* show spinner */
+      showStatus(
+        '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>'
+        + 'Fetching emails from Microsoft Graph&hellip; please wait',
+        'loading'
+      );
+
+      callGraph({ mailbox_id: mailboxId }, function (result, err) {
+        setDisabled(emailSelect,      false);
+        setDisabled(nameSelect,       false);
+        setDisabled(subjectSelect,    false);
+        setDisabled(attachmentSelect, false);
+
+        if (err || !result) {
+          showStatus('Error: ' + (err || 'Unknown error'), 'error');
+          return;
+        }
+
+        /* result.type === 'all_filters' */
+        var emails   = result.sender_emails || [];
+        var names    = result.sender_names  || [];
+        var subjects = result.subjects      || [];
+
+        if (!emails.length && !names.length && !subjects.length) {
+          showStatus(result.warning || 'No emails found in this mailbox.', 'error');
+          return;
+        }
+
+        /* populate all three dropdowns simultaneously */
+        fillSelect(emailSelect, emails, 'No senders found', function (opt, v) {
+          opt.value = v; opt.textContent = v;
+        });
+        fillSelect(nameSelect, names, 'No names found', function (opt, v) {
+          opt.value = v; opt.textContent = v || '(No name)';
+        });
+        fillSelect(subjectSelect, subjects, 'No subjects found', function (opt, v) {
+          opt.value = v; opt.textContent = v || '(No subject)';
+        });
+
+        setDisabled(attachmentSelect, true);
+
+        showStatus(
+          '\u2713 Loaded: <strong>' + emails.length + '</strong> sender email(s) &bull; '
+          + '<strong>' + names.length + '</strong> sender name(s) &bull; '
+          + '<strong>' + subjects.length + '</strong> subject(s). '
+          + 'Select any filter to load attachments.',
+          'success'
+        );
+
+        loadInboxPreviewList(mailboxId);
+      });
+    });
+
+    emailSelect.addEventListener('change', refreshAttachments);
+    nameSelect.addEventListener('change', refreshAttachments);
+    subjectSelect.addEventListener('change', refreshAttachments);
+  })();
+</script>
+{% endblock %}

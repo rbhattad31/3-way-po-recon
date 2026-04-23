@@ -39,6 +39,7 @@ urlpatterns = [
     path("configurations/api/corridors/", views.api_bench_corridors, name="api_bench_corridors"),
     path("configurations/api/corridors/<int:pk>/", views.api_bench_corridor_detail, name="api_bench_corridor_detail"),
     path("configurations/api/thresholds/", views.api_bench_thresholds, name="api_bench_thresholds"),
+    path("configurations/api/thresholds/<int:pk>/", views.api_bench_threshold_detail, name="api_bench_threshold_detail"),
     # End-to-End lifecycle timeline
     path("<int:pk>/e2e-timeline/", views.benchmark_e2e_timeline, name="e2e_timeline"),
 ]

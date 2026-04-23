@@ -557,6 +557,13 @@ class AnalysisRunType(models.TextChoices):
     VALIDATION = "VALIDATION", "Validation"
 
 
+class AnalysisTriggerSource(models.TextChoices):
+    UI = "UI", "UI"
+    API = "API", "API"
+    EMAIL = "EMAIL", "Email"
+    SYSTEM = "SYSTEM", "System"
+
+
 class AnalysisRunStatus(models.TextChoices):
     QUEUED = "QUEUED", "Queued"
     RUNNING = "RUNNING", "Running"

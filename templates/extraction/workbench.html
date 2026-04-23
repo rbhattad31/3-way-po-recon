@@ -644,6 +644,14 @@
                 View
               </a>
             {% endif %}
+            {% if is_admin_user %}
+            <button type="button"
+                    class="btn btn-sm btn-outline-danger py-0 ms-1"
+                    title="Admin: Hard-delete this invoice and all associated data"
+                    onclick="openAdminDeleteModal({{ appr.extraction_result_id }}, '{{ appr.invoice.invoice_number|default:'N/A'|escapejs }}')">
+              <i class="bi bi-trash3"></i>
+            </button>
+            {% endif %}
           </td>
         </tr>
         {% empty %}

@@ -328,15 +328,9 @@ def request_list(request):
     search = request.GET.get("q")
 
     if status_filter == "RECOMMENDATION_SUCCESS":
-        qs = qs.filter(
-            status__in=[
-                ProcurementRequestStatus.PENDING_RFQ,
-                ProcurementRequestStatus.READY_RFQ,
-                ProcurementRequestStatus.COMPLETED,
-            ]
-        )
+        qs = qs.exclude(latest_recommended_option__isnull=True).exclude(latest_recommended_option="")
     elif status_filter == "RECOMMENDATION_FAILED":
-        qs = qs.filter(status=ProcurementRequestStatus.FAILED)
+        qs = qs.filter(Q(latest_recommended_option__isnull=True) | Q(latest_recommended_option=""))
     elif status_filter in {
         ProcurementRequestStatus.PENDING_RFQ,
         ProcurementRequestStatus.READY_RFQ,

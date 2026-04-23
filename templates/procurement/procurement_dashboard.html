@@ -3,10 +3,16 @@
 {% block title %}Procurement Dashboard — Bradsol Group{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/procurement/procurement-dashboard.css' %}?v={{ static_version }}">
+<link rel="stylesheet" href="{% static 'css/procurement/procurement-dashboard.css' %}">
+<style>
+  .proc-dashboard-shell {
+    padding-top: 1.5rem;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
+<div class="proc-dashboard-shell">
 
 <!-- HERO -->
 <div class="lmg-banner mb-4 d-flex align-items-center justify-content-between flex-wrap gap-3">
@@ -157,6 +163,8 @@
 
 {{ status_chart|json_script:"status-chart-data" }}
 {{ domain_chart|json_script:"domain-chart-data" }}
+
+</div>
 
 {% endblock %}
 

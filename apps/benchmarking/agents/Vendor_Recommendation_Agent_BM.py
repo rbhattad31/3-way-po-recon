@@ -6,6 +6,7 @@ import json
 import logging
 
 from apps.agents.services.llm_client import LLMClient, LLMMessage
+from apps.benchmarking.models import VarianceThresholdConfig
 
 
 logger = logging.getLogger(__name__)
@@ -14,8 +15,28 @@ logger = logging.getLogger(__name__)
 class BenchmarkVendorRecommendationAgent:
     """Select best vendor (or no-vendor) and produce reason summary."""
 
-    DEVIATION_THRESHOLD_PCT = 15.0
     HIGH_VARIANCE_RATIO_THRESHOLD = 0.25
+
+    @classmethod
+    def _deviation_threshold_pct(cls) -> float:
+        """Return the approved global moderate threshold from DB."""
+        try:
+            row = (
+                VarianceThresholdConfig.objects
+                .filter(
+                    category="ALL",
+                    geography="ALL",
+                    variance_status="MODERATE",
+                    is_active=True,
+                )
+                .order_by("pk")
+                .first()
+            )
+            if row:
+                return float(row.moderate_max_pct)
+        except Exception:
+            logger.exception("Failed to resolve global variance threshold; using fallback")
+        return 15.0
 
     @classmethod
     def recommend(cls, vendor_cards: list[dict]) -> dict:
@@ -30,6 +51,7 @@ class BenchmarkVendorRecommendationAgent:
                 "market_standards": cls.market_standards(),
             }
 
+        deviation_threshold_pct = cls._deviation_threshold_pct()
         ranked = []
         for card in vendor_cards:
             deviation = card.get("deviation_pct")
@@ -55,7 +77,7 @@ class BenchmarkVendorRecommendationAgent:
             eligible = (
                 deviation is not None
                 and benchmarked_line_count > 0
-                and abs(float(deviation)) <= cls.DEVIATION_THRESHOLD_PCT
+                and abs(float(deviation)) <= deviation_threshold_pct
                 and high_ratio <= cls.HIGH_VARIANCE_RATIO_THRESHOLD
             )
 
@@ -93,9 +115,9 @@ class BenchmarkVendorRecommendationAgent:
             failed_checks = []
             if benchmarked_line_count <= 0 or deviation is None:
                 failed_checks.append("benchmark alignment unavailable")
-            elif abs(float(deviation)) > cls.DEVIATION_THRESHOLD_PCT:
+            elif abs(float(deviation)) > deviation_threshold_pct:
                 failed_checks.append(
-                    f"absolute deviation {abs(float(deviation)):.2f}% exceeds {cls.DEVIATION_THRESHOLD_PCT:.0f}%"
+                    f"absolute deviation {abs(float(deviation)):.2f}% exceeds {deviation_threshold_pct:.0f}%"
                 )
             if high_ratio > cls.HIGH_VARIANCE_RATIO_THRESHOLD:
                 failed_checks.append(

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | {{ page_title }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:dashboard' %}" class="text-decoration-none">Functionality Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ page_title }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
+    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if can_manage %}
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="retry_failed_actions">
+      <button class="btn btn-sm btn-outline-danger" type="submit">Retry Failed Actions</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-semibold">Failed Email Actions</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0" style="font-size:.82rem;">
+      <thead>
+        <tr>
+          <th class="px-3 py-2">Timestamp</th>
+          <th class="py-2">Action</th>
+          <th class="py-2">Message</th>
+          <th class="py-2">Actor</th>
+          <th class="py-2">Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in failed_actions %}
+        <tr>
+          <td class="px-3 py-2">{{ item.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="py-2">{{ item.action_type }}</td>
+          <td class="py-2">{% if item.email_message_id %}#{{ item.email_message_id }}{% else %}--{% endif %}</td>
+          <td class="py-2">{% if item.performed_by_user %}{{ item.performed_by_user.email }}{% else %}SYSTEM{% endif %}</td>
+          <td class="py-2"><span class="text-danger">{{ item.error_message|default:"--"|truncatechars:100 }}</span></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-3">No failed email actions.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

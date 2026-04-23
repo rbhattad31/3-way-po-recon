@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | {{ page_title }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:dashboard' %}" class="text-decoration-none">Functionality Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ page_title }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
+    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+  </div>
+  <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-semibold">Recent Messages</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0" style="font-size:.82rem;">
+      <thead>
+        <tr>
+          <th class="px-3 py-2">Received</th>
+          <th class="py-2">From</th>
+          <th class="py-2">Subject</th>
+          <th class="py-2">Classification</th>
+          <th class="py-2">Status</th>
+          <th class="py-2">Linked Upload</th>
+          {% if can_manage %}<th class="py-2">Actions</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for msg in recent_messages %}
+        <tr>
+          <td class="px-3 py-2">{{ msg.received_at|date:"Y-m-d H:i" }}</td>
+          <td class="py-2">{{ msg.from_email|default:"--" }}</td>
+          <td class="py-2">{{ msg.subject|default:"(no subject)"|truncatechars:80 }}</td>
+          <td class="py-2">{{ msg.message_classification }}</td>
+          <td class="py-2">{{ msg.processing_status }}</td>
+          <td class="py-2">{% if msg.linked_document_upload_id %}<span class="badge bg-light text-dark border">Upload #{{ msg.linked_document_upload_id }}</span>{% else %}--{% endif %}</td>
+          {% if can_manage %}
+          <td class="py-2">
+            <div class="d-flex flex-wrap gap-1">
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="retry_message">
+                <input type="hidden" name="message_id" value="{{ msg.pk }}">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Retry</button>
+              </form>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="ignore_message">
+                <input type="hidden" name="message_id" value="{{ msg.pk }}">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Ignore</button>
+              </form>
+              <form method="post" class="d-inline d-flex gap-1 align-items-center">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="override_route">
+                <input type="hidden" name="message_id" value="{{ msg.pk }}">
+                <select name="target_domain" class="form-select form-select-sm" style="min-width:110px;">
+                  {% for domain in target_domain_choices %}<option value="{{ domain }}">{{ domain }}</option>{% endfor %}
+                </select>
+                <button class="btn btn-sm btn-outline-warning" type="submit">Override</button>
+              </form>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">No recent messages available for this tenant.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -22,12 +22,27 @@ class InboundIngestionService:
         return (body_text or "").strip().replace("\n", " ")[:1000]
 
     @classmethod
+    def _json_safe_payload(cls, value):
+        if isinstance(value, dict):
+            safe_obj = {}
+            for key, item in value.items():
+                safe_obj[key] = cls._json_safe_payload(item)
+            return safe_obj
+        if isinstance(value, list):
+            return [cls._json_safe_payload(item) for item in value]
+        if isinstance(value, bytes):
+            return f"<bytes:{len(value)}>"
+        return value
+
+    @classmethod
     @observed_service("email.inbound.ingest")
     def ingest_message_payload(cls, mailbox, payload: dict, *, tenant=None, actor_user=None) -> EmailMessage:
         provider_message_id = (payload.get("provider_message_id") or payload.get("id") or "").strip()
         internet_message_id = (payload.get("internet_message_id") or "").strip()
         if not provider_message_id:
             raise ValueError("provider_message_id is required")
+
+        payload_json_safe = cls._json_safe_payload(payload)
 
         with transaction.atomic():
             thread = ThreadLinkingService.get_or_create_thread(mailbox, payload, tenant=tenant)
@@ -61,7 +76,7 @@ class InboundIngestionService:
                     "body_html": payload.get("body_html") or "",
                     "body_preview": cls._body_preview(payload.get("body_text") or ""),
                     "has_attachments": bool(payload.get("attachments")),
-                    "provider_payload_json": payload,
+                    "provider_payload_json": payload_json_safe,
                     "raw_headers_json": payload.get("headers") or {},
                     "trace_id": payload.get("trace_id") or "",
                     "processing_status": EmailProcessingStatus.NORMALIZED,

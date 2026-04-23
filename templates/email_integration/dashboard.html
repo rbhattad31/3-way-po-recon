@@ -1,644 +1,412 @@
 {% extends "base.html" %}
 
-{% block title %}Email Integration | AP Operations{% endblock %}
+{% block title %}Email Integration | Functionality Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+  .email-dashboard {
+    --dash-icon-size: 1.125rem;
+  }
+
+  .email-dashboard .page-title {
+    font-weight: 700;
+    color: var(--ap-text);
+    letter-spacing: 0.01em;
+  }
+
+  .email-dashboard .page-subtitle {
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text-muted);
+  }
+
+  .email-dashboard .tenant-alert {
+    background: var(--ap-bg-card);
+    border-color: var(--ap-border);
+    border-radius: var(--ap-radius);
+  }
+
+  .email-dashboard .tenant-alert-note {
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text);
+  }
+
+  .email-dashboard .kpi-card {
+    border: 1px solid var(--ap-border);
+    border-radius: var(--ap-radius);
+    box-shadow: var(--ap-shadow-sm);
+    transition: var(--ap-transition-fast);
+  }
+
+  .email-dashboard .kpi-card:hover {
+    box-shadow: var(--ap-shadow);
+    transform: translateY(-1px);
+  }
+
+  .email-dashboard .kpi-label {
+    font-size: var(--ap-font-size-xs);
+    color: var(--ap-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .email-dashboard .kpi-value {
+    font-weight: 700;
+    color: var(--ap-text);
+  }
+
+  .email-dashboard .kpi-icon {
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: var(--ap-radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ap-primary);
+    background: var(--ap-primary-light);
+    border: 1px solid var(--ap-border);
+  }
+
+  .email-dashboard .kpi-icon.kpi-mailbox {
+    color: var(--bs-primary);
+    background: var(--bs-primary-bg-subtle);
+    border-color: var(--bs-primary-border-subtle);
+  }
+
+  .email-dashboard .kpi-icon.kpi-threads {
+    color: var(--bs-info);
+    background: var(--bs-info-bg-subtle);
+    border-color: var(--bs-info-border-subtle);
+  }
+
+  .email-dashboard .kpi-icon.kpi-messages {
+    color: var(--bs-secondary);
+    background: var(--bs-secondary-bg-subtle);
+    border-color: var(--bs-secondary-border-subtle);
+  }
+
+  .email-dashboard .kpi-icon.kpi-actions {
+    color: var(--bs-warning-text-emphasis);
+    background: var(--bs-warning-bg-subtle);
+    border-color: var(--bs-warning-border-subtle);
+  }
+
+  .email-dashboard .feature-link {
+    display: block;
+    height: 100%;
+  }
+
+  .email-dashboard .feature-card {
+    border: 1px solid var(--ap-border);
+    border-radius: var(--ap-radius);
+    box-shadow: var(--ap-shadow-sm);
+    transition: var(--ap-transition-fast);
+  }
+
+  .email-dashboard .feature-link:hover .feature-card,
+  .email-dashboard .feature-link:focus-visible .feature-card {
+    box-shadow: var(--ap-shadow);
+    transform: translateY(-2px);
+    border-color: var(--ap-border-focus);
+  }
+
+  .email-dashboard .feature-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ap-space-sm);
+  }
+
+  .email-dashboard .feature-title {
+    display: flex;
+    align-items: center;
+    gap: var(--ap-space-sm);
+    font-weight: 600;
+    color: var(--ap-text);
+  }
+
+  .email-dashboard .feature-badge {
+    font-size: var(--ap-font-size-xs);
+    padding: 0.18rem 0.42rem;
+  }
+
+  .email-dashboard .feature-copy {
+    font-size: var(--ap-font-size-sm);
+    color: var(--ap-text);
+    margin-top: var(--ap-space-sm);
+  }
+
+  .email-dashboard .svg-icon {
+    width: var(--dash-icon-size);
+    height: var(--dash-icon-size);
+    display: inline-block;
+    vertical-align: -0.125em;
+  }
+
+  .email-dashboard .feature-icon {
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--ap-radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+  }
+
+  .email-dashboard .feature-icon .svg-icon,
+  .email-dashboard .feature-icon i {
+    width: 1.05rem;
+    height: 1.05rem;
+    font-size: 1.05rem;
+  }
+
+  .email-dashboard .feature-icon.outlook-primary {
+    color: var(--bs-primary);
+    background: var(--bs-primary-bg-subtle);
+    border-color: var(--bs-primary-border-subtle);
+  }
+
+  .email-dashboard .feature-icon.outlook-info {
+    color: var(--bs-info);
+    background: var(--bs-info-bg-subtle);
+    border-color: var(--bs-info-border-subtle);
+  }
+
+  .email-dashboard .feature-icon.outlook-secondary {
+    color: var(--bs-secondary);
+    background: var(--bs-secondary-bg-subtle);
+    border-color: var(--bs-secondary-border-subtle);
+  }
+
+  .email-dashboard .feature-icon.outlook-warning {
+    color: var(--bs-warning-text-emphasis);
+    background: var(--bs-warning-bg-subtle);
+    border-color: var(--bs-warning-border-subtle);
+  }
+
+  .email-dashboard .feature-icon.outlook-danger {
+    color: var(--bs-danger);
+    background: var(--bs-danger-bg-subtle);
+    border-color: var(--bs-danger-border-subtle);
+  }
+
+  .email-dashboard .feature-icon.outlook-success {
+    color: var(--bs-success);
+    background: var(--bs-success-bg-subtle);
+    border-color: var(--bs-success-border-subtle);
+  }
+
+</style>
+{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb" class="mb-3">
   <ol class="breadcrumb mb-0" style="font-size:.8rem;">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
-    <li class="breadcrumb-item active">Email Integration</li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item active">Functionality Dashboard</li>
   </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
+<section class="email-dashboard" aria-label="Email Functionality Dashboard">
 <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
   <div>
-    <h5 class="mb-1" style="font-weight:700;color:#111827;">Email Integration</h5>
-    <div class="text-muted" style="font-size:.82rem;">Mailbox operations, processing controls, and governed action history.</div>
+    <h4 class="mb-1 page-title">
+      <i class="bi bi-envelope-check me-1" aria-hidden="true"></i>{{ page_title }}
+    </h4>
+    <div class="page-subtitle">{{ page_description }}</div>
   </div>
-  <a href="/api/v1/email-integration/messages/" class="btn btn-sm btn-outline-primary">Open API</a>
-</div>
-
-{% if can_manage %}
-<div class="row g-3 mb-3">
-  <div class="col-12 col-lg-5">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white fw-semibold">Connect Mailbox</div>
-      <div class="card-body">
-        <form method="post">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="create_mailbox">
-          <div class="mb-2">
-            <label class="form-label mb-1" style="font-size:.78rem;">Mailbox Email</label>
-            <input type="email" name="mailbox_address" class="form-control form-control-sm" placeholder="ap@yourcompany.com" required>
-            <div class="text-muted mt-1" style="font-size:.72rem;">Only the mailbox email is required. Name and provider are auto-filled.</div>
-          </div>
-          <details class="mb-3">
-            <summary class="text-muted" style="font-size:.78rem;cursor:pointer;">Optional advanced settings</summary>
-            <div class="mt-2">
-              <label class="form-label mb-1" style="font-size:.78rem;">Friendly Name</label>
-              <input type="text" name="name" class="form-control form-control-sm" placeholder="AP Inbox">
-            </div>
-            <div class="mt-2">
-              <label class="form-label mb-1" style="font-size:.78rem;">Provider</label>
-              <select name="provider" class="form-select form-select-sm">
-                <option value="">Auto-detect</option>
-                <option value="MICROSOFT_365">Microsoft 365</option>
-                <option value="GMAIL">Gmail</option>
-              </select>
-            </div>
-          </details>
-          <button class="btn btn-sm btn-primary" type="submit">Save Mailbox</button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-lg-7">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white fw-semibold">Ingest Email + PDF</div>
-      <div class="card-body">
-        <form method="post" enctype="multipart/form-data" class="row g-2">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="ingest_manual_email">
-          <div class="col-12 col-md-6">
-            <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
-            <select name="mailbox_id" class="form-select form-select-sm" required>
-              <option value="">Select mailbox</option>
-              {% for mailbox in mailboxes %}
-              <option value="{{ mailbox.pk }}">{{ mailbox.name }} ({{ mailbox.mailbox_address }})</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label mb-1" style="font-size:.78rem;">Attachment</label>
-            <input type="file" name="attachment_file" class="form-control form-control-sm">
-          </div>
-          <div class="col-12">
-            <div class="text-muted" style="font-size:.72rem;">Customer flow: select mailbox and upload the file. Subject and sender are auto-generated if skipped.</div>
-          </div>
-          <div class="col-12">
-            <details>
-              <summary class="text-muted" style="font-size:.78rem;cursor:pointer;">Optional email details</summary>
-              <div class="row g-2 mt-1">
-                <div class="col-12 col-md-6">
-                  <label class="form-label mb-1" style="font-size:.78rem;">Sender Email</label>
-                  <input type="email" name="from_email" class="form-control form-control-sm" placeholder="vendor@example.com">
-                </div>
-                <div class="col-12 col-md-6">
-                  <label class="form-label mb-1" style="font-size:.78rem;">Sender Name</label>
-                  <input type="text" name="from_name" class="form-control form-control-sm" placeholder="Vendor Name">
-                </div>
-                <div class="col-12">
-                  <label class="form-label mb-1" style="font-size:.78rem;">Subject</label>
-                  <input type="text" name="subject" class="form-control form-control-sm" placeholder="Invoice INV-1001">
-                </div>
-                <div class="col-12">
-                  <label class="form-label mb-1" style="font-size:.78rem;">Message</label>
-                  <textarea name="body_text" class="form-control form-control-sm" rows="2" placeholder="Please process attached invoice"></textarea>
-                </div>
-              </div>
-            </details>
-          </div>
-          <div class="col-12 d-flex gap-2">
-            <button class="btn btn-sm btn-success" type="submit">Upload and Process</button>
-          </div>
-        </form>
-      </div>
-    </div>
+  <div class="d-flex gap-2">
+    <a href="{% url 'email_integration:connect_mailbox' %}?config=1" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-sliders me-1" aria-hidden="true"></i>Configuration
+    </a>
   </div>
 </div>
-{% endif %}
 
-<div class="row g-3 mb-3">
+<div class="alert tenant-alert mb-3" role="alert">
+  <div class="fw-semibold"><i class="bi bi-shield-check me-1" aria-hidden="true"></i>Tenant Scope</div>
+  <div class="tenant-alert-note">Verified mailbox connections and all functionality below are scoped to your workspace access.</div>
+</div>
+
+<div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100">
+    <div class="card kpi-card h-100">
       <div class="card-body py-3">
-        <div class="text-muted" style="font-size:.72rem;">Active Mailboxes</div>
-        <div class="fs-4 fw-bold">{{ mailbox_count }}</div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="kpi-label">Verified Mailboxes</div>
+          <span class="kpi-icon kpi-mailbox" aria-hidden="true"><i class="bi bi-mailbox2"></i></span>
+        </div>
+        <div class="fs-4 kpi-value">{{ verified_mailboxes|length }}</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100">
+    <div class="card kpi-card h-100">
       <div class="card-body py-3">
-        <div class="text-muted" style="font-size:.72rem;">Threads</div>
-        <div class="fs-4 fw-bold">{{ thread_count }}</div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="kpi-label">Threads</div>
+          <span class="kpi-icon kpi-threads" aria-hidden="true"><i class="bi bi-chat-left-text"></i></span>
+        </div>
+        <div class="fs-4 kpi-value">{{ thread_count }}</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100">
+    <div class="card kpi-card h-100">
       <div class="card-body py-3">
-        <div class="text-muted" style="font-size:.72rem;">Messages</div>
-        <div class="fs-4 fw-bold">{{ message_count }}</div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="kpi-label">Messages</div>
+          <span class="kpi-icon kpi-messages" aria-hidden="true"><i class="bi bi-envelope"></i></span>
+        </div>
+        <div class="fs-4 kpi-value">{{ message_count }}</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm h-100">
+    <div class="card kpi-card h-100">
       <div class="card-body py-3">
-        <div class="text-muted" style="font-size:.72rem;">Actions</div>
-        <div class="fs-4 fw-bold">{{ action_count }}</div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="kpi-label">Actions</div>
+          <span class="kpi-icon kpi-actions" aria-hidden="true"><i class="bi bi-lightning-charge"></i></span>
+        </div>
+        <div class="fs-4 kpi-value">{{ action_count }}</div>
       </div>
     </div>
   </div>
 </div>
 
-<div class="card border-0 shadow-sm mb-3">
-  <div class="card-header bg-white fw-semibold">Mailbox Health and Connectivity</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0" style="font-size:.82rem;">
-      <thead>
-        <tr>
-          <th class="px-3 py-2">Mailbox</th>
-          <th class="py-2">Provider</th>
-          <th class="py-2">Last Success</th>
-          <th class="py-2">Health</th>
-          <th class="py-2">Last Error</th>
-          {% if can_manage %}<th class="py-2">Action</th>{% endif %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in mailbox_health %}
-        <tr>
-          <td class="px-3 py-2">
-            <div class="fw-semibold">{{ item.mailbox.name }}</div>
-            <div class="text-muted" style="font-size:.72rem;">{{ item.mailbox.mailbox_address }}</div>
-          </td>
-          <td class="py-2">{{ item.mailbox.provider }}</td>
-          <td class="py-2">
-            {% if item.mailbox.last_success_at %}
-              {{ item.mailbox.last_success_at|date:"Y-m-d H:i" }}
-              {% if item.sync_age_minutes is not None %}
-                <div class="text-muted" style="font-size:.72rem;">{{ item.sync_age_minutes }} min ago</div>
-              {% endif %}
-            {% else %}
-              --
-            {% endif %}
-          </td>
-          <td class="py-2">
-            {% if item.health_state == "healthy" %}
-              <span class="badge bg-success">HEALTHY</span>
-            {% elif item.health_state == "stale" %}
-              <span class="badge bg-warning text-dark">STALE</span>
-            {% else %}
-              <span class="badge bg-danger">ERROR</span>
-            {% endif %}
-          </td>
-          <td class="py-2">
-            {% if item.mailbox.last_error_message %}
-              <span class="text-danger">{{ item.mailbox.last_error_message|truncatechars:60 }}</span>
-            {% else %}
-              --
-            {% endif %}
-          </td>
-          {% if can_manage %}
-          <td class="py-2">
-            <div class="d-flex gap-1">
-              <form method="post" class="d-inline">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="test_mailbox_connection">
-                <input type="hidden" name="mailbox_id" value="{{ item.mailbox.pk }}">
-                <button class="btn btn-sm btn-outline-primary" type="submit">Test</button>
-              </form>
-              <form method="post" class="d-inline">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="trigger_poll">
-                <button class="btn btn-sm btn-outline-secondary" type="submit">Poll</button>
-              </form>
+<div class="row g-3">
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="ingest email pdf upload pipeline">
+    <a href="{% url 'email_integration:ingest' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-primary" aria-hidden="true"><i class="bi bi-envelope-arrow-up"></i></span>
+              Ingest Email + PDF
             </div>
-          </td>
-          {% endif %}
-        </tr>
-        {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-3">No active mailbox configured.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-cloud-arrow-up me-1"></i>Input</span>
+          </div>
+          <div class="feature-copy">Upload a tenant email and attachment into the ingestion pipeline.</div>
+        </div>
+      </article>
+    </a>
   </div>
-</div>
-
-<div class="card border-0 shadow-sm mb-3">
-  <div class="card-header bg-white fw-semibold">Configured Mailboxes</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0" style="font-size:.82rem;">
-      <thead>
-        <tr>
-          <th class="px-3 py-2">Name</th>
-          <th class="py-2">Address</th>
-          <th class="py-2">Provider</th>
-          <th class="py-2">Inbound</th>
-          <th class="py-2">Outbound</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for mailbox in mailboxes %}
-        <tr>
-          <td class="px-3 py-2">{{ mailbox.name }}</td>
-          <td class="py-2">{{ mailbox.mailbox_address }}</td>
-          <td class="py-2">{{ mailbox.provider }}</td>
-          <td class="py-2">{% if mailbox.is_inbound_enabled %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
-          <td class="py-2">{% if mailbox.is_outbound_enabled %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="5" class="text-center text-muted py-3">No active mailbox configured.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card border-0 shadow-sm mb-3">
-  <div class="card-header bg-white fw-semibold">Message Filters</div>
-  <div class="card-body">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-12 col-md-3">
-        <label class="form-label mb-1" style="font-size:.78rem;">Search</label>
-        <input type="text" name="q" class="form-control form-control-sm" value="{{ filters.q }}" placeholder="subject, sender, trace">
-      </div>
-      <div class="col-6 col-md-2">
-        <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
-        <select name="mailbox" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for mailbox in mailboxes %}
-          <option value="{{ mailbox.pk }}" {% if filters.mailbox == mailbox.pk|stringformat:"s" %}selected{% endif %}>{{ mailbox.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-6 col-md-2">
-        <label class="form-label mb-1" style="font-size:.78rem;">Processing</label>
-        <select name="processing_status" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for choice in processing_choices %}
-          <option value="{{ choice }}" {% if filters.processing_status == choice %}selected{% endif %}>{{ choice }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-6 col-md-2">
-        <label class="form-label mb-1" style="font-size:.78rem;">Classification</label>
-        <select name="classification" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for choice in classification_choices %}
-          <option value="{{ choice }}" {% if filters.classification == choice %}selected{% endif %}>{{ choice }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-6 col-md-2">
-        <label class="form-label mb-1" style="font-size:.78rem;">Routing</label>
-        <select name="routing_status" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for choice in routing_choices %}
-          <option value="{{ choice }}" {% if filters.routing_status == choice %}selected{% endif %}>{{ choice }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-12 col-md-1 d-grid">
-        <button type="submit" class="btn btn-sm btn-primary">Apply</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div class="card border-0 shadow-sm mb-3">
-  <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <span class="fw-semibold">Inbox Messages With Attachments</span>
-    <span class="text-muted" style="font-size:.75rem;">Select mailbox in filters -> select message(s) -> run trigger.</span>
-  </div>
-  <div class="table-responsive">
-    <form method="post">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="run_selected_messages">
-      <table class="table table-sm mb-0" style="font-size:.82rem;">
-        <thead>
-          <tr>
-            {% if can_manage %}<th class="px-3 py-2" style="width:42px;">Run</th>{% endif %}
-            <th class="py-2">Received</th>
-            <th class="py-2">Mailbox</th>
-            <th class="py-2">From</th>
-            <th class="py-2">Subject</th>
-            <th class="py-2">Attachments</th>
-            <th class="py-2">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% if inbox_requires_mailbox_selection %}
-          <tr>
-            {% if can_manage %}
-            <td colspan="7" class="text-center text-muted py-3">Choose a mailbox from Message Filters and click Apply to load inbox messages for run trigger.</td>
-            {% else %}
-            <td colspan="6" class="text-center text-muted py-3">Choose a mailbox from Message Filters and click Apply to load inbox messages.</td>
-            {% endif %}
-          </tr>
-          {% else %}
-          {% for msg in inbox_messages %}
-          <tr>
-            {% if can_manage %}
-            <td class="px-3 py-2 align-middle">
-              <input class="form-check-input" type="checkbox" name="selected_message_ids" value="{{ msg.pk }}">
-            </td>
-            {% endif %}
-            <td class="py-2 align-middle">{{ msg.received_at|date:"Y-m-d H:i" }}</td>
-            <td class="py-2 align-middle">{{ msg.mailbox.name }}</td>
-            <td class="py-2 align-middle">{{ msg.from_email|default:"--" }}</td>
-            <td class="py-2 align-middle">{{ msg.subject|default:"(no subject)"|truncatechars:70 }}</td>
-            <td class="py-2">
-              {% for attachment in msg.attachments.all %}
-                <div class="d-flex align-items-center gap-1 flex-wrap">
-                  <span class="badge bg-light text-dark border">{{ attachment.filename }}</span>
-                  <span class="text-muted" style="font-size:.72rem;">{{ attachment.processing_status }}</span>
-                  {% if attachment.linked_document_upload and attachment.linked_document_upload.file %}
-                  <a href="{{ attachment.linked_document_upload.file.url }}" target="_blank" rel="noopener" class="btn btn-link btn-sm p-0 text-decoration-none">Preview</a>
-                  {% elif attachment.linked_document_upload and attachment.linked_document_upload.blob_url %}
-                  <a href="{{ attachment.linked_document_upload.blob_url }}" target="_blank" rel="noopener" class="btn btn-link btn-sm p-0 text-decoration-none">Preview</a>
-                  {% else %}
-                  <span class="text-muted" style="font-size:.72rem;">Pending preview</span>
-                  {% endif %}
-                </div>
-              {% empty %}
-                --
-              {% endfor %}
-            </td>
-            <td class="py-2 align-middle">{{ msg.processing_status }}</td>
-          </tr>
-          {% empty %}
-          <tr>
-            <td colspan="7" class="text-center text-muted py-3">No inbox messages with attachments are available yet. Sync or ingest mail first.</td>
-          </tr>
-          {% endfor %}
-          {% endif %}
-        </tbody>
-      </table>
-      {% if can_manage and inbox_messages %}
-      <div class="p-3 border-top bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <div class="text-muted" style="font-size:.75rem;">This is the customer-style flow: view email, review attachments, select, and run.</div>
-        <button class="btn btn-sm btn-primary" type="submit">Run Selected Messages</button>
-      </div>
-      {% endif %}
-    </form>
-  </div>
-</div>
-
-<div class="card border-0 shadow-sm">
-  <div class="card-header bg-white fw-semibold">Recent Messages</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0" style="font-size:.82rem;">
-      <thead>
-        <tr>
-          <th class="px-3 py-2">Received</th>
-          <th class="py-2">From</th>
-          <th class="py-2">Subject</th>
-          <th class="py-2">Classification</th>
-                <th class="py-2">Status</th>
-                <th class="py-2">Linked Upload</th>
-                {% if can_manage %}<th class="py-2">Actions</th>{% endif %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for msg in recent_messages %}
-        <tr>
-          <td class="px-3 py-2">{{ msg.received_at|date:"Y-m-d H:i" }}</td>
-          <td class="py-2">{{ msg.from_email|default:"--" }}</td>
-          <td class="py-2">{{ msg.subject|default:"(no subject)"|truncatechars:80 }}</td>
-          <td class="py-2">{{ msg.message_classification }}</td>
-          <td class="py-2">{{ msg.processing_status }}</td>
-          <td class="py-2">
-            {% if msg.linked_document_upload_id %}
-              <span class="badge bg-light text-dark border">Upload #{{ msg.linked_document_upload_id }}</span>
-              {% if msg.linked_document_upload.processing_state %}
-                <span class="ms-1 text-muted" style="font-size:.72rem;">{{ msg.linked_document_upload.processing_state }}</span>
-              {% endif %}
-            {% else %}
-              --
-            {% endif %}
-          </td>
-          {% if can_manage %}
-          <td class="py-2">
-            <div class="d-flex flex-wrap gap-1">
-              <form method="post" class="d-inline">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="retry_message">
-                <input type="hidden" name="message_id" value="{{ msg.pk }}">
-                <button class="btn btn-sm btn-outline-primary" type="submit">Retry</button>
-              </form>
-              <form method="post" class="d-inline">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="ignore_message">
-                <input type="hidden" name="message_id" value="{{ msg.pk }}">
-                <button class="btn btn-sm btn-outline-secondary" type="submit">Ignore</button>
-              </form>
-              <form method="post" class="d-inline d-flex gap-1 align-items-center">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="override_route">
-                <input type="hidden" name="message_id" value="{{ msg.pk }}">
-                <select name="target_domain" class="form-select form-select-sm" style="min-width:110px;">
-                  {% for domain in target_domain_choices %}
-                  <option value="{{ domain }}">{{ domain }}</option>
-                  {% endfor %}
-                </select>
-                <button class="btn btn-sm btn-outline-warning" type="submit">Override</button>
-              </form>
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="mailbox health connection verify sync operations">
+    <a href="{% url 'email_integration:mailbox_health' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-info" aria-hidden="true"><i class="bi bi-patch-check"></i></span>
+              Mailbox Health
             </div>
-          </td>
-          {% endif %}
-        </tr>
-        {% empty %}
-        <tr><td colspan="7" class="text-center text-muted py-3">No messages available for current filters.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-heart-pulse me-1"></i>Health</span>
+          </div>
+          <div class="feature-copy">Review connection status, verify access, and trigger sync operations.</div>
+        </div>
+      </article>
+    </a>
   </div>
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="inbox processing run inbound messages attachment processing">
+    <a href="{% url 'email_integration:inbox_processing' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-secondary" aria-hidden="true"><i class="bi bi-sliders2-vertical"></i></span>
+              Inbox Processing
+            </div>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-gear me-1"></i>Process</span>
+          </div>
+          <div class="feature-copy">Run selected inbound messages and review attachment processing.</div>
+        </div>
+      </article>
+    </a>
+  </div>
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="recent messages retry ignore override routing email traffic">
+    <a href="{% url 'email_integration:recent_messages' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-warning" aria-hidden="true"><i class="bi bi-clock-history"></i></span>
+              Recent Messages
+            </div>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-clock-history me-1"></i>Recent</span>
+          </div>
+          <div class="feature-copy">Retry, ignore, or override routing for recent tenant email traffic.</div>
+        </div>
+      </article>
+    </a>
+  </div>
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="triage queue unresolved emails relink threads">
+    <a href="{% url 'email_integration:triage_queue' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-danger" aria-hidden="true"><i class="bi bi-exclamation-octagon"></i></span>
+              Triage Queue
+            </div>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-exclamation-circle me-1"></i>Triage</span>
+          </div>
+          <div class="feature-copy">Review unresolved tenant emails and relink threads.</div>
+        </div>
+      </article>
+    </a>
+  </div>
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="failed actions retry failed operations tenant">
+    <a href="{% url 'email_integration:failed_actions' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-danger" aria-hidden="true"><i class="bi bi-arrow-repeat"></i></span>
+              Failed Actions
+            </div>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-arrow-clockwise me-1"></i>Retry</span>
+          </div>
+          <div class="feature-copy">Inspect and retry failed email operations for this tenant.</div>
+        </div>
+      </article>
+    </a>
+  </div>
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="action ledger governed audit trail email actions">
+    <a href="{% url 'email_integration:action_ledger' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-success" aria-hidden="true"><i class="bi bi-journal-check"></i></span>
+              Action Ledger
+            </div>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-journal-text me-1"></i>Audit</span>
+          </div>
+          <div class="feature-copy">View the governed audit trail for all tenant email actions.</div>
+        </div>
+      </article>
+    </a>
+  </div>
+  {% if can_send %}
+  <div class="col-12 col-md-6 col-xl-3 feature-item" data-feature="send outbound email templated custom verified mailboxes">
+    <a href="{% url 'email_integration:outbound_email' %}" class="text-decoration-none text-reset feature-link">
+      <article class="card feature-card h-100">
+        <div class="card-body">
+          <div class="feature-header">
+            <div class="feature-title">
+              <span class="feature-icon outlook-primary" aria-hidden="true"><i class="bi bi-send-check"></i></span>
+              Send Outbound Email
+            </div>
+            <span class="badge text-bg-light border feature-badge"><i class="bi bi-send me-1"></i>Send</span>
+          </div>
+          <div class="feature-copy">Send templated or custom outbound mail using verified tenant mailboxes.</div>
+        </div>
+      </article>
+    </a>
+  </div>
+  {% endif %}
 </div>
-
-<div class="card border-0 shadow-sm mt-3">
-  <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <span class="fw-semibold">Triage Queue</span>
-    {% if can_manage %}
-    <form method="post" class="d-flex gap-2">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="relink_threads">
-      <button class="btn btn-sm btn-outline-secondary" type="submit">Relink Threads</button>
-    </form>
-    {% endif %}
-  </div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0" style="font-size:.82rem;">
-      <thead>
-        <tr>
-          <th class="px-3 py-2">Received</th>
-          <th class="py-2">From</th>
-          <th class="py-2">Subject</th>
-          <th class="py-2">Classification</th>
-          <th class="py-2">Suggested Entity</th>
-          <th class="py-2">Attachments</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for msg in triage_messages %}
-        <tr>
-          <td class="px-3 py-2">{{ msg.received_at|date:"Y-m-d H:i" }}</td>
-          <td class="py-2">{{ msg.from_email|default:"--" }}</td>
-          <td class="py-2">{{ msg.subject|default:"(no subject)"|truncatechars:70 }}</td>
-          <td class="py-2"><span class="badge bg-warning text-dark">{{ msg.message_classification }}</span></td>
-          <td class="py-2">
-            {% if msg.matched_entity_type %}
-              {{ msg.matched_entity_type }} #{{ msg.matched_entity_id }}
-            {% else %}
-              --
-            {% endif %}
-          </td>
-          <td class="py-2">{{ msg.attachments.count }}</td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-3">No triage messages pending.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card border-0 shadow-sm mt-3">
-  <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <span class="fw-semibold">Failed Email Actions</span>
-    {% if can_manage %}
-    <form method="post" class="d-flex gap-2">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="retry_failed_actions">
-      <button class="btn btn-sm btn-outline-danger" type="submit">Retry Failed Actions</button>
-    </form>
-    {% endif %}
-  </div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0" style="font-size:.82rem;">
-      <thead>
-        <tr>
-          <th class="px-3 py-2">Timestamp</th>
-          <th class="py-2">Action</th>
-          <th class="py-2">Message</th>
-          <th class="py-2">Actor</th>
-          <th class="py-2">Error</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in failed_actions %}
-        <tr>
-          <td class="px-3 py-2">{{ item.created_at|date:"Y-m-d H:i" }}</td>
-          <td class="py-2">{{ item.action_type }}</td>
-          <td class="py-2">{% if item.email_message_id %}#{{ item.email_message_id }}{% else %}--{% endif %}</td>
-          <td class="py-2">{% if item.performed_by_user %}{{ item.performed_by_user.email }}{% else %}SYSTEM{% endif %}</td>
-          <td class="py-2"><span class="text-danger">{{ item.error_message|default:"--"|truncatechars:100 }}</span></td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="5" class="text-center text-muted py-3">No failed email actions.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card border-0 shadow-sm mt-3">
-  <div class="card-header bg-white fw-semibold">Action Ledger</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0" style="font-size:.82rem;">
-      <thead>
-        <tr>
-          <th class="px-3 py-2">Timestamp</th>
-          <th class="py-2">Action</th>
-          <th class="py-2">Status</th>
-          <th class="py-2">Message</th>
-          <th class="py-2">Actor</th>
-          <th class="py-2">Error</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in recent_actions %}
-        <tr>
-          <td class="px-3 py-2">{{ item.created_at|date:"Y-m-d H:i" }}</td>
-          <td class="py-2">{{ item.action_type }}</td>
-          <td class="py-2">
-            {% if item.action_status == "COMPLETED" %}
-              <span class="badge bg-success">COMPLETED</span>
-            {% elif item.action_status == "FAILED" %}
-              <span class="badge bg-danger">FAILED</span>
-            {% else %}
-              <span class="badge bg-secondary">{{ item.action_status }}</span>
-            {% endif %}
-          </td>
-          <td class="py-2">
-            {% if item.email_message_id %}
-              #{{ item.email_message_id }}
-            {% else %}
-              --
-            {% endif %}
-          </td>
-          <td class="py-2">
-            {% if item.performed_by_user %}
-              {{ item.performed_by_user.email }}
-            {% else %}
-              SYSTEM
-            {% endif %}
-          </td>
-          <td class="py-2">{{ item.error_message|default:"--"|truncatechars:60 }}</td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-3">No actions logged yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-{% if can_send %}
-<div class="card border-0 shadow-sm mt-3">
-  <div class="card-header bg-white fw-semibold">Send Outbound Email</div>
-  <div class="card-body">
-    <form method="post" class="row g-2">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="send_outbound_email">
-      <div class="col-12 col-md-4">
-        <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
-        <select name="mailbox_id" class="form-select form-select-sm" required>
-          <option value="">Select outbound mailbox</option>
-          {% for mailbox in mailboxes %}
-            {% if mailbox.is_outbound_enabled %}
-              <option value="{{ mailbox.pk }}">{{ mailbox.name }} ({{ mailbox.mailbox_address }})</option>
-            {% endif %}
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-12 col-md-4">
-        <label class="form-label mb-1" style="font-size:.78rem;">Template (optional)</label>
-        <select name="template_code" class="form-select form-select-sm">
-          <option value="">No template (custom)</option>
-          {% for template in active_templates %}
-            <option value="{{ template.template_code }}">{{ template.template_code }} - {{ template.template_name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-12 col-md-4">
-        <label class="form-label mb-1" style="font-size:.78rem;">To Recipients</label>
-        <input type="text" name="to_recipients" class="form-control form-control-sm" placeholder="a@vendor.com, b@vendor.com" required>
-      </div>
-      <div class="col-12 col-md-6">
-        <label class="form-label mb-1" style="font-size:.78rem;">Subject (required for custom)</label>
-        <input type="text" name="subject" class="form-control form-control-sm" placeholder="Invoice clarification required">
-      </div>
-      <div class="col-12 col-md-6">
-        <label class="form-label mb-1" style="font-size:.78rem;">Template Variables JSON</label>
-        <input type="text" name="template_variables" class="form-control form-control-sm" placeholder='{"invoice_number":"INV-1001"}'>
-      </div>
-      <div class="col-12">
-        <label class="form-label mb-1" style="font-size:.78rem;">Body (for custom mode)</label>
-        <textarea name="body_text" class="form-control form-control-sm" rows="3" placeholder="Please share the missing PO reference for this invoice."></textarea>
-      </div>
-      <div class="col-12">
-        <button class="btn btn-sm btn-primary" type="submit">Send Outbound</button>
-      </div>
-    </form>
-  </div>
-</div>
-{% endif %}
+</section>
 {% endblock %}
-
-

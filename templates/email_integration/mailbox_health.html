@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | {{ page_title }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:dashboard' %}" class="text-decoration-none">Functionality Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ page_title }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
+    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+  </div>
+  <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-semibold">Mailbox Health and Connectivity</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0" style="font-size:.82rem;">
+      <thead>
+        <tr>
+          <th class="px-3 py-2">Mailbox</th>
+          <th class="py-2">Provider</th>
+          <th class="py-2">Last Success</th>
+          <th class="py-2">Health</th>
+          <th class="py-2">Last Error</th>
+          {% if can_manage %}<th class="py-2">Action</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in mailbox_health %}
+        <tr>
+          <td class="px-3 py-2"><div class="fw-semibold">{{ item.mailbox.name }}</div><div class="text-muted" style="font-size:.72rem;">{{ item.mailbox.mailbox_address }}</div></td>
+          <td class="py-2">{{ item.mailbox.provider }}</td>
+          <td class="py-2">{% if item.mailbox.last_success_at %}{{ item.mailbox.last_success_at|date:"Y-m-d H:i" }}{% if item.sync_age_minutes is not None %}<div class="text-muted" style="font-size:.72rem;">{{ item.sync_age_minutes }} min ago</div>{% endif %}{% else %}--{% endif %}</td>
+          <td class="py-2">{% if item.health_state == "healthy" %}<span class="badge bg-success">HEALTHY</span>{% elif item.health_state == "stale" %}<span class="badge bg-warning text-dark">STALE</span>{% else %}<span class="badge bg-danger">ERROR</span>{% endif %}</td>
+          <td class="py-2">{% if item.mailbox.last_error_message %}<span class="text-danger">{{ item.mailbox.last_error_message|truncatechars:80 }}</span>{% else %}--{% endif %}</td>
+          {% if can_manage %}
+          <td class="py-2">
+            <div class="d-flex gap-1">
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="test_mailbox_connection">
+                <input type="hidden" name="mailbox_id" value="{{ item.mailbox.pk }}">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Test</button>
+              </form>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="trigger_poll">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Poll</button>
+              </form>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-3">No mailboxes configured for this tenant.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-semibold">Configured Mailboxes</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0" style="font-size:.82rem;">
+      <thead>
+        <tr>
+          <th class="px-3 py-2">Name</th>
+          <th class="py-2">Address</th>
+          <th class="py-2">Provider</th>
+          <th class="py-2">Inbound</th>
+          <th class="py-2">Outbound</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for mailbox in mailboxes %}
+        <tr>
+          <td class="px-3 py-2">{{ mailbox.name }}</td>
+          <td class="py-2">{{ mailbox.mailbox_address }}</td>
+          <td class="py-2">{{ mailbox.provider }}</td>
+          <td class="py-2">{% if mailbox.is_inbound_enabled %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
+          <td class="py-2">{% if mailbox.is_outbound_enabled %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-3">No mailbox records found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

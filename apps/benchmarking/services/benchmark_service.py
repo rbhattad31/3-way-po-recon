@@ -30,6 +30,7 @@ from apps.benchmarking.models import (
     BenchmarkQuotation,
     BenchmarkRequest,
     BenchmarkResult,
+    VarianceThresholdConfig,
     VarianceStatus,
 )
 
@@ -53,6 +54,49 @@ class BenchmarkEngine:
             return deployment
         model = str(getattr(settings, "LLM_MODEL_NAME", "") or "").strip()
         return model or "unknown"
+
+    @classmethod
+    def _resolve_variance_thresholds(cls, category: Optional[str] = None, geography: Optional[str] = None) -> tuple[float, float]:
+        """Resolve variance thresholds from DB.
+
+        Priority:
+          1. category + geography
+          2. category + ALL geography
+          3. ALL + ALL global rule
+
+        Falls back to the client-approved global baseline from the configuration
+        PDF when DB records are unavailable.
+        """
+        category = str(category or "ALL").strip() or "ALL"
+        geography = str(geography or "ALL").strip().upper() or "ALL"
+
+        candidates = [
+            {"category__iexact": category, "geography": geography, "is_active": True},
+            {"category__iexact": category, "geography": "ALL", "is_active": True},
+            {"category": "ALL", "geography": "ALL", "is_active": True},
+        ]
+        try:
+            for filters in candidates:
+                rows = list(
+                    VarianceThresholdConfig.objects
+                    .filter(**filters)
+                    .order_by("pk")
+                )
+                if not rows:
+                    continue
+
+                optimal_row = next((row for row in rows if row.variance_status == VarianceStatus.WITHIN_RANGE), None)
+                moderate_row = next((row for row in rows if row.variance_status == VarianceStatus.MODERATE), None)
+                if optimal_row and moderate_row:
+                    return float(optimal_row.moderate_max_pct), float(moderate_row.moderate_max_pct)
+
+                legacy_global = next((row for row in rows if row.category == "ALL" and row.geography == "ALL"), None)
+                if legacy_global:
+                    return float(legacy_global.within_range_max_pct), float(legacy_global.moderate_max_pct)
+        except Exception:
+            logger.exception("BenchmarkEngine: failed to resolve variance thresholds from DB")
+
+        return 5.0, 15.0
 
     @classmethod
     def _persist_result_snapshot(cls, *, bench_request: BenchmarkRequest) -> Optional[BenchmarkResult]:
@@ -672,9 +716,10 @@ class BenchmarkEngine:
         if benchmark_total <= 0 or deviation_pct is None:
             return "NEEDS_REVIEW"
         abs_dev = abs(float(deviation_pct))
-        if abs_dev <= 5.0:
+        within_range_max_pct, moderate_max_pct = cls._resolve_variance_thresholds("ALL", "ALL")
+        if abs_dev <= within_range_max_pct:
             return "WITHIN_RANGE"
-        if abs_dev <= 15.0:
+        if abs_dev <= moderate_max_pct:
             return "MODERATE"
         return "HIGH"
 
@@ -1116,9 +1161,13 @@ class BenchmarkEngine:
                     
                     # Determine variance status
                     abs_variance = abs(variance_pct)
-                    if abs_variance <= 5.0:
+                    within_range_max_pct, moderate_max_pct = cls._resolve_variance_thresholds(
+                        line_item.category,
+                        getattr(line_item.quotation.request, "geography", "ALL"),
+                    )
+                    if abs_variance <= within_range_max_pct:
                         line_item.variance_status = "WITHIN_RANGE"
-                    elif abs_variance <= 15.0:
+                    elif abs_variance <= moderate_max_pct:
                         line_item.variance_status = "MODERATE"
                     else:
                         line_item.variance_status = "HIGH"
@@ -1231,9 +1280,13 @@ class BenchmarkEngine:
                 )
                 line_item.variance_pct = round(variance_pct, 2)
                 abs_variance = abs(variance_pct)
-                if abs_variance <= 5.0:
+                within_range_max_pct, moderate_max_pct = cls._resolve_variance_thresholds(
+                    line_item.category,
+                    getattr(line_item.quotation.request, "geography", "ALL"),
+                )
+                if abs_variance <= within_range_max_pct:
                     line_item.variance_status = "WITHIN_RANGE"
-                elif abs_variance <= 15.0:
+                elif abs_variance <= moderate_max_pct:
                     line_item.variance_status = "MODERATE"
                 else:
                     line_item.variance_status = "HIGH"

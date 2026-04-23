@@ -16,6 +16,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.core.enums import (
+    AnalysisTriggerSource,
     AnalysisRunStatus,
     AnalysisRunType,
     AttributeDataType,
@@ -32,6 +33,7 @@ from apps.core.enums import (
     RecommendationMethod,
     RoomUsageType,
     SourceDocumentType,
+    SourceChannel,
     ValidationEvaluationMode,
     ValidationItemStatus,
     ValidationNextAction,
@@ -103,6 +105,20 @@ class ProcurementRequest(BaseModel):
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="procurement_requests",
+    )
+    primary_email_thread = models.ForeignKey(
+        "email_integration.EmailThread",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="procurement_requests",
+        help_text="Primary email thread linked to this procurement request.",
+    )
+    source_channel = models.CharField(
+        max_length=30,
+        choices=SourceChannel.choices,
+        default=SourceChannel.WEB_UPLOAD,
+        db_index=True,
     )
     source_document_type = models.CharField(
         max_length=30,
@@ -224,6 +240,20 @@ class SupplierQuotation(BaseModel):
         null=True, blank=True,
         related_name="procurement_quotations",
     )
+    primary_email_thread = models.ForeignKey(
+        "email_integration.EmailThread",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supplier_quotations",
+        help_text="Primary supplier email thread linked to this quotation.",
+    )
+    source_channel = models.CharField(
+        max_length=30,
+        choices=SourceChannel.choices,
+        default=SourceChannel.WEB_UPLOAD,
+        db_index=True,
+    )
     extraction_status = models.CharField(
         max_length=20,
         choices=ExtractionStatus.choices,
@@ -333,6 +363,12 @@ class AnalysisRun(BaseModel):
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="procurement_triggered_runs",
+    )
+    trigger_source = models.CharField(
+        max_length=20,
+        choices=AnalysisTriggerSource.choices,
+        default=AnalysisTriggerSource.UI,
+        db_index=True,
     )
     input_snapshot_json = models.JSONField(null=True, blank=True)
     output_summary = models.TextField(blank=True, default="")

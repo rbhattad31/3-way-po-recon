@@ -69,7 +69,7 @@ class SupplierQuotationListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "vendor_name", "quotation_number", "quotation_date",
             "total_amount", "currency", "extraction_status",
-            "extraction_confidence", "prefill_status",
+            "extraction_confidence", "prefill_status", "source_channel",
             "line_item_count", "created_at",
         ]
 
@@ -83,6 +83,7 @@ class SupplierQuotationDetailSerializer(serializers.ModelSerializer):
             "id", "vendor_name", "quotation_number", "quotation_date",
             "total_amount", "currency", "extraction_status",
             "extraction_confidence", "prefill_status", "prefill_payload_json",
+            "source_channel", "primary_email_thread",
             "line_items", "created_at", "updated_at",
         ]
 
@@ -92,7 +93,7 @@ class SupplierQuotationWriteSerializer(serializers.ModelSerializer):
         model = SupplierQuotation
         fields = [
             "vendor_name", "quotation_number", "quotation_date",
-            "total_amount", "currency",
+            "total_amount", "currency", "source_channel", "primary_email_thread",
         ]
 
 
@@ -109,7 +110,7 @@ class AnalysisRunSerializer(serializers.ModelSerializer):
             "started_at", "completed_at", "duration_ms",
             "confidence_score", "output_summary",
             "input_snapshot_json", "error_message",
-            "trace_id", "created_at",
+            "trace_id", "trigger_source", "created_at",
         ]
 
 
@@ -179,6 +180,7 @@ class ProcurementRequestListSerializer(serializers.ModelSerializer):
             "id", "request_id", "title", "domain_code", "schema_code",
             "request_type", "status", "priority",
             "geography_country", "geography_city", "currency",
+            "source_channel",
             "created_by_email", "attribute_count", "quotation_count", "run_count",
             "created_at", "updated_at",
         ]
@@ -196,7 +198,7 @@ class ProcurementRequestDetailSerializer(serializers.ModelSerializer):
             "id", "request_id", "title", "description",
             "domain_code", "schema_code", "request_type", "status", "priority",
             "geography_country", "geography_city", "currency",
-            "created_by_email", "trace_id",
+            "created_by_email", "trace_id", "source_channel", "primary_email_thread",
             "attributes", "quotations", "analysis_runs",
             "created_at", "updated_at",
         ]
@@ -211,6 +213,7 @@ class ProcurementRequestWriteSerializer(serializers.ModelSerializer):
             "title", "description", "domain_code", "schema_code",
             "request_type", "priority",
             "geography_country", "geography_city", "currency",
+            "source_channel", "primary_email_thread",
             "attributes",
         ]
 

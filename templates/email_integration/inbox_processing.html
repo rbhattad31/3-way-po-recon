@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | {{ page_title }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:dashboard' %}" class="text-decoration-none">Functionality Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ page_title }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
+    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+  </div>
+  <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-semibold">Auto Process Configuration</div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end mb-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
+        <select name="mailbox" class="form-select form-select-sm" required>
+          <option value="">Select mailbox</option>
+          {% for mailbox in mailboxes %}<option value="{{ mailbox.pk }}" {% if filters.mailbox == mailbox.pk|stringformat:"s" %}selected{% endif %}>{{ mailbox.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-2 d-grid"><button type="submit" class="btn btn-sm btn-primary">Load Inbox</button></div>
+    </form>
+
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="mailbox_id" value="{{ filters.mailbox }}">
+      <div class="col-12 col-md-5">
+        <label class="form-label mb-1" style="font-size:.78rem;">Auto Process Sender Email IDs</label>
+        <textarea name="auto_sender_emails" class="form-control form-control-sm" rows="3" placeholder="one per line or comma separated">{{ auto_sender_emails_text }}</textarea>
+      </div>
+      <div class="col-12 col-md-5">
+        <label class="form-label mb-1" style="font-size:.78rem;">Auto Process Sender Names (optional)</label>
+        <textarea name="auto_sender_names" class="form-control form-control-sm" rows="3" placeholder="one per line or comma separated">{{ auto_sender_names_text }}</textarea>
+      </div>
+      <div class="col-12 col-md-2 d-grid gap-2">
+        <button type="submit" name="action" value="save_auto_sender_rules" class="btn btn-sm btn-outline-primary">Save Rules</button>
+        <button type="submit" name="action" value="run_auto_sender_processing" class="btn btn-sm btn-primary">Run Auto Process</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span class="fw-semibold">Inbox Messages With Attachments</span>
+    <span class="text-muted" style="font-size:.75rem;">Sender email/name is auto-read from each message and extraction status is shown below.</span>
+  </div>
+  <div class="table-responsive">
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="run_selected_messages">
+      <table class="table table-sm mb-0" style="font-size:.82rem;">
+        <thead>
+          <tr>
+            {% if can_manage %}<th class="px-3 py-2" style="width:42px;">Run</th>{% endif %}
+            <th class="py-2">Received</th>
+            <th class="py-2">Mailbox</th>
+            <th class="py-2">From</th>
+            <th class="py-2">Subject</th>
+            <th class="py-2">Attachments</th>
+            <th class="py-2">Extraction Status</th>
+            <th class="py-2">Result</th>
+            <th class="py-2">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if inbox_requires_mailbox_selection %}
+          <tr><td colspan="9" class="text-center text-muted py-3">Choose a mailbox from filters and click Apply to load inbox messages.</td></tr>
+          {% else %}
+          {% for msg in inbox_messages %}
+          <tr>
+            {% if can_manage %}<td class="px-3 py-2 align-middle"><input class="form-check-input" type="checkbox" name="selected_message_ids" value="{{ msg.pk }}"></td>{% endif %}
+            <td class="py-2 align-middle">{{ msg.received_at|date:"Y-m-d H:i" }}</td>
+            <td class="py-2 align-middle">{{ msg.mailbox.name }}</td>
+            <td class="py-2 align-middle">
+              <div>{{ msg.from_email|default:"--" }}</div>
+              <div class="text-muted" style="font-size:.72rem;">{{ msg.from_name|default:"--" }}</div>
+            </td>
+            <td class="py-2 align-middle">{{ msg.subject|default:"(no subject)"|truncatechars:70 }}</td>
+            <td class="py-2">{% for attachment in msg.attachments.all %}<div class="d-flex align-items-center gap-1 flex-wrap"><span class="badge bg-light text-dark border">{{ attachment.filename }}</span><span class="text-muted" style="font-size:.72rem;">{{ attachment.processing_status }}</span></div>{% empty %}--{% endfor %}</td>
+            <td class="py-2 align-middle"><span class="badge bg-light text-dark border">{{ msg.extraction_status|default:"NOT_STARTED" }}</span></td>
+            <td class="py-2 align-middle">
+              {% if msg.extraction_result_url %}
+                <a href="{{ msg.extraction_result_url }}" class="btn btn-sm btn-outline-primary">View Result</a>
+              {% else %}
+                <span class="text-muted">--</span>
+              {% endif %}
+            </td>
+            <td class="py-2 align-middle">{{ msg.processing_status }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="9" class="text-center text-muted py-3">No inbox messages with attachments are available yet.</td></tr>
+          {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+      {% if can_manage and inbox_messages %}<div class="p-3 border-top bg-light text-end"><button class="btn btn-sm btn-primary" type="submit">Run Selected Messages</button></div>{% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

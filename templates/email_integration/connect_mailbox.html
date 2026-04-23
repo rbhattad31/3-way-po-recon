@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | Connect Mailbox{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item active">Mailbox Connection</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center g-3">
+  <div class="col-12 col-lg-7 col-xl-6">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">Connect Mailbox</div>
+      <div class="card-body p-4">
+        <div class="mb-3">
+          <h5 class="mb-1" style="font-weight:700;color:#111827;">Tenant Mailbox Setup</h5>
+          <div class="text-muted" style="font-size:.82rem;">Provide the client-specific Microsoft mailbox configuration details below. No functionalities are accessible until mailbox connection succeeds.</div>
+        </div>
+        {% if config_mode %}
+        <div class="alert alert-info py-2" style="font-size:.82rem;">
+          Configuration mode is enabled. Use this page to add, edit, or delete mailbox connections.
+        </div>
+        {% else %}
+        <div class="alert alert-warning py-2" style="font-size:.82rem;">
+          First-time setup is mandatory. Complete mailbox connection to unlock dashboard functionalities.
+        </div>
+        {% endif %}
+        {% if can_manage %}
+        <form method="post" class="row g-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="{% if editing_mailbox %}update_mailbox{% else %}connect_mailbox{% endif %}">
+          {% if editing_mailbox %}
+          <input type="hidden" name="mailbox_id" value="{{ editing_mailbox.pk }}">
+          {% endif %}
+          <div class="col-12">
+            <label class="form-label mb-1" style="font-size:.78rem;">Mail ID</label>
+            <input type="email" name="mailbox_address" class="form-control" placeholder="ap@clientdomain.com" value="{% if editing_mailbox %}{{ editing_mailbox.mailbox_address }}{% endif %}" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label mb-1" style="font-size:.78rem;">Friendly Name <span class="text-muted">[optional]</span></label>
+            <input type="text" name="name" class="form-control" placeholder="AP Shared Inbox" value="{% if editing_mailbox %}{{ editing_mailbox.name }}{% endif %}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label mb-1" style="font-size:.78rem;">Provider</label>
+            <select name="provider" id="provider_select" class="form-select" required>
+              <option value="MICROSOFT_365" {% if not editing_mailbox or editing_mailbox.provider == 'MICROSOFT_365' %}selected{% endif %}>Microsoft 365</option>
+              <option value="GMAIL" {% if editing_mailbox and editing_mailbox.provider == 'GMAIL' %}selected{% endif %}>Gmail</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-6 provider-microsoft">
+            <label class="form-label mb-1" style="font-size:.78rem;">Microsoft Tenant ID</label>
+            <input type="text" name="graph_tenant_id" id="graph_tenant_id" class="form-control" placeholder="Azure Entra tenant id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.tenant_id|default:'' }}{% endif %}" required>
+          </div>
+          <div class="col-12 col-md-6 provider-microsoft">
+            <label class="form-label mb-1" style="font-size:.78rem;">Microsoft Client ID</label>
+            <input type="text" name="graph_client_id" id="graph_client_id" class="form-control" placeholder="App registration client id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.client_id|default:'' }}{% endif %}" required>
+          </div>
+          <div class="col-12 col-md-6 provider-microsoft">
+            <label class="form-label mb-1" style="font-size:.78rem;">Microsoft Client Secret</label>
+            <input type="password" name="graph_client_secret" id="graph_client_secret" class="form-control" placeholder="{% if editing_mailbox %}Leave blank to keep existing secret{% else %}Client secret{% endif %}" {% if not editing_mailbox %}required{% endif %}>
+          </div>
+
+          
+          <div class="col-12 col-md-6 provider-gmail d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Server</label>
+            <input type="text" name="smtp_host" id="smtp_host" class="form-control" placeholder="smtp.gmail.com" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.smtp_host|default:'' }}{% endif %}">
+          </div>
+          <div class="col-12 col-md-6 provider-gmail d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Port</label>
+            <input type="number" name="smtp_port" id="smtp_port" class="form-control" placeholder="587" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.smtp_port|default:'' }}{% endif %}">
+          </div>
+          <div class="col-12 col-md-6 provider-gmail d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Security</label>
+            <select name="smtp_security" id="smtp_security" class="form-select">
+              <option value="" {% if not editing_mailbox or not editing_mailbox.config_json.smtp_security %}selected{% endif %}>Select Security</option>
+              <option value="TLS" {% if editing_mailbox and editing_mailbox.config_json.smtp_security == 'TLS' %}selected{% endif %}>TLS</option>
+              <option value="SSL" {% if editing_mailbox and editing_mailbox.config_json.smtp_security == 'SSL' %}selected{% endif %}>SSL</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-6 provider-gmail d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Username</label>
+            <input type="text" name="smtp_username" id="smtp_username" class="form-control" placeholder="youremail@gmail.com" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.smtp_username|default:'' }}{% endif %}">
+          </div>
+          <div class="col-12 col-md-6 provider-gmail d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Password (App Password)</label>
+            <input type="password" name="smtp_password" id="smtp_password" class="form-control" placeholder="{% if editing_mailbox %}Leave blank to keep existing app password{% else %}App password{% endif %}">
+          </div>
+          <div class="col-12 d-grid d-md-flex justify-content-md-end gap-2">
+            {% if editing_mailbox %}
+            <a href="{% url 'email_integration:connect_mailbox' %}?config=1" class="btn btn-outline-secondary">Cancel Edit</a>
+            <button class="btn btn-primary px-4" type="submit">Update and Verify</button>
+            {% else %}
+            <button class="btn btn-primary px-4" type="submit">Connect and Verify</button>
+            {% endif %}
+          </div>
+        </form>
+        {% else %}
+        <div class="alert alert-warning mb-0">A tenant admin with `email.manage` permission must complete mailbox setup.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-5 col-xl-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white fw-semibold">Existing Tenant Connections</div>
+      <div class="card-body">
+        {% for mailbox in mailboxes %}
+        <div class="border rounded p-3 mb-2">
+          <div class="fw-semibold">{{ mailbox.name|default:mailbox.mailbox_address }}</div>
+          <div class="text-muted" style="font-size:.78rem;">{{ mailbox.mailbox_address }}</div>
+          <div class="d-flex gap-1 flex-wrap mt-2">
+            <span class="badge {% if mailbox.last_success_at and not mailbox.last_error_message %}bg-success{% else %}bg-secondary{% endif %}">{% if mailbox.last_success_at and not mailbox.last_error_message %}VERIFIED{% else %}PENDING{% endif %}</span>
+            <span class="badge bg-light text-dark">{{ mailbox.provider }}</span>
+          </div>
+          {% if mailbox.last_error_message %}
+          <div class="small text-danger mt-2">{{ mailbox.last_error_message|truncatechars:120 }}</div>
+          {% endif %}
+          {% if can_manage %}
+          <div class="d-flex gap-2 mt-3">
+            <a href="{% url 'email_integration:connect_mailbox' %}?config=1&edit={{ mailbox.pk }}" class="btn btn-sm btn-outline-primary">Edit</a>
+            <form method="post" onsubmit="return confirm('Delete this mailbox connection?');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete_mailbox">
+              <input type="hidden" name="mailbox_id" value="{{ mailbox.pk }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </div>
+          {% endif %}
+        </div>
+        {% empty %}
+        <div class="text-muted" style="font-size:.85rem;">No mailbox configuration exists for this tenant yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var provider = document.getElementById('provider_select');
+    if (!provider) return;
+
+    var msFields = Array.prototype.slice.call(document.querySelectorAll('.provider-microsoft'));
+    var gmailFields = Array.prototype.slice.call(document.querySelectorAll('.provider-gmail'));
+
+    var graphTenant = document.getElementById('graph_tenant_id');
+    var graphClient = document.getElementById('graph_client_id');
+    var graphSecret = document.getElementById('graph_client_secret');
+    var smtpHost = document.getElementById('smtp_host');
+    var smtpPort = document.getElementById('smtp_port');
+    var smtpUser = document.getElementById('smtp_username');
+    var smtpPass = document.getElementById('smtp_password');
+
+    function setRequired(input, yes) {
+      if (!input) return;
+      if (yes) input.setAttribute('required', 'required');
+      else input.removeAttribute('required');
+    }
+
+    function toggleProviderFields() {
+      var isGmail = provider.value === 'GMAIL';
+      msFields.forEach(function (el) { el.classList.toggle('d-none', isGmail); });
+      gmailFields.forEach(function (el) { el.classList.toggle('d-none', !isGmail); });
+
+      setRequired(graphTenant, !isGmail);
+      setRequired(graphClient, !isGmail);
+      setRequired(graphSecret, !isGmail);
+
+      setRequired(smtpHost, isGmail);
+      setRequired(smtpPort, isGmail);
+      setRequired(smtpUser, isGmail);
+      setRequired(smtpPass, isGmail);
+    }
+
+    provider.addEventListener('change', toggleProviderFields);
+    toggleProviderFields();
+  })();
+</script>
+
+{% endblock %}

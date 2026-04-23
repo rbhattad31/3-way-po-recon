@@ -1,6 +1,42 @@
 {% extends "procurement/proc_base.html" %}
 {% block title %}New Benchmarking Request | LMG Procurement{% endblock %}
 
+{% block extra_css %}
+<style>
+  .bench-create-wrap {
+    padding: 1rem 0.75rem 2rem;
+  }
+  .bench-create-card {
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .bench-create-card .card-body {
+    padding: 1.25rem 1.25rem 1.5rem !important;
+  }
+  .bench-notes-block,
+  .bench-info-callout {
+    margin-left: 0.35rem;
+    margin-right: 0.35rem;
+  }
+  .bench-info-callout {
+    border-radius: 10px;
+  }
+  @media (min-width: 992px) {
+    .bench-create-wrap {
+      padding: 1.25rem 1.25rem 2.5rem;
+    }
+    .bench-create-card .card-body {
+      padding: 1.5rem 1.75rem 1.75rem !important;
+    }
+    .bench-notes-block,
+    .bench-info-callout {
+      margin-left: 0.5rem;
+      margin-right: 0.5rem;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block breadcrumb %}
 <nav aria-label="breadcrumb" class="mb-3">
   <ol class="breadcrumb mb-0" style="font-size:.8rem;">
@@ -12,9 +48,10 @@
 {% endblock %}
 
 {% block content %}
+<div class="bench-create-wrap">
 <div class="row justify-content-center">
   <div class="col-12 col-lg-8">
-    <div class="card border-0 shadow-sm" style="border-radius:12px;">
+    <div class="card border-0 shadow-sm bench-create-card" style="border-radius:12px;">
       <div class="card-header bg-white border-bottom" style="border-radius:12px 12px 0 0;padding:1.1rem 1.5rem;">
         <h5 class="mb-0 fw-bold" style="color:#111827;">
           <i class="bi bi-box-arrow-in-up-right me-2 text-primary"></i>New Benchmarking Request
@@ -102,7 +139,7 @@
                            {% if posted.rfq_source == 'system' %}checked{% endif %}
                            onchange="toggleRfqSource('system')">
                     <label class="form-check-label" for="rfqSourceYes" style="font-size:.82rem;cursor:pointer;">
-                      <i class="bi bi-check-circle-fill text-success me-1"></i>Yes &mdash; select from generated RFQs
+                      Yes &mdash; select from generated RFQs
                     </label>
                   </div>
                   <div class="form-check form-check-inline mb-0">
@@ -111,7 +148,7 @@
                            {% if posted.rfq_source == 'upload' %}checked{% endif %}
                            onchange="toggleRfqSource('upload')">
                     <label class="form-check-label" for="rfqSourceUpload" style="font-size:.82rem;cursor:pointer;">
-                      <i class="bi bi-upload text-primary me-1"></i>Upload RFQ
+                      Upload RFQ
                     </label>
                   </div>
                   <div class="form-check form-check-inline mb-0">
@@ -120,7 +157,7 @@
                            {% if not posted.rfq_source or posted.rfq_source == 'manual' %}checked{% endif %}
                            onchange="toggleRfqSource('manual')">
                     <label class="form-check-label" for="rfqSourceNo" style="font-size:.82rem;cursor:pointer;">
-                      <i class="bi bi-x-circle text-danger me-1"></i>No
+                      No
                     </label>
                   </div>
                 </div>
@@ -194,14 +231,14 @@
           </div>
 
           {# -- Notes -- #}
-          <div class="mb-4">
+          <div class="mb-4 bench-notes-block">
             <label class="form-label fw-600" style="font-size:.82rem;">Notes (optional)</label>
             <textarea name="notes" rows="2" class="form-control" style="font-size:.85rem;"
                       placeholder="Any additional context for this analysis...">{{ posted.notes|default:'' }}</textarea>
           </div>
 
           {# Info callout #}
-          <div class="alert alert-info py-2 px-3 mb-4" style="font-size:.8rem;border-radius:8px;">
+          <div class="alert alert-info py-2 px-3 mb-4 bench-info-callout" style="font-size:.8rem;border-radius:8px;">
             <i class="bi bi-info-circle me-1"></i>
             If quotation file is uploaded now, AI will extract + benchmark + enrich with market references automatically.
             If skipped, you can upload vendor quotation(s) later from the request detail page.
@@ -218,6 +255,7 @@
       </div>
     </div>
   </div>
+</div>
 </div>
 {% endblock %}
 

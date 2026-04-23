@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Email Integration | {{ page_title }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Command Center</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:connect_mailbox' %}" class="text-decoration-none">Mailbox Connection</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'email_integration:dashboard' %}" class="text-decoration-none">Functionality Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ page_title }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
+    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+  </div>
+  <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
+</div>
+
+{% if can_send %}
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-semibold">Send Outbound Email</div>
+  <div class="card-body">
+    <form method="post" class="row g-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="send_outbound_email">
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
+        <select name="mailbox_id" class="form-select" required>
+          <option value="">Select outbound mailbox</option>
+          {% for mailbox in mailboxes %}
+          {% if mailbox.is_outbound_enabled %}<option value="{{ mailbox.pk }}">{{ mailbox.name }} ({{ mailbox.mailbox_address }})</option>{% endif %}
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" style="font-size:.78rem;">Template (optional)</label>
+        <select name="template_code" class="form-select">
+          <option value="">No template (custom)</option>
+          {% for template in active_templates %}<option value="{{ template.template_code }}">{{ template.template_code }} - {{ template.template_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" style="font-size:.78rem;">To Recipients</label>
+        <input type="text" name="to_recipients" class="form-control" placeholder="a@vendor.com, b@vendor.com" required>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label mb-1" style="font-size:.78rem;">Subject (required for custom)</label>
+        <input type="text" name="subject" class="form-control" placeholder="Invoice clarification required">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label mb-1" style="font-size:.78rem;">Template Variables JSON</label>
+        <input type="text" name="template_variables" class="form-control" placeholder='{"invoice_number":"INV-1001"}'>
+      </div>
+      <div class="col-12">
+        <label class="form-label mb-1" style="font-size:.78rem;">Body (for custom mode)</label>
+        <textarea name="body_text" class="form-control" rows="4" placeholder="Please share the missing PO reference for this invoice."></textarea>
+      </div>
+      <div class="col-12 d-flex justify-content-end">
+        <button class="btn btn-primary" type="submit">Send Outbound</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-warning">You do not have permission to send outbound email for this tenant.</div>
+{% endif %}
+{% endblock %}

@@ -275,10 +275,39 @@ def _get_generated_rfqs(tenant=None):
         return []
 
 
-def _build_rfq_scope_rows(*, bench_request, rfq_mode, rfq_ref):
+def _build_rfq_scope_rows_from_benchmark_lines(*, line_items):
+    """Fallback RFQ scope built from extracted quotation line items.
+
+    Used only when a benchmark request carries an RFQ reference but no
+    generated/uploaded RFQ scope rows can be resolved from upstream sources.
+    """
+    rows = []
+    seen = set()
+    for item in line_items or []:
+        description = str(getattr(item, "description", "") or "").strip()
+        if not description:
+            continue
+        normalized = " ".join(description.lower().split())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        rows.append({
+            "line_no": len(rows) + 1,
+            "category": getattr(item, "category", "") or "UNCATEGORIZED",
+            "description": description,
+            "unit": getattr(item, "uom", "") or "LS",
+            "quantity": getattr(item, "quantity", None) or 1,
+        })
+    return rows
+
+
+def _build_rfq_scope_rows(*, bench_request, rfq_mode, rfq_ref, line_items=None):
     """Build extracted RFQ scope rows for display in benchmarking request detail."""
-    if rfq_mode != "SYSTEM_RFQ" or not rfq_ref or _GeneratedRFQ is None or _HVACServiceScope is None:
+    if not rfq_ref:
         return []
+
+    if _GeneratedRFQ is None or _HVACServiceScope is None:
+        return _build_rfq_scope_rows_from_benchmark_lines(line_items=line_items)
 
     try:
         rfq_qs = _GeneratedRFQ.objects.filter(rfq_ref=rfq_ref)
@@ -286,15 +315,15 @@ def _build_rfq_scope_rows(*, bench_request, rfq_mode, rfq_ref):
             rfq_qs = rfq_qs.filter(request__tenant_id=bench_request.tenant_id)
         generated_rfq = rfq_qs.order_by("-created_at").first()
         if not generated_rfq:
-            return []
+            return _build_rfq_scope_rows_from_benchmark_lines(line_items=line_items)
 
         system_code = (generated_rfq.system_code or "").strip()
         if not system_code:
-            return []
+            return _build_rfq_scope_rows_from_benchmark_lines(line_items=line_items)
 
         db_scope = _HVACServiceScope.objects.filter(system_type__iexact=system_code, is_active=True).first()
         if not db_scope:
-            return []
+            return _build_rfq_scope_rows_from_benchmark_lines(line_items=line_items)
 
         quantity_overrides = {}
         raw_qty_json = generated_rfq.qty_json or {}
@@ -335,7 +364,7 @@ def _build_rfq_scope_rows(*, bench_request, rfq_mode, rfq_ref):
         return rows
     except Exception:
         logger.exception("Failed to build RFQ scope rows for benchmark request %s", bench_request.pk)
-        return []
+        return _build_rfq_scope_rows_from_benchmark_lines(line_items=line_items)
 
 
 # --------------------------------------------------------------------------- #
@@ -834,7 +863,19 @@ def request_detail(request, pk):
         bench_request=bench_request,
         rfq_mode=rfq_mode,
         rfq_ref=rfq_ref,
+        line_items=line_items,
     )
+
+    rfq_scope_source = "none"
+    if rfq_scope_rows:
+        if _GeneratedRFQ is not None and rfq_ref:
+            try:
+                _rfq_exists = _GeneratedRFQ.objects.filter(rfq_ref=rfq_ref).exists()
+            except Exception:
+                _rfq_exists = False
+        else:
+            _rfq_exists = False
+        rfq_scope_source = "generated_rfq" if _rfq_exists else "quotation_fallback"
 
     total_line_count = len(line_items)
     db_line_count = len([li for li in line_items if li.benchmark_source == "CORRIDOR_DB"])
@@ -896,6 +937,7 @@ def request_detail(request, pk):
         "rfq_label": rfq_label,
         "rfq_ref": rfq_ref,
         "rfq_present": rfq_present,
+        "rfq_scope_source": rfq_scope_source,
         "total_line_count": total_line_count,
         "db_line_count": db_line_count,
         "market_line_count": market_line_count,
@@ -1479,7 +1521,7 @@ def request_detail(request, pk):
                 try:
                     _w, _m = BenchmarkEngine._resolve_variance_thresholds(_cat, _geo_for_trace)
                 except Exception:
-                    _w, _m = 5.0, 15.0
+                    _w, _m = BenchmarkEngine._resolve_variance_thresholds("ALL", "ALL")
                 _threshold_cache[_cat] = {"within": _w, "moderate": _m}
             _thresholds = _threshold_cache[_cat]
 
@@ -1595,6 +1637,96 @@ def request_detail(request, pk):
             "line_traces": _q_line_traces,
         })
 
+    # Story mode summary for developer panel (simple, chronological, concrete)
+    _quotation_count = len(dev_trace_quotations)
+    _blob_count = sum(1 for _q in dev_trace_quotations if _q.get("blob_uploaded"))
+    _di_done_count = sum(1 for _q in dev_trace_quotations if (_q.get("extraction_status") or "").upper() == "DONE")
+    _di_failed_count = sum(1 for _q in dev_trace_quotations if (_q.get("extraction_status") or "").upper() == "FAILED")
+    _line_total = sum(int(_q.get("line_count") or 0) for _q in dev_trace_quotations)
+
+    dev_story_steps = [
+        {
+            "title": "Request created",
+            "detail": "Benchmark request {} was created for geography {} and scope {}.".format(
+                bench_request.pk,
+                bench_request.geography or "Unknown",
+                bench_request.scope_type or "Unknown",
+            ),
+            "tone": "primary",
+        },
+        {
+            "title": "Files uploaded",
+            "detail": "{} quotation file(s) uploaded by users.".format(_quotation_count),
+            "tone": "primary",
+        },
+        {
+            "title": "Azure Blob storage",
+            "detail": "{} of {} file(s) stored in Azure Blob (blob_name/blob_url present).".format(
+                _blob_count,
+                _quotation_count,
+            ),
+            "tone": "success" if _quotation_count and _blob_count == _quotation_count else "warning",
+        },
+        {
+            "title": "Azure Document Intelligence extraction",
+            "detail": "DONE: {} file(s), FAILED: {} file(s), Pending/other: {} file(s).".format(
+                _di_done_count,
+                _di_failed_count,
+                max(_quotation_count - _di_done_count - _di_failed_count, 0),
+            ),
+            "tone": "success" if _di_failed_count == 0 else "warning",
+        },
+        {
+            "title": "Line items extracted",
+            "detail": "Total extracted line items across all files: {}.".format(_line_total),
+            "tone": "primary",
+        },
+        {
+            "title": "Agent pipeline",
+            "detail": "Observed agent runs: {} (completed {}, failed {}, pending expected stages {}).".format(
+                dev_pipeline_summary["observed_runs"],
+                dev_pipeline_summary["completed_runs"],
+                dev_pipeline_summary["failed_runs"],
+                dev_pipeline_summary["pending_runs"],
+            ),
+            "tone": "success" if dev_pipeline_summary["failed_runs"] == 0 else "warning",
+        },
+    ]
+
+    if result:
+        _deviation = (
+            "{:+.2f}%".format(result.overall_deviation_pct)
+            if result.overall_deviation_pct is not None
+            else "N/A"
+        )
+        dev_story_steps.append({
+            "title": "Final benchmark result",
+            "detail": "Overall status: {}. Overall deviation: {}. Vendors analyzed: {}.".format(
+                result.overall_status,
+                _deviation,
+                len(vendor_cards),
+            ),
+            "tone": "success" if (result.overall_status or "").upper() == "WITHIN_RANGE" else "primary",
+        })
+
+    for _idx, _q in enumerate(dev_trace_quotations, start=1):
+        _supplier = _q.get("supplier_name") or "Unknown supplier"
+        _ref = _q.get("quotation_ref") or "(no ref)"
+        _blob_text = "stored in Azure Blob" if _q.get("blob_uploaded") else "not stored in Azure Blob"
+        _extract_text = (_q.get("extraction_status") or "PENDING").upper()
+        _line_count = int(_q.get("line_count") or 0)
+        dev_story_steps.append({
+            "title": "File {} trace".format(_idx),
+            "detail": "Supplier {} (ref {}) -> {}. Document Intelligence status: {}. Extracted line items: {}.".format(
+                _supplier,
+                _ref,
+                _blob_text,
+                _extract_text,
+                _line_count,
+            ),
+            "tone": "success" if _extract_text == "DONE" else ("danger" if _extract_text == "FAILED" else "warning"),
+        })
+
     ctx = _base_ctx(
         bench_request=bench_request,
         quotations=quotations,
@@ -1642,6 +1774,7 @@ def request_detail(request, pk):
         dev_agent_runs=dev_agent_runs,
         dev_expected_stages=dev_expected_stages,
         dev_pipeline_summary=dev_pipeline_summary,
+        dev_story_steps=dev_story_steps,
         dev_timeline_events=dev_timeline_events,
         dev_request_geography=_geo_for_trace,
     )
@@ -2400,6 +2533,11 @@ def api_bench_thresholds(request):
     category_name_map["ALL"] = "All Categories"
     geography_map = dict(Geography.CHOICES + [("ALL", "All Geographies")])
     ordered_allowed_categories = [item["code"] for item in _build_category_config_items() if item.get("is_active")]
+    status_label_map = {
+        "WITHIN_RANGE": "Optimal",
+        "MODERATE": "Moderate",
+        "HIGH": "High",
+    }
 
     if request.method == "POST":
         try:
@@ -2407,48 +2545,50 @@ def api_bench_thresholds(request):
         except Exception:
             return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
 
-        category_raw = str(body.get("category") or "ALL").strip()
-        category = category_raw.upper() if category_raw.upper() == "ALL" else category_raw
-        geography = str(body.get("geography") or "ALL").strip().upper()
         notes = str(body.get("notes") or "").strip()
-        valid_geographies = {code for code, _label in Geography.CHOICES}.union({"ALL"})
+        category = "ALL"
+        geography = "ALL"
+        variance_status = str(body.get("variance_status") or "").strip().upper()
 
-        if not category:
-            return JsonResponse({"success": False, "message": "Category is required."}, status=400)
-        if len(category) > 30:
-            return JsonResponse({"success": False, "message": "Category must be 30 characters or fewer."}, status=400)
-        if geography not in valid_geographies:
-            return JsonResponse({"success": False, "message": "Invalid geography."}, status=400)
+        if variance_status not in {"WITHIN_RANGE", "MODERATE", "HIGH"}:
+            return JsonResponse({"success": False, "message": "Variance status is required."}, status=400)
 
         try:
-            within_range_max_pct = float(body.get("within_range_max_pct"))
-            moderate_max_pct = float(body.get("moderate_max_pct"))
+            min_range_pct = float(body.get("within_range_max_pct"))
+            max_range_pct = float(body.get("moderate_max_pct"))
         except (TypeError, ValueError):
             return JsonResponse({"success": False, "message": "Threshold values must be valid numbers."}, status=400)
 
-        if within_range_max_pct < 0 or moderate_max_pct < 0:
+        if min_range_pct < 0 or max_range_pct < 0:
             return JsonResponse({"success": False, "message": "Threshold values must be zero or greater."}, status=400)
-        if moderate_max_pct < within_range_max_pct:
-            return JsonResponse({"success": False, "message": "Moderate max must be greater than or equal to within range max."}, status=400)
+        if max_range_pct < min_range_pct:
+            return JsonResponse({"success": False, "message": "Max range must be greater than or equal to min range."}, status=400)
 
         defaults = {
-            "within_range_max_pct": within_range_max_pct,
-            "moderate_max_pct": moderate_max_pct,
+            "within_range_max_pct": min_range_pct,
+            "moderate_max_pct": max_range_pct,
             "notes": notes,
             "is_active": bool(body.get("is_active", True)),
             "updated_by": request.user,
         }
-        row = VarianceThresholdConfig.objects.filter(category__iexact=category, geography=geography).first()
+        row = VarianceThresholdConfig.objects.filter(
+            category="ALL",
+            geography="ALL",
+            variance_status=variance_status,
+        ).first()
         created = False
         if row:
-            row.category = category
+            row.category = "ALL"
+            row.geography = "ALL"
+            row.variance_status = variance_status
             for field_name, field_value in defaults.items():
                 setattr(row, field_name, field_value)
             row.save()
         else:
             row = VarianceThresholdConfig.objects.create(
-                category=category,
-                geography=geography,
+                category="ALL",
+                geography="ALL",
+                variance_status=variance_status,
                 created_by=request.user,
                 **defaults,
             )
@@ -2459,20 +2599,13 @@ def api_bench_thresholds(request):
 
         return JsonResponse({
             "success": True,
-            "message": "Variance threshold saved.",
+            "message": "Global variance threshold saved.",
             "created": created,
             "id": row.pk,
         })
 
     items = []
-    present_categories = set()
-    custom_present_categories = set()
-    allowed_categories_set = set(ordered_allowed_categories)
     for row in VarianceThresholdConfig.objects.all().order_by("category", "geography"):
-        if row.category in allowed_categories_set:
-            present_categories.add(row.category)
-        elif row.category != "ALL":
-            custom_present_categories.add(row.category)
         items.append({
             "id": row.pk,
             "category": row.category,
@@ -2481,31 +2614,94 @@ def api_bench_thresholds(request):
             "geography_display": geography_map.get(row.geography, row.geography),
             "within_range_max_pct": row.within_range_max_pct,
             "moderate_max_pct": row.moderate_max_pct,
+            "variance_status": row.variance_status,
+            "variance_status_display": status_label_map.get(row.variance_status, row.variance_status),
             "notes": row.notes,
             "is_active": row.is_active,
         })
 
-    for category_code in ordered_allowed_categories:
-        if category_code in present_categories:
-            continue
-        items.append({
-            "id": None,
-            "category": category_code,
-            "category_display": category_name_map.get(category_code, category_code),
-            "geography": "ALL",
-            "geography_display": geography_map.get("ALL", "All Geographies"),
-            "within_range_max_pct": 5.0,
-            "moderate_max_pct": 15.0,
-            "notes": "Auto-default from Category Master",
-            "is_active": True,
-        })
-
-    ordered_categories_with_custom = ordered_allowed_categories + sorted(custom_present_categories)
+    ordered_categories_with_custom = ordered_allowed_categories
 
     category_order_map = {code: idx for idx, code in enumerate(ordered_categories_with_custom)}
     category_order_map["ALL"] = len(ordered_categories_with_custom) + 1
-    items.sort(key=lambda item: (category_order_map.get(item["category"], 999), item.get("geography") or ""))
+    status_order_map = {"WITHIN_RANGE": 1, "MODERATE": 2, "HIGH": 3}
+    items.sort(
+        key=lambda item: (
+            category_order_map.get(item["category"], 999),
+            item.get("geography") or "",
+            status_order_map.get(item.get("variance_status") or "", 99),
+        )
+    )
     return JsonResponse({"items": items})
+
+
+@login_required
+def api_bench_threshold_detail(request, pk):
+    """GET: threshold detail. POST: update / toggle / deactivate."""
+    import json as _json
+
+    row = get_object_or_404(VarianceThresholdConfig, pk=pk)
+    if request.method == "GET":
+        return JsonResponse({
+            "id": row.pk,
+            "category": row.category,
+            "geography": row.geography,
+            "variance_status": row.variance_status,
+            "within_range_max_pct": row.within_range_max_pct,
+            "moderate_max_pct": row.moderate_max_pct,
+            "notes": row.notes,
+            "is_active": row.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = _json.loads(request.body)
+        except Exception:
+            return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
+
+        action = body.get("_action", "update")
+        if action == "toggle":
+            row.is_active = not row.is_active
+            row.updated_by = request.user
+            row.save(update_fields=["is_active", "updated_by", "updated_at"])
+            return JsonResponse({"success": True, "message": f"Threshold {'enabled' if row.is_active else 'disabled'}."})
+
+        if action == "delete":
+            row.is_active = False
+            row.updated_by = request.user
+            row.save(update_fields=["is_active", "updated_by", "updated_at"])
+            return JsonResponse({"success": True, "message": "Threshold deactivated."})
+
+        if action == "update":
+            notes = str(body.get("notes") or "").strip()
+
+            variance_status = str(body.get("variance_status") or row.variance_status).strip().upper()
+            if variance_status not in {"WITHIN_RANGE", "MODERATE", "HIGH"}:
+                return JsonResponse({"success": False, "message": "Variance status is required."}, status=400)
+
+            try:
+                min_range_pct = float(body.get("within_range_max_pct"))
+                max_range_pct = float(body.get("moderate_max_pct"))
+            except (TypeError, ValueError):
+                return JsonResponse({"success": False, "message": "Threshold values must be valid numbers."}, status=400)
+
+            if min_range_pct < 0 or max_range_pct < 0:
+                return JsonResponse({"success": False, "message": "Threshold values must be zero or greater."}, status=400)
+            if max_range_pct < min_range_pct:
+                return JsonResponse({"success": False, "message": "Max range must be greater than or equal to min range."}, status=400)
+
+            row.category = "ALL"
+            row.geography = "ALL"
+            row.variance_status = variance_status
+            row.within_range_max_pct = min_range_pct
+            row.moderate_max_pct = max_range_pct
+            row.notes = notes
+            row.is_active = bool(body.get("is_active", row.is_active))
+            row.updated_by = request.user
+            row.save()
+            return JsonResponse({"success": True, "message": "Global variance threshold updated."})
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
 
 
 # --------------------------------------------------------------------------- #

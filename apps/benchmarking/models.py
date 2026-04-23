@@ -509,32 +509,43 @@ class VarianceThresholdConfig(BaseModel):
         default="ALL",
         db_index=True,
     )
+    variance_status = models.CharField(
+        max_length=20,
+        choices=[
+            (VarianceStatus.WITHIN_RANGE, "Optimal"),
+            (VarianceStatus.MODERATE, "Moderate"),
+            (VarianceStatus.HIGH, "High"),
+        ],
+        default=VarianceStatus.WITHIN_RANGE,
+        db_index=True,
+        help_text="Variance band represented by this row",
+    )
     within_range_max_pct = models.FloatField(
-        default=5.0,
-        help_text="Max absolute variance% to be classified as WITHIN_RANGE",
+        default=0.0,
+        help_text="Minimum absolute variance % for this band",
     )
     moderate_max_pct = models.FloatField(
-        default=15.0,
-        help_text="Max absolute variance% to be classified as MODERATE (else HIGH)",
+        default=5.0,
+        help_text="Maximum absolute variance % for this band",
     )
     notes = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["category", "geography"]
+        ordering = ["category", "geography", "variance_status"]
         verbose_name = "Variance Threshold Config"
         verbose_name_plural = "Variance Threshold Configs"
         constraints = [
             models.UniqueConstraint(
-                fields=["category", "geography"],
-                name="uniq_variance_threshold_cat_geo",
+                fields=["category", "geography", "variance_status"],
+                name="uniq_variance_threshold_cat_geo_status",
             )
         ]
 
     def __str__(self):
         return (
-            f"Threshold | {self.category} / {self.geography} | "
-            f"within={self.within_range_max_pct}% moderate={self.moderate_max_pct}%"
+            f"Threshold | {self.category} / {self.geography} / {self.variance_status} | "
+            f"min={self.within_range_max_pct}% max={self.moderate_max_pct}%"
         )
 
 
@@ -671,10 +682,10 @@ class BenchmarkRunLog(BaseModel):
         return f"{self.run_type} #{self.run_number} -- {self.request.title}"
 
     def save(self, *args, **kwargs):
-        if not self.pk and self.run_type == self.RunType.ANALYSIS and self.run_number == 0:
+        if not self.pk and self.run_number == 0:
             existing = BenchmarkRunLog.objects.filter(
                 request=self.request,
-                run_type=self.RunType.ANALYSIS,
+                run_type=self.run_type,
             ).count()
             self.run_number = existing + 1
         super().save(*args, **kwargs)

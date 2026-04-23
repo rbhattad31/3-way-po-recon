@@ -78,11 +78,11 @@ class CategoryMasterAdmin(admin.ModelAdmin):
 @admin.register(VarianceThresholdConfig)
 class VarianceThresholdConfigAdmin(admin.ModelAdmin):
     list_display = (
-        "category", "geography",
+        "category", "geography", "variance_status",
         "within_range_max_pct", "moderate_max_pct", "is_active",
     )
-    list_filter = ("category", "geography", "is_active")
-    ordering = ("category", "geography")
+    list_filter = ("category", "geography", "variance_status", "is_active")
+    ordering = ("category", "geography", "variance_status")
 
 
 

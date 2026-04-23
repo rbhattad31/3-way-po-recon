@@ -6,6 +6,7 @@ import json
 import logging
 
 from apps.agents.services.llm_client import LLMClient, LLMMessage
+from apps.benchmarking.models import VarianceThresholdConfig
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,27 @@ logger = logging.getLogger(__name__)
 
 class BenchmarkComplianceAgentBM:
     """Evaluate benchmark result against procurement compliance standards."""
+
+    @classmethod
+    def _moderate_threshold_pct(cls) -> float:
+        """Return the approved global moderate threshold from DB."""
+        try:
+            row = (
+                VarianceThresholdConfig.objects
+                .filter(
+                    category="ALL",
+                    geography="ALL",
+                    variance_status="MODERATE",
+                    is_active=True,
+                )
+                .order_by("pk")
+                .first()
+            )
+            if row:
+                return float(row.moderate_max_pct)
+        except Exception:
+            logger.exception("Failed to resolve global variance threshold; using fallback")
+        return 15.0
 
     @classmethod
     def evaluate(cls, *, result, line_items: list) -> dict:
@@ -102,21 +124,24 @@ class BenchmarkComplianceAgentBM:
         high_lines = int(getattr(result, "lines_high", 0) or 0)
         review_lines = int(getattr(result, "lines_needs_review", 0) or 0)
         overall_deviation = getattr(result, "overall_deviation_pct", None)
+        moderate_threshold_pct = cls._moderate_threshold_pct()
 
         violations = []
         checks = []
 
-        deviation_ok = overall_deviation is not None and abs(float(overall_deviation)) <= 15.0
+        deviation_ok = overall_deviation is not None and abs(float(overall_deviation)) <= moderate_threshold_pct
         checks.append(
             {
-                "rule": "overall_deviation_within_15pct",
+                "rule": "overall_deviation_within_configured_threshold",
                 "passed": deviation_ok,
                 "actual": overall_deviation,
-                "threshold": 15.0,
+                "threshold": moderate_threshold_pct,
             }
         )
         if not deviation_ok:
-            violations.append("Overall deviation is outside acceptable 15% benchmark tolerance.")
+            violations.append(
+                f"Overall deviation is outside acceptable {moderate_threshold_pct:.0f}% benchmark tolerance."
+            )
 
         high_ratio = high_lines / float(total_lines)
         high_ratio_ok = high_ratio <= 0.25
