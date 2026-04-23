@@ -13,7 +13,8 @@
     "accessibility.signals.chatResponseReceived": {
         "sound": "off"
     },
-    "python.terminal.activateEnvironment": false,
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+    "python.terminal.activateEnvironment": true,
     "chat.mcp.serverSampling": {
         "3-way-po-recon/.vscode/mcp.json: microsoft/playwright-mcp": {
             "allowedModels": [
