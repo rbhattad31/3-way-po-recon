@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import logging
 import os
@@ -974,9 +975,10 @@ def extraction_export_csv(request):
     qs = (
         ExtractionResult.objects
         .select_related(
-            "document_upload", "invoice", "invoice__vendor",
+            "document_upload",
             "extraction_run",
         )
+        .prefetch_related("document_upload__invoices__vendor")
         .order_by("-created_at")
     )
 
@@ -985,10 +987,10 @@ def extraction_export_csv(request):
     if q:
         from django.db.models import Q
         qs = qs.filter(
-            Q(invoice__invoice_number__icontains=q)
-            | Q(invoice__raw_vendor_name__icontains=q)
+            Q(document_upload__invoices__invoice_number__icontains=q)
+            | Q(document_upload__invoices__raw_vendor_name__icontains=q)
             | Q(document_upload__original_filename__icontains=q)
-        )
+        ).distinct()
 
     status_filter = request.GET.get("status")
     if status_filter == "success":
@@ -1047,6 +1049,598 @@ def extraction_export_csv(request):
             r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
         ])
 
+    return response
+
+
+@login_required
+@require_GET
+@permission_required_code("invoices.view")
+@observed_action("extraction.export_purchase_invoice_excel", permission="invoices.view", entity_type="ExtractionResult")
+def extraction_export_purchase_invoice_excel(request, pk):
+    """Export a single extraction result as purchase-invoice multi-sheet Excel."""
+    tenant = require_tenant(request)
+    qs = (
+        ExtractionResult.objects
+        .select_related("document_upload", "extraction_run")
+    )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    qs = _scope_extractions_for_user(qs, request.user)
+
+    ext = get_object_or_404(qs, pk=pk)
+    invoice = (
+        Invoice.objects
+        .select_related("vendor")
+        .prefetch_related("line_items")
+        .filter(document_upload=ext.document_upload)
+        .order_by("-created_at")
+        .first()
+    )
+    if not invoice:
+        raise Http404("No invoice is linked to this extraction result.")
+
+    export_invoice_number = (
+        invoice.invoice_number
+        or invoice.raw_invoice_number
+        or ((invoice.extraction_raw_json or {}).get("invoice_number") if isinstance(invoice.extraction_raw_json, dict) else "")
+        or ""
+    )
+
+    from openpyxl import Workbook
+
+    sheet_columns = {
+        "Item Body": [
+            "Sno", "rid", "tvrid", "MRVNo", "OrderVNo", "Code", "Product", "Purchase Account",
+            "Description", "Mfg Date", "Exp Date", "Unit", "Actual Qty", "Pending Qty", "Quantity",
+            "Packages", "Free Product", "Free Qty", "Free Packages", "Broken", "Broken Packages", "CF",
+            "BaseUnitQty", "Rate", "Incl Rate", "StkQty", "Gross", "Disc Rate", "Discount",
+            "AddlDiscRate", "AddlDisc", "TotalDisc", "GrossMinusDisc", "AssessableValue", "ServiceTaxRate",
+            "ServiceTax", "BEDRate", "BED", "EdCessRate", "EdCess", "SHEdCessRate", "SHEdCess",
+            "ImportFeeRate", "ImportFee", "TotalServiceTax", "Excise", "CSTRate", "CST", "VATRate",
+            "VAT", "AddlVATRate", "AddlVAT", "ST/VAT", "IGSTRate", "IGST", "CGSTRate", "CGST",
+            "SGSTRate", "SGST", "Total Tax", "Net", "Addl Cost Account", "Addl Cost", "Department",
+            "Division", "Project", "Profit Centre", "Cost Centre", "Comments1", "Comments2", "Comments3",
+            "Comments4", "Comments5", "Location", "Serial Nos", "Tax Adj", "HSN Code", "Freight",
+            "Other Chgs", "Batch",
+        ],
+        "Header": [
+            "Date", "Due Days", "Due Date", "Currency", "Exchange Rate", "Party", "Get Advance", "GSTIN",
+            "Adv Set Off", "Purchase Account", "Taxes", "Price List", "Order VNo", "Fill Order Details",
+            "MR VNo", "Fill MR Details", "Copy VNo", "Fill Item Body", "Fill Adjustments", "Agent",
+            "Courier Details", "Transporter", "Vehicle No", "Vehicle Type", "LR No", "LR Date",
+            "Ref VoucherSeries", "Party Ref Date", "Ref VoucherNo", "ServiceTaxAccount", "BEDAccount",
+            "EdCessAccount", "SHEdCessAccount", "ImportDutyAccount", "CSTAccount", "VATAccount",
+            "AddlVATAccount", "CGSTAccount", "SGSTAccount", "IGSTAccount", "TCS Payable Ac",
+            "Transport Amount", "Remarks",
+        ],
+        "Summary": [
+            "Total Qty", "Total Packages", "Total Broken", "Total Broken Packages", "Total Gross",
+            "Total Discount", "Total GrossMinusDisc", "Total Other Chgs", "Total Service Tax", "Total Excise",
+            "Total Import Fee", "Total CST", "Total VAT", "Total ST/VAT", "Total Freight", "Total IGST",
+            "Total CGST", "Total SGST", "Total Tax Adj", "Total Net", "Total Add", "Total Less",
+            "Round Off Account", "Round off", "Round off Dr", "Round off Cr", "Total Bill Value",
+            "Taxable Advance", "LedgerCrBalance", "TDS Nature", "TDS Account", "TDS Rate", "TDS Amount",
+            "TCS Rate", "TCS Amount", "Advance Amount", "Amount Paid", "PendingName", "PendingNo",
+            "PendingValue", "Total Value",
+        ],
+        "Advance Set Off Body": [
+            "Sno", "rid", "tvrid", "Towards Vno", "Amount", "Amount Adjusted", "Source Exchange Rate",
+            "Exchange Account", "Exchange Amt", "Exchange Loss", "Exchange Gain",
+        ],
+        "Voucher": ["VSeries", "VoucherSeries", "VoucherNo", "VoucherId", "crid", "crqty", "Authorisation Status"],
+        "Adjustments Body": [
+            "Sno", "Account", "Add", "Less", "ServiceTaxRate", "ServiceTax", "AddServiceTax", "LessServiceTax",
+            "EdCessRate", "EdCess", "AddEdCess", "LessEdCess", "SHEdCessRate", "SHEdCess", "AddSHEdCess",
+            "LessSHEdCess", "VATRate", "VAT", "AddVAT", "LessVAT", "TotalAdd", "TotalLess", "Department",
+            "Division", "Project", "Profit Centre", "Cost Centre", "Comments1", "Comments2", "Comments3",
+            "Comments4", "Comments5", "IGSTRate", "CGSTRate", "SGSTRate", "ADDIGST", "ADDCGST", "ADDSGST",
+            "LessIGST", "LessCGST", "LessSGST",
+        ],
+        "Payments Body": [
+            "Sno", "Payment Method", "Cash/Bank Account", "Amount", "Instrument Type", "Instrument No",
+            "Instrument Date", "Instrument Details",
+        ],
+        "Reference": ["Party Doc", "Party Ref Date", "Ref VoucherSeries", "Ref VoucherNo", "Account"],
+        "Other Info": ["Other Info1", "Other Info2", "Other Info3", "Other Info4", "Other Info5"],
+        "Transaction Details": ["Branch", "Location", "Location for All", "UserName", "Executive"],
+    }
+
+    def _num(value, default=Decimal("0")):
+        if value is None or value == "":
+            return default
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            return default
+
+    def _date_text(value):
+        if not value:
+            return ""
+        try:
+            return value.strftime("%Y-%m-%d")
+        except Exception:
+            return str(value)
+
+    line_items = list(invoice.line_items.order_by("line_number"))
+    tax_breakdown = invoice.tax_breakdown or {}
+    total_line_base = sum((_num(li.quantity) * _num(li.unit_price) for li in line_items), Decimal("0"))
+    if total_line_base <= 0:
+        total_line_base = _num(invoice.subtotal)
+
+    item_rows = []
+    for li in line_items:
+        qty = _num(li.quantity)
+        rate = _num(li.unit_price)
+        gross = qty * rate
+        line_share = (gross / total_line_base) if total_line_base > 0 else Decimal("0")
+
+        line_igst = _num(tax_breakdown.get("igst")) * line_share
+        line_cgst = _num(tax_breakdown.get("cgst")) * line_share
+        line_sgst = _num(tax_breakdown.get("sgst")) * line_share
+        line_vat = _num(tax_breakdown.get("vat")) * line_share
+
+        line_tax_pct = _num(li.tax_percentage)
+        has_igst = _num(tax_breakdown.get("igst")) > 0
+        has_cgst_sgst = _num(tax_breakdown.get("cgst")) > 0 or _num(tax_breakdown.get("sgst")) > 0
+        has_vat = _num(tax_breakdown.get("vat")) > 0
+
+        row = {k: "" for k in sheet_columns["Item Body"]}
+        row.update({
+            "Sno": li.line_number,
+            "OrderVNo": invoice.po_number or "",
+            "Product": li.item_category or li.description or "",
+            "Description": li.description or "",
+            "Quantity": float(qty),
+            "Rate": float(rate),
+            "Gross": float(gross),
+            "IGSTRate": float(line_tax_pct if has_igst else Decimal("0")),
+            "IGST": float(line_igst),
+            "CGSTRate": float((line_tax_pct / 2) if has_cgst_sgst else Decimal("0")),
+            "CGST": float(line_cgst),
+            "SGSTRate": float((line_tax_pct / 2) if has_cgst_sgst else Decimal("0")),
+            "SGST": float(line_sgst),
+            "VATRate": float(line_tax_pct if has_vat else Decimal("0")),
+            "VAT": float(line_vat),
+            "Total Tax": float(_num(li.tax_amount)),
+            "Net": float(_num(li.line_amount, gross + _num(li.tax_amount))),
+        })
+
+        raw_lines = (invoice.extraction_raw_json or {}).get("line_items") or []
+        raw_line = raw_lines[li.line_number - 1] if li.line_number - 1 < len(raw_lines) and isinstance(raw_lines[li.line_number - 1], dict) else {}
+        row["HSN Code"] = raw_line.get("hsn_sac_code") or raw_line.get("hsn_code") or ""
+        item_rows.append(row)
+
+    total_qty = sum((_num(r.get("Quantity")) for r in item_rows), Decimal("0"))
+    total_gross = sum((_num(r.get("Gross")) for r in item_rows), Decimal("0"))
+    total_igst = sum((_num(r.get("IGST")) for r in item_rows), Decimal("0"))
+    total_cgst = sum((_num(r.get("CGST")) for r in item_rows), Decimal("0"))
+    total_sgst = sum((_num(r.get("SGST")) for r in item_rows), Decimal("0"))
+    total_vat = sum((_num(r.get("VAT")) for r in item_rows), Decimal("0"))
+    total_tax = sum((_num(r.get("Total Tax")) for r in item_rows), Decimal("0"))
+    total_net = sum((_num(r.get("Net")) for r in item_rows), Decimal("0"))
+
+    due_days = ""
+    if invoice.invoice_date and invoice.due_date:
+        due_days = max((invoice.due_date - invoice.invoice_date).days, 0)
+
+    header_row = {k: "" for k in sheet_columns["Header"]}
+    header_row.update({
+        "Date": _date_text(invoice.invoice_date),
+        "Due Days": due_days,
+        "Due Date": _date_text(invoice.due_date),
+        "Currency": invoice.currency or "",
+        "Party": (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or "",
+        "GSTIN": invoice.vendor_tax_id or "",
+        "Order VNo": invoice.po_number or "",
+        "Copy VNo": export_invoice_number,
+        "Ref VoucherNo": export_invoice_number,
+        "Remarks": invoice.extraction_remarks or "",
+    })
+
+    summary_row = {k: "" for k in sheet_columns["Summary"]}
+    summary_row.update({
+        "Total Qty": float(total_qty),
+        "Total Gross": float(total_gross),
+        "Total VAT": float(total_vat),
+        "Total IGST": float(total_igst),
+        "Total CGST": float(total_cgst),
+        "Total SGST": float(total_sgst),
+        "Total Net": float(total_net),
+        "Total Bill Value": float(_num(invoice.total_amount, total_net)),
+        "Total Value": float(_num(invoice.total_amount, total_net)),
+    })
+
+    rows_by_sheet = {
+        "Item Body": item_rows or [{k: "" for k in sheet_columns["Item Body"]}],
+        "Header": [header_row],
+        "Summary": [summary_row],
+        "Advance Set Off Body": [{k: "" for k in sheet_columns["Advance Set Off Body"]}],
+        "Voucher": [{k: "" for k in sheet_columns["Voucher"]}],
+        "Adjustments Body": [{k: "" for k in sheet_columns["Adjustments Body"]}],
+        "Payments Body": [{k: "" for k in sheet_columns["Payments Body"]}],
+        "Reference": [{
+            "Party Doc": export_invoice_number,
+            "Party Ref Date": _date_text(invoice.invoice_date),
+            "Ref VoucherSeries": "",
+            "Ref VoucherNo": export_invoice_number,
+            "Account": "",
+        }],
+        "Other Info": [{k: "" for k in sheet_columns["Other Info"]}],
+        "Transaction Details": [{k: "" for k in sheet_columns["Transaction Details"]}],
+    }
+
+    wb = Workbook()
+    default_ws = wb.active
+    wb.remove(default_ws)
+
+    text_cols_by_sheet = {
+        "Header": {"Copy VNo", "Ref VoucherNo"},
+        "Reference": {"Party Doc", "Ref VoucherNo"},
+    }
+
+    for sheet_name, columns in sheet_columns.items():
+        ws = wb.create_sheet(title=sheet_name)
+        ws.append(columns)
+        text_cols = text_cols_by_sheet.get(sheet_name, set())
+        for row in rows_by_sheet[sheet_name]:
+            ws.append([row.get(col, "") for col in columns])
+            row_idx = ws.max_row
+            for col_idx, col_name in enumerate(columns, start=1):
+                if col_name in text_cols:
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.value = "" if cell.value is None else str(cell.value)
+                    cell.number_format = "@"
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+
+    safe_inv_no = (invoice.invoice_number or f"invoice_{invoice.pk}").replace("/", "-").replace("\\", "-")
+    filename = f"purchase_invoice_{safe_inv_no}.xlsx"
+    response = HttpResponse(
+        out.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+@require_GET
+@permission_required_code("invoices.view")
+@observed_action("extraction.export_purchase_invoice_excel_bulk", permission="invoices.view", entity_type="ExtractionResult")
+def extraction_export_purchase_invoice_excel_bulk(request):
+    """Export filtered extraction workbench rows into one purchase-invoice workbook."""
+    tenant = require_tenant(request)
+    qs = (
+        ExtractionResult.objects
+        .select_related("document_upload", "extraction_run")
+        .prefetch_related("document_upload__invoices__vendor", "document_upload__invoices__line_items")
+        .order_by("-created_at")
+    )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    qs = _scope_extractions_for_user(qs, request.user)
+
+    q = request.GET.get("q", "").strip()
+    if q:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(document_upload__invoices__invoice_number__icontains=q)
+            | Q(document_upload__invoices__raw_vendor_name__icontains=q)
+            | Q(document_upload__original_filename__icontains=q)
+        ).distinct()
+
+    status_filter = request.GET.get("status")
+    if status_filter == "success":
+        qs = qs.filter(success=True)
+    elif status_filter == "failed":
+        qs = qs.filter(success=False)
+
+    confidence_filter = request.GET.get("confidence")
+    if confidence_filter == "high":
+        qs = qs.filter(extraction_run__overall_confidence__gte=0.8)
+    elif confidence_filter == "medium":
+        qs = qs.filter(extraction_run__overall_confidence__gte=0.5, extraction_run__overall_confidence__lt=0.8)
+    elif confidence_filter == "low":
+        qs = qs.filter(extraction_run__overall_confidence__lt=0.5, extraction_run__overall_confidence__isnull=False)
+
+    min_conf = request.GET.get("min_confidence")
+    if min_conf:
+        try:
+            qs = qs.filter(extraction_run__overall_confidence__gte=int(min_conf) / 100.0)
+        except (ValueError, TypeError):
+            pass
+
+    max_conf = request.GET.get("max_confidence")
+    if max_conf:
+        try:
+            qs = qs.filter(extraction_run__overall_confidence__lte=int(max_conf) / 100.0)
+        except (ValueError, TypeError):
+            pass
+
+    date_from = request.GET.get("date_from")
+    if date_from:
+        try:
+            qs = qs.filter(created_at__date__gte=datetime.strptime(date_from, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+
+    date_to = request.GET.get("date_to")
+    if date_to:
+        try:
+            qs = qs.filter(created_at__date__lte=datetime.strptime(date_to, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+
+    extractions = list(qs)
+    invoices = []
+    seen_invoice_ids = set()
+    for ext in extractions:
+        inv_qs = (
+            Invoice.objects
+            .select_related("vendor")
+            .prefetch_related("line_items")
+            .filter(document_upload=ext.document_upload)
+            .order_by("-created_at")
+        )
+
+        raw_resp = ext.raw_response if isinstance(ext.raw_response, dict) else {}
+        raw_invoice_number = (raw_resp.get("invoice_number") or "").strip()
+        inv = None
+        if raw_invoice_number:
+            inv = inv_qs.filter(invoice_number=raw_invoice_number).first() or inv_qs.filter(raw_invoice_number=raw_invoice_number).first()
+
+        if inv is None:
+            inv = inv_qs.first()
+
+        if inv and inv.pk not in seen_invoice_ids:
+            invoices.append(inv)
+            seen_invoice_ids.add(inv.pk)
+
+    if not invoices:
+        raise Http404("No invoices found for current filters.")
+
+    from openpyxl import Workbook
+
+    sheet_columns = {
+        "Item Body": [
+            "Sno", "rid", "tvrid", "MRVNo", "OrderVNo", "Code", "Product", "Purchase Account",
+            "Description", "Mfg Date", "Exp Date", "Unit", "Actual Qty", "Pending Qty", "Quantity",
+            "Packages", "Free Product", "Free Qty", "Free Packages", "Broken", "Broken Packages", "CF",
+            "BaseUnitQty", "Rate", "Incl Rate", "StkQty", "Gross", "Disc Rate", "Discount",
+            "AddlDiscRate", "AddlDisc", "TotalDisc", "GrossMinusDisc", "AssessableValue", "ServiceTaxRate",
+            "ServiceTax", "BEDRate", "BED", "EdCessRate", "EdCess", "SHEdCessRate", "SHEdCess",
+            "ImportFeeRate", "ImportFee", "TotalServiceTax", "Excise", "CSTRate", "CST", "VATRate",
+            "VAT", "AddlVATRate", "AddlVAT", "ST/VAT", "IGSTRate", "IGST", "CGSTRate", "CGST",
+            "SGSTRate", "SGST", "Total Tax", "Net", "Addl Cost Account", "Addl Cost", "Department",
+            "Division", "Project", "Profit Centre", "Cost Centre", "Comments1", "Comments2", "Comments3",
+            "Comments4", "Comments5", "Location", "Serial Nos", "Tax Adj", "HSN Code", "Freight",
+            "Other Chgs", "Batch",
+        ],
+        "Header": [
+            "Date", "Due Days", "Due Date", "Currency", "Exchange Rate", "Party", "Get Advance", "GSTIN",
+            "Adv Set Off", "Purchase Account", "Taxes", "Price List", "Order VNo", "Fill Order Details",
+            "MR VNo", "Fill MR Details", "Copy VNo", "Fill Item Body", "Fill Adjustments", "Agent",
+            "Courier Details", "Transporter", "Vehicle No", "Vehicle Type", "LR No", "LR Date",
+            "Ref VoucherSeries", "Party Ref Date", "Ref VoucherNo", "ServiceTaxAccount", "BEDAccount",
+            "EdCessAccount", "SHEdCessAccount", "ImportDutyAccount", "CSTAccount", "VATAccount",
+            "AddlVATAccount", "CGSTAccount", "SGSTAccount", "IGSTAccount", "TCS Payable Ac",
+            "Transport Amount", "Remarks",
+        ],
+        "Summary": [
+            "Total Qty", "Total Packages", "Total Broken", "Total Broken Packages", "Total Gross",
+            "Total Discount", "Total GrossMinusDisc", "Total Other Chgs", "Total Service Tax", "Total Excise",
+            "Total Import Fee", "Total CST", "Total VAT", "Total ST/VAT", "Total Freight", "Total IGST",
+            "Total CGST", "Total SGST", "Total Tax Adj", "Total Net", "Total Add", "Total Less",
+            "Round Off Account", "Round off", "Round off Dr", "Round off Cr", "Total Bill Value",
+            "Taxable Advance", "LedgerCrBalance", "TDS Nature", "TDS Account", "TDS Rate", "TDS Amount",
+            "TCS Rate", "TCS Amount", "Advance Amount", "Amount Paid", "PendingName", "PendingNo",
+            "PendingValue", "Total Value",
+        ],
+        "Advance Set Off Body": [
+            "Sno", "rid", "tvrid", "Towards Vno", "Amount", "Amount Adjusted", "Source Exchange Rate",
+            "Exchange Account", "Exchange Amt", "Exchange Loss", "Exchange Gain",
+        ],
+        "Voucher": ["VSeries", "VoucherSeries", "VoucherNo", "VoucherId", "crid", "crqty", "Authorisation Status"],
+        "Adjustments Body": [
+            "Sno", "Account", "Add", "Less", "ServiceTaxRate", "ServiceTax", "AddServiceTax", "LessServiceTax",
+            "EdCessRate", "EdCess", "AddEdCess", "LessEdCess", "SHEdCessRate", "SHEdCess", "AddSHEdCess",
+            "LessSHEdCess", "VATRate", "VAT", "AddVAT", "LessVAT", "TotalAdd", "TotalLess", "Department",
+            "Division", "Project", "Profit Centre", "Cost Centre", "Comments1", "Comments2", "Comments3",
+            "Comments4", "Comments5", "IGSTRate", "CGSTRate", "SGSTRate", "ADDIGST", "ADDCGST", "ADDSGST",
+            "LessIGST", "LessCGST", "LessSGST",
+        ],
+        "Payments Body": [
+            "Sno", "Payment Method", "Cash/Bank Account", "Amount", "Instrument Type", "Instrument No",
+            "Instrument Date", "Instrument Details",
+        ],
+        "Reference": ["Party Doc", "Party Ref Date", "Ref VoucherSeries", "Ref VoucherNo", "Account"],
+        "Other Info": ["Other Info1", "Other Info2", "Other Info3", "Other Info4", "Other Info5"],
+        "Transaction Details": ["Branch", "Location", "Location for All", "UserName", "Executive"],
+    }
+
+    def _num(value, default=Decimal("0")):
+        if value is None or value == "":
+            return default
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            return default
+
+    def _date_text(value):
+        if not value:
+            return ""
+        try:
+            return value.strftime("%Y-%m-%d")
+        except Exception:
+            return str(value)
+
+    item_rows = []
+    header_rows = []
+    summary_rows = []
+
+    for invoice in invoices:
+        export_invoice_number = (
+            invoice.invoice_number
+            or invoice.raw_invoice_number
+            or ((invoice.extraction_raw_json or {}).get("invoice_number") if isinstance(invoice.extraction_raw_json, dict) else "")
+            or ""
+        )
+
+        line_items = list(invoice.line_items.order_by("line_number"))
+        tax_breakdown = invoice.tax_breakdown or {}
+        total_line_base = sum((_num(li.quantity) * _num(li.unit_price) for li in line_items), Decimal("0"))
+        if total_line_base <= 0:
+            total_line_base = _num(invoice.subtotal)
+
+        invoice_item_rows = []
+        for li in line_items:
+            qty = _num(li.quantity)
+            rate = _num(li.unit_price)
+            gross = qty * rate
+            line_share = (gross / total_line_base) if total_line_base > 0 else Decimal("0")
+
+            line_igst = _num(tax_breakdown.get("igst")) * line_share
+            line_cgst = _num(tax_breakdown.get("cgst")) * line_share
+            line_sgst = _num(tax_breakdown.get("sgst")) * line_share
+            line_vat = _num(tax_breakdown.get("vat")) * line_share
+
+            line_tax_pct = _num(li.tax_percentage)
+            has_igst = _num(tax_breakdown.get("igst")) > 0
+            has_cgst_sgst = _num(tax_breakdown.get("cgst")) > 0 or _num(tax_breakdown.get("sgst")) > 0
+            has_vat = _num(tax_breakdown.get("vat")) > 0
+
+            row = {k: "" for k in sheet_columns["Item Body"]}
+            row.update({
+                "Sno": li.line_number,
+                "OrderVNo": invoice.po_number or "",
+                "Product": li.item_category or li.description or "",
+                "Description": li.description or "",
+                "Quantity": float(qty),
+                "Rate": float(rate),
+                "Gross": float(gross),
+                "IGSTRate": float(line_tax_pct if has_igst else Decimal("0")),
+                "IGST": float(line_igst),
+                "CGSTRate": float((line_tax_pct / 2) if has_cgst_sgst else Decimal("0")),
+                "CGST": float(line_cgst),
+                "SGSTRate": float((line_tax_pct / 2) if has_cgst_sgst else Decimal("0")),
+                "SGST": float(line_sgst),
+                "VATRate": float(line_tax_pct if has_vat else Decimal("0")),
+                "VAT": float(line_vat),
+                "Total Tax": float(_num(li.tax_amount)),
+                "Net": float(_num(li.line_amount, gross + _num(li.tax_amount))),
+            })
+
+            raw_lines = (invoice.extraction_raw_json or {}).get("line_items") or []
+            raw_line = raw_lines[li.line_number - 1] if li.line_number - 1 < len(raw_lines) and isinstance(raw_lines[li.line_number - 1], dict) else {}
+            row["HSN Code"] = raw_line.get("hsn_sac_code") or raw_line.get("hsn_code") or ""
+            item_rows.append(row)
+            invoice_item_rows.append(row)
+
+        total_qty = sum((_num(r.get("Quantity")) for r in invoice_item_rows), Decimal("0"))
+        total_gross = sum((_num(r.get("Gross")) for r in invoice_item_rows), Decimal("0"))
+        total_igst = sum((_num(r.get("IGST")) for r in invoice_item_rows), Decimal("0"))
+        total_cgst = sum((_num(r.get("CGST")) for r in invoice_item_rows), Decimal("0"))
+        total_sgst = sum((_num(r.get("SGST")) for r in invoice_item_rows), Decimal("0"))
+        total_vat = sum((_num(r.get("VAT")) for r in invoice_item_rows), Decimal("0"))
+        total_net = sum((_num(r.get("Net")) for r in invoice_item_rows), Decimal("0"))
+
+        due_days = ""
+        if invoice.invoice_date and invoice.due_date:
+            due_days = max((invoice.due_date - invoice.invoice_date).days, 0)
+
+        header_row = {k: "" for k in sheet_columns["Header"]}
+        header_row.update({
+            "Date": _date_text(invoice.invoice_date),
+            "Due Days": due_days,
+            "Due Date": _date_text(invoice.due_date),
+            "Currency": invoice.currency or "",
+            "Party": (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or "",
+            "GSTIN": invoice.vendor_tax_id or "",
+            "Order VNo": invoice.po_number or "",
+            "Copy VNo": export_invoice_number,
+            "Ref VoucherNo": export_invoice_number,
+            "Remarks": invoice.extraction_remarks or "",
+        })
+        header_rows.append(header_row)
+
+        summary_row = {k: "" for k in sheet_columns["Summary"]}
+        summary_row.update({
+            "Total Qty": float(total_qty),
+            "Total Gross": float(total_gross),
+            "Total VAT": float(total_vat),
+            "Total IGST": float(total_igst),
+            "Total CGST": float(total_cgst),
+            "Total SGST": float(total_sgst),
+            "Total Net": float(total_net),
+            "Total Bill Value": float(_num(invoice.total_amount, total_net)),
+            "Total Value": float(_num(invoice.total_amount, total_net)),
+        })
+        summary_rows.append(summary_row)
+
+    blank_count = max(1, len(invoices))
+    reference_rows = []
+    for invoice in invoices:
+        export_invoice_number = (
+            invoice.invoice_number
+            or invoice.raw_invoice_number
+            or ((invoice.extraction_raw_json or {}).get("invoice_number") if isinstance(invoice.extraction_raw_json, dict) else "")
+            or ""
+        )
+        reference_rows.append({
+            "Party Doc": export_invoice_number,
+            "Party Ref Date": _date_text(invoice.invoice_date),
+            "Ref VoucherSeries": "",
+            "Ref VoucherNo": export_invoice_number,
+            "Account": "",
+        })
+
+    rows_by_sheet = {
+        "Item Body": item_rows or [{k: "" for k in sheet_columns["Item Body"]}],
+        "Header": header_rows or [{k: "" for k in sheet_columns["Header"]}],
+        "Summary": summary_rows or [{k: "" for k in sheet_columns["Summary"]}],
+        "Advance Set Off Body": [{k: "" for k in sheet_columns["Advance Set Off Body"]} for _ in range(blank_count)],
+        "Voucher": [{k: "" for k in sheet_columns["Voucher"]} for _ in range(blank_count)],
+        "Adjustments Body": [{k: "" for k in sheet_columns["Adjustments Body"]} for _ in range(blank_count)],
+        "Payments Body": [{k: "" for k in sheet_columns["Payments Body"]} for _ in range(blank_count)],
+        "Reference": reference_rows or [{k: "" for k in sheet_columns["Reference"]} for _ in range(blank_count)],
+        "Other Info": [{k: "" for k in sheet_columns["Other Info"]} for _ in range(blank_count)],
+        "Transaction Details": [{k: "" for k in sheet_columns["Transaction Details"]} for _ in range(blank_count)],
+    }
+
+    wb = Workbook()
+    default_ws = wb.active
+    wb.remove(default_ws)
+
+    text_cols_by_sheet = {
+        "Header": {"Copy VNo", "Ref VoucherNo"},
+        "Reference": {"Party Doc", "Ref VoucherNo"},
+    }
+
+    for sheet_name, columns in sheet_columns.items():
+        ws = wb.create_sheet(title=sheet_name)
+        ws.append(columns)
+        text_cols = text_cols_by_sheet.get(sheet_name, set())
+        for row in rows_by_sheet[sheet_name]:
+            ws.append([row.get(col, "") for col in columns])
+            row_idx = ws.max_row
+            for col_idx, col_name in enumerate(columns, start=1):
+                if col_name in text_cols:
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.value = "" if cell.value is None else str(cell.value)
+                    cell.number_format = "@"
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+
+    filename = "purchase_invoice_export.xlsx"
+    response = HttpResponse(
+        out.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
 

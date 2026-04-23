@@ -47,6 +47,11 @@
     <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-sm btn-outline-secondary" title="Download JSON">
       <i class="bi bi-download me-1"></i>JSON
     </a>
+    {% if invoice %}
+    <a href="{% url 'extraction:export_purchase_invoice_excel' ext.pk %}" class="btn btn-sm btn-outline-success" title="Export purchase invoice Excel">
+      <i class="bi bi-file-earmark-excel me-1"></i>Purchase XLSX
+    </a>
+    {% endif %}
     <a href="{% url 'extraction:console' ext.pk %}" class="btn btn-sm btn-outline-primary" title="Open Review Console">
       <i class="bi bi-columns-gap me-1"></i>Review Console
     </a>

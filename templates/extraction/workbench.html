@@ -241,8 +241,11 @@
         <button type="button" id="clearFiltersBtn" class="btn btn-sm btn-outline-secondary" style="display:none">
           <i class="bi bi-x-circle me-1"></i>Clear
         </button>
-        <a href="{% url 'extraction:export_csv' %}" id="exportBtn" class="btn btn-sm btn-outline-success">
+        <a href="{% url 'extraction:export_csv' %}" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary">
           <i class="bi bi-download me-1"></i>Export CSV
+        </a>
+        <a href="{% url 'extraction:export_purchase_invoice_excel_bulk' %}" id="exportXlsxBtn" class="btn btn-sm btn-outline-success">
+          <i class="bi bi-download me-1"></i>Export XLSX
         </a>
       </div>
     </div>
@@ -433,6 +436,11 @@
             <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
               View
             </a>
+            {% if r.invoice %}
+            <a href="{% url 'extraction:export_purchase_invoice_excel' r.pk %}" class="btn btn-sm btn-outline-success py-0 ms-1" style="font-size:.7rem" title="Export in purchase invoice Excel format">
+              XLSX
+            </a>
+            {% endif %}
             {% if is_admin_user %}
             <button type="button"
                     class="btn btn-sm btn-outline-danger py-0 ms-1"
@@ -830,13 +838,15 @@
   // ── Globals ──────────────────────────────────────────────
   const FILTER_URL  = "{% url 'extraction:ajax_filter' %}";
   const DETAIL_URL  = "{% url 'extraction:console' pk=0 %}".replace('/0/', '/{pk}/');
-  const EXPORT_URL  = "{% url 'extraction:export_csv' %}";
+  const EXPORT_XLSX_URL  = "{% url 'extraction:export_purchase_invoice_excel_bulk' %}";
+  const EXPORT_CSV_URL  = "{% url 'extraction:export_csv' %}";
   const IS_ADMIN_USER = {% if is_admin_user %}true{% else %}false{% endif %};
   const tbody        = document.getElementById('resultsTableBody');
   const countEl      = document.getElementById('resultCount');
   const filterBadge  = document.getElementById('filterIndicator');
   const clearBtn     = document.getElementById('clearFiltersBtn');
-  const exportBtn    = document.getElementById('exportBtn');
+  const exportXlsxBtn = document.getElementById('exportXlsxBtn');
+  const exportCsvBtn = document.getElementById('exportCsvBtn');
 
   let debounceTimer = null;
   let activeConfPreset = '';
@@ -918,8 +928,9 @@
     clearBtn.style.display = hasFilters ? '' : 'none';
     filterBadge.style.display = hasFilters ? '' : 'none';
 
-    // Update export link with current filters
-    exportBtn.href = EXPORT_URL + (hasFilters ? '?' + params.toString() : '');
+    // Update export links with current filters
+    exportXlsxBtn.href = EXPORT_XLSX_URL + (hasFilters ? '?' + params.toString() : '');
+    exportCsvBtn.href = EXPORT_CSV_URL + (hasFilters ? '?' + params.toString() : '');
 
     fetch(FILTER_URL + '?' + params.toString(), {
       headers: { 'X-Requested-With': 'XMLHttpRequest' }
