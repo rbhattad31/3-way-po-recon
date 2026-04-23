@@ -132,7 +132,7 @@ body {
 }
 .proc-nav-link.active {
   background: linear-gradient(90deg, rgba(22,101,216,.18), rgba(14,165,233,.08));
-  color: #1665D8;
+  color: #0f172a !important;
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(22,101,216,.14);
 }
@@ -148,7 +148,7 @@ body {
 .proc-nav-link i.inactive { color: #64748b; }
 .proc-nav-link:hover i,
 .proc-nav-link:hover i.inactive { color: #1665D8; }
-.proc-nav-link.active i { color: #1665D8; }
+.proc-nav-link.active i { color: #0f172a !important; }
 
 .proc-nav-sublink {
   display: flex;
@@ -170,7 +170,7 @@ body {
 }
 .proc-nav-sublink.active {
   background: linear-gradient(90deg, rgba(22,101,216,.16), rgba(14,165,233,.07));
-  color: #1665D8;
+  color: #0f172a !important;
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(22,101,216,.12);
 }
@@ -182,7 +182,7 @@ body {
   color: #1665D8;
 }
 .proc-nav-sublink.active i {
-  color: #1665D8;
+  color: #0f172a !important;
 }
 .proc-nav-divider {
   height: 1px;
