@@ -12,8 +12,9 @@ import io
 import json
 import logging
 import os
+import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
@@ -37,6 +38,7 @@ from apps.core.permissions import permission_required_code
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.documents.models import DocumentUpload, Invoice, InvoiceLineItem
 from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
+from apps.extraction.services.export_mapping_agent import ExportFieldMappingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -1052,6 +1054,280 @@ def extraction_export_csv(request):
     return response
 
 
+class _ExportReferenceResolver:
+    """Resolve export helper fields from imported ERP reference snapshots."""
+
+    def __init__(self, tenant):
+        self._tenant = tenant
+        self._vendor_by_norm = {}
+        self._vendor_ref_by_norm = {}
+        self._item_by_norm_desc = {}
+        self._item_by_code = {}
+        self._po_by_key = {}
+        self._po_by_number = {}
+        self._cc_dept_by_code = {}
+        self._load()
+
+    @staticmethod
+    def _norm(value: str) -> str:
+        from apps.core.utils import normalize_string
+
+        return normalize_string(value or "")
+
+    @classmethod
+    def _raw_get(cls, raw: dict, *keys: str) -> str:
+        """Read a raw_json value using resilient key aliases.
+
+        Handles case, space, underscore and slash variants so exports do not
+        regress when connector payload key names drift.
+        """
+        if not isinstance(raw, dict) or not raw:
+            return ""
+
+        for key in keys:
+            value = raw.get(key)
+            if value not in (None, ""):
+                text = str(value).strip()
+                if text:
+                    return text
+
+        norm_map = {
+            re.sub(r"[^a-z0-9]", "", str(k).lower()): v
+            for k, v in raw.items()
+            if k not in (None, "")
+        }
+        for key in keys:
+            norm_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            value = norm_map.get(norm_key)
+            if value not in (None, ""):
+                text = str(value).strip()
+                if text:
+                    return text
+        return ""
+
+    def _load(self) -> None:
+        from django.db.models import Q
+
+        from apps.core.enums import ERPReferenceBatchStatus, ERPReferenceBatchType
+        from apps.posting_core.models import (
+            ERPCostCenterReference,
+            ERPItemReference,
+            ERPPOReference,
+            ERPReferenceImportBatch,
+            ERPVendorReference,
+        )
+
+        batch_qs = ERPReferenceImportBatch.objects.filter(
+            status=ERPReferenceBatchStatus.COMPLETED,
+        )
+        if self._tenant is not None:
+            batch_qs = batch_qs.filter(Q(tenant=self._tenant) | Q(tenant__isnull=True))
+        else:
+            batch_qs = batch_qs.filter(tenant__isnull=True)
+
+        latest_batches = {}
+        for bt in ERPReferenceBatchType.values:
+            latest_batches[bt] = batch_qs.filter(batch_type=bt).order_by("-imported_at").first()
+
+        vendor_batch = latest_batches.get(ERPReferenceBatchType.VENDOR)
+        if vendor_batch:
+            for v in ERPVendorReference.objects.filter(batch=vendor_batch, is_active=True).only(
+                "vendor_code", "vendor_name", "normalized_vendor_name", "payment_terms", "currency", "raw_json"
+            ):
+                key = v.normalized_vendor_name or self._norm(v.vendor_name)
+                if key and key not in self._vendor_by_norm:
+                    self._vendor_by_norm[key] = v.vendor_code
+                if key and key not in self._vendor_ref_by_norm:
+                    self._vendor_ref_by_norm[key] = v
+
+        item_batch = latest_batches.get(ERPReferenceBatchType.ITEM)
+        if item_batch:
+            for it in ERPItemReference.objects.filter(batch=item_batch, is_active=True).only(
+                "item_code", "item_name", "normalized_item_name", "uom", "category", "raw_json"
+            ):
+                self._item_by_code[it.item_code] = it
+                desc_key = self._norm(
+                    self._raw_get(
+                        it.raw_json or {},
+                        "description",
+                        "Description",
+                        "item_description",
+                        "ItemDescription",
+                    )
+                )
+                name_key = it.normalized_item_name or self._norm(it.item_name)
+                if desc_key and desc_key not in self._item_by_norm_desc:
+                    self._item_by_norm_desc[desc_key] = it
+                if name_key and name_key not in self._item_by_norm_desc:
+                    self._item_by_norm_desc[name_key] = it
+
+        cc_batch = latest_batches.get(ERPReferenceBatchType.COST_CENTER)
+        if cc_batch:
+            for cc in ERPCostCenterReference.objects.filter(batch=cc_batch, is_active=True).only(
+                "cost_center_code", "department"
+            ):
+                self._cc_dept_by_code[cc.cost_center_code] = cc.department or ""
+
+        po_batch = latest_batches.get(ERPReferenceBatchType.OPEN_PO)
+        if po_batch:
+            po_qs = ERPPOReference.objects.filter(batch=po_batch, is_open=True).only(
+                "po_number", "po_line_number", "item_code", "description", "normalized_description", "vendor_code", "raw_json"
+            )
+            for po in po_qs:
+                line_key = (po.po_number or "", str(po.po_line_number or "").strip())
+                self._po_by_key[line_key] = po
+                self._po_by_number.setdefault(po.po_number or "", []).append(po)
+
+    @staticmethod
+    def _extract_days_from_terms(value: str) -> int:
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        match = re.search(r"(\d+)", text)
+        if not match:
+            return 0
+        try:
+            return max(int(match.group(1)), 0)
+        except Exception:
+            return 0
+
+    def resolve_header_fields(self, *, invoice, vendor_name: str, po_number: str) -> dict:
+        """Resolve ERP-preferred header values used by export templates."""
+        vendor_key = self._norm(vendor_name)
+        vendor_ref = self._vendor_ref_by_norm.get(vendor_key)
+        party_account = self.resolve_party_account(vendor_name=vendor_name, po_number=po_number)
+
+        vendor_payment_terms = ""
+        vendor_currency = ""
+        if getattr(invoice, "vendor", None):
+            vendor_payment_terms = getattr(invoice.vendor, "payment_terms", "") or ""
+            vendor_currency = getattr(invoice.vendor, "currency", "") or ""
+
+        if vendor_ref:
+            if not vendor_payment_terms:
+                vendor_payment_terms = vendor_ref.payment_terms or ""
+                if not vendor_payment_terms:
+                    raw = vendor_ref.raw_json or {}
+                    vendor_payment_terms = self._raw_get(
+                        raw,
+                        "payment_terms",
+                        "PaymentTerms",
+                        "credit_period",
+                        "CreditPeriod",
+                        "credit_period_days",
+                        "CreditPeriodDays",
+                    )
+            if not vendor_currency:
+                vendor_currency = vendor_ref.currency or ""
+
+        due_days = ""
+        resolved_due_date = invoice.due_date
+        if invoice.invoice_date and resolved_due_date:
+            due_days = max((resolved_due_date - invoice.invoice_date).days, 0)
+        else:
+            terms_days = self._extract_days_from_terms(vendor_payment_terms)
+            if invoice.invoice_date and terms_days > 0:
+                due_days = terms_days
+                resolved_due_date = invoice.invoice_date + timedelta(days=terms_days)
+            elif invoice.invoice_date:
+                due_days = 0
+                resolved_due_date = invoice.invoice_date
+
+        purchase_account = party_account or ""
+        if not purchase_account and vendor_ref:
+            purchase_account = self._raw_get(
+                vendor_ref.raw_json or {},
+                "purchase_account",
+                "PurchaseAccount",
+                "purchase account",
+                "account",
+                "Account",
+            )
+
+        return {
+            "party_account": party_account,
+            "purchase_account": purchase_account,
+            "currency": invoice.currency or vendor_currency or "INR",
+            "due_days": due_days,
+            "due_date": resolved_due_date,
+        }
+
+    def resolve_party_account(self, *, vendor_name: str, po_number: str) -> str:
+        if po_number and po_number in self._po_by_number and self._po_by_number[po_number]:
+            vendor_code = self._po_by_number[po_number][0].vendor_code or ""
+            if vendor_code:
+                return vendor_code
+        return self._vendor_by_norm.get(self._norm(vendor_name), "")
+
+    def resolve_line_fields(self, *, po_number: str, line_number: int, description: str, party_account: str = "") -> dict:
+        po_ref = None
+        if po_number:
+            po_ref = self._po_by_key.get((po_number, str(line_number)))
+            if not po_ref:
+                desc_norm = self._norm(description)
+                for cand in self._po_by_number.get(po_number, []):
+                    if cand.normalized_description and cand.normalized_description == desc_norm:
+                        po_ref = cand
+                        break
+
+        item_ref = None
+        if po_ref and po_ref.item_code:
+            item_ref = self._item_by_code.get(po_ref.item_code)
+        if not item_ref:
+            item_ref = self._item_by_norm_desc.get(self._norm(description))
+
+        raw = (po_ref.raw_json or {}) if po_ref else {}
+        cost_center = self._raw_get(
+            raw,
+            "cost_center",
+            "CostCentre",
+            "cost_center_code",
+            "CostCenter",
+            "CostCenterCode",
+        )
+        department = self._raw_get(
+            raw,
+            "department",
+            "Department",
+            "department_name",
+            "DepartmentName",
+        )
+        if not department and cost_center:
+            department = self._cc_dept_by_code.get(cost_center, "")
+        if not department and item_ref:
+            department = item_ref.category or ""
+
+        po_uom = ""
+        if po_ref:
+            po_uom = self._raw_get(
+                raw,
+                "uom",
+                "UOM",
+                "unit_of_measure",
+                "UnitOfMeasure",
+                "Unit",
+            )
+
+        purchase_account = self._raw_get(
+            raw,
+            "purchase_account",
+            "PurchaseAccount",
+            "Purchase Account",
+            "account",
+            "Account",
+            "vendor_code",
+            "VendorCode",
+        ) or party_account or ""
+
+        return {
+            "item_code": (po_ref.item_code if po_ref and po_ref.item_code else (item_ref.item_code if item_ref else "")) or "",
+            "uom": (po_uom if po_uom else (item_ref.uom if item_ref else "")) or "",
+            "cost_center": cost_center,
+            "department": department,
+            "purchase_account": purchase_account,
+        }
+
+
 @login_required
 @require_GET
 @permission_required_code("invoices.view")
@@ -1078,6 +1354,15 @@ def extraction_export_purchase_invoice_excel(request, pk):
     )
     if not invoice:
         raise Http404("No invoice is linked to this extraction result.")
+
+    reference_resolver = _ExportReferenceResolver(tenant)
+    mapping_agent = ExportFieldMappingAgent(reference_resolver)
+    vendor_name = (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or ""
+    header_defaults = mapping_agent.resolve_header_fields(
+        invoice=invoice,
+        vendor_name=vendor_name,
+        po_number=invoice.po_number or "",
+    )
 
     export_invoice_number = (
         invoice.invoice_number
@@ -1169,6 +1454,12 @@ def extraction_export_purchase_invoice_excel(request, pk):
 
     item_rows = []
     for li in line_items:
+        resolved_ref = mapping_agent.resolve_line_fields(
+            po_number=invoice.po_number or "",
+            line_number=li.line_number,
+            description=li.description or "",
+            party_account=header_defaults.get("party_account", ""),
+        )
         qty = _num(li.quantity)
         rate = _num(li.unit_price)
         gross = qty * rate
@@ -1188,8 +1479,11 @@ def extraction_export_purchase_invoice_excel(request, pk):
         row.update({
             "Sno": li.line_number,
             "OrderVNo": invoice.po_number or "",
+            "Code": resolved_ref["item_code"],
             "Product": li.item_category or li.description or "",
+            "Purchase Account": resolved_ref["purchase_account"] or header_defaults.get("purchase_account", ""),
             "Description": li.description or "",
+            "Unit": resolved_ref["uom"] or "",
             "Quantity": float(qty),
             "Rate": float(rate),
             "Gross": float(gross),
@@ -1203,6 +1497,8 @@ def extraction_export_purchase_invoice_excel(request, pk):
             "VAT": float(line_vat),
             "Total Tax": float(_num(li.tax_amount)),
             "Net": float(_num(li.line_amount, gross + _num(li.tax_amount))),
+            "Cost Centre": resolved_ref["cost_center"],
+            "Department": resolved_ref["department"],
         })
 
         raw_lines = (invoice.extraction_raw_json or {}).get("line_items") or []
@@ -1219,18 +1515,15 @@ def extraction_export_purchase_invoice_excel(request, pk):
     total_tax = sum((_num(r.get("Total Tax")) for r in item_rows), Decimal("0"))
     total_net = sum((_num(r.get("Net")) for r in item_rows), Decimal("0"))
 
-    due_days = ""
-    if invoice.invoice_date and invoice.due_date:
-        due_days = max((invoice.due_date - invoice.invoice_date).days, 0)
-
     header_row = {k: "" for k in sheet_columns["Header"]}
     header_row.update({
         "Date": _date_text(invoice.invoice_date),
-        "Due Days": due_days,
-        "Due Date": _date_text(invoice.due_date),
-        "Currency": invoice.currency or "",
-        "Party": (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or "",
+        "Due Days": header_defaults.get("due_days", ""),
+        "Due Date": _date_text(header_defaults.get("due_date")),
+        "Currency": header_defaults.get("currency", "") or "",
+        "Party": vendor_name,
         "GSTIN": invoice.vendor_tax_id or "",
+        "Purchase Account": header_defaults.get("purchase_account", ""),
         "Order VNo": invoice.po_number or "",
         "Copy VNo": export_invoice_number,
         "Ref VoucherNo": export_invoice_number,
@@ -1263,7 +1556,7 @@ def extraction_export_purchase_invoice_excel(request, pk):
             "Party Ref Date": _date_text(invoice.invoice_date),
             "Ref VoucherSeries": "",
             "Ref VoucherNo": export_invoice_number,
-            "Account": "",
+            "Account": header_defaults.get("party_account", ""),
         }],
         "Other Info": [{k: "" for k in sheet_columns["Other Info"]}],
         "Transaction Details": [{k: "" for k in sheet_columns["Transaction Details"]}],
@@ -1302,6 +1595,13 @@ def extraction_export_purchase_invoice_excel(request, pk):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    mapping_agent.emit_governance_run(
+        request_user=request.user,
+        tenant=tenant,
+        scope="single",
+        invoices_count=1,
+        invoice_id=invoice.pk,
+    )
     return response
 
 
@@ -1401,6 +1701,9 @@ def extraction_export_purchase_invoice_excel_bulk(request):
     if not invoices:
         raise Http404("No invoices found for current filters.")
 
+    reference_resolver = _ExportReferenceResolver(tenant)
+    mapping_agent = ExportFieldMappingAgent(reference_resolver)
+
     from openpyxl import Workbook
 
     sheet_columns = {
@@ -1487,6 +1790,12 @@ def extraction_export_purchase_invoice_excel_bulk(request):
             or ((invoice.extraction_raw_json or {}).get("invoice_number") if isinstance(invoice.extraction_raw_json, dict) else "")
             or ""
         )
+        vendor_name = (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or ""
+        header_defaults = mapping_agent.resolve_header_fields(
+            invoice=invoice,
+            vendor_name=vendor_name,
+            po_number=invoice.po_number or "",
+        )
 
         line_items = list(invoice.line_items.order_by("line_number"))
         tax_breakdown = invoice.tax_breakdown or {}
@@ -1496,6 +1805,12 @@ def extraction_export_purchase_invoice_excel_bulk(request):
 
         invoice_item_rows = []
         for li in line_items:
+            resolved_ref = mapping_agent.resolve_line_fields(
+                po_number=invoice.po_number or "",
+                line_number=li.line_number,
+                description=li.description or "",
+                party_account=header_defaults.get("party_account", ""),
+            )
             qty = _num(li.quantity)
             rate = _num(li.unit_price)
             gross = qty * rate
@@ -1515,8 +1830,11 @@ def extraction_export_purchase_invoice_excel_bulk(request):
             row.update({
                 "Sno": li.line_number,
                 "OrderVNo": invoice.po_number or "",
+                "Code": resolved_ref["item_code"],
                 "Product": li.item_category or li.description or "",
+                "Purchase Account": resolved_ref["purchase_account"] or header_defaults.get("purchase_account", ""),
                 "Description": li.description or "",
+                "Unit": resolved_ref["uom"] or "",
                 "Quantity": float(qty),
                 "Rate": float(rate),
                 "Gross": float(gross),
@@ -1530,6 +1848,8 @@ def extraction_export_purchase_invoice_excel_bulk(request):
                 "VAT": float(line_vat),
                 "Total Tax": float(_num(li.tax_amount)),
                 "Net": float(_num(li.line_amount, gross + _num(li.tax_amount))),
+                "Cost Centre": resolved_ref["cost_center"],
+                "Department": resolved_ref["department"],
             })
 
             raw_lines = (invoice.extraction_raw_json or {}).get("line_items") or []
@@ -1546,18 +1866,15 @@ def extraction_export_purchase_invoice_excel_bulk(request):
         total_vat = sum((_num(r.get("VAT")) for r in invoice_item_rows), Decimal("0"))
         total_net = sum((_num(r.get("Net")) for r in invoice_item_rows), Decimal("0"))
 
-        due_days = ""
-        if invoice.invoice_date and invoice.due_date:
-            due_days = max((invoice.due_date - invoice.invoice_date).days, 0)
-
         header_row = {k: "" for k in sheet_columns["Header"]}
         header_row.update({
             "Date": _date_text(invoice.invoice_date),
-            "Due Days": due_days,
-            "Due Date": _date_text(invoice.due_date),
-            "Currency": invoice.currency or "",
-            "Party": (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or "",
+            "Due Days": header_defaults.get("due_days", ""),
+            "Due Date": _date_text(header_defaults.get("due_date")),
+            "Currency": header_defaults.get("currency", "") or "",
+            "Party": vendor_name,
             "GSTIN": invoice.vendor_tax_id or "",
+            "Purchase Account": header_defaults.get("purchase_account", ""),
             "Order VNo": invoice.po_number or "",
             "Copy VNo": export_invoice_number,
             "Ref VoucherNo": export_invoice_number,
@@ -1588,12 +1905,18 @@ def extraction_export_purchase_invoice_excel_bulk(request):
             or ((invoice.extraction_raw_json or {}).get("invoice_number") if isinstance(invoice.extraction_raw_json, dict) else "")
             or ""
         )
+        vendor_name = (invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name) or ""
+        header_defaults = mapping_agent.resolve_header_fields(
+            invoice=invoice,
+            vendor_name=vendor_name,
+            po_number=invoice.po_number or "",
+        )
         reference_rows.append({
             "Party Doc": export_invoice_number,
             "Party Ref Date": _date_text(invoice.invoice_date),
             "Ref VoucherSeries": "",
             "Ref VoucherNo": export_invoice_number,
-            "Account": "",
+            "Account": header_defaults.get("party_account", ""),
         })
 
     rows_by_sheet = {
@@ -1641,6 +1964,13 @@ def extraction_export_purchase_invoice_excel_bulk(request):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    mapping_agent.emit_governance_run(
+        request_user=request.user,
+        tenant=tenant,
+        scope="bulk",
+        invoices_count=len(invoices),
+        invoice_id=(invoices[0].pk if invoices else 0),
+    )
     return response
 
 

@@ -520,7 +520,11 @@ class MasterDataEnrichmentService:
         """
         Look up PO by number (exact then normalized).
         """
+        from django.db.models import Sum
+
         from apps.documents.models import PurchaseOrder
+        from apps.core.enums import ERPReferenceBatchStatus, ERPReferenceBatchType
+        from apps.posting_core.models import ERPPOReference, ERPReferenceImportBatch
 
         if not po_number:
             return POLookupResult()
@@ -538,7 +542,42 @@ class MasterDataEnrichmentService:
             ).first()
 
         if not po:
-            return POLookupResult(po_number=po_clean)
+            # Fallback to imported ERP open-PO snapshot if transactional PO is unavailable.
+            batch = (
+                ERPReferenceImportBatch.objects
+                .filter(
+                    batch_type=ERPReferenceBatchType.OPEN_PO,
+                    status=ERPReferenceBatchStatus.COMPLETED,
+                )
+                .order_by("-imported_at")
+                .first()
+            )
+            if not batch:
+                return POLookupResult(po_number=po_clean)
+
+            ref_qs = ERPPOReference.objects.filter(
+                batch=batch,
+                is_open=True,
+                po_number__iexact=po_clean,
+            )
+            ref = ref_qs.order_by("po_line_number").first()
+            if not ref:
+                return POLookupResult(po_number=po_clean)
+
+            agg = ref_qs.aggregate(total=Sum("line_amount"))
+            total_amount = agg.get("total")
+
+            return POLookupResult(
+                found=True,
+                po_id=None,
+                po_number=ref.po_number,
+                vendor_id=None,
+                vendor_name=ref.vendor_code or "",
+                po_status=ref.status or "OPEN",
+                total_amount=float(total_amount) if total_amount is not None else None,
+                currency=ref.currency or "",
+                confidence=0.75,
+            )
 
         vendor_name = ""
         vendor_id = None

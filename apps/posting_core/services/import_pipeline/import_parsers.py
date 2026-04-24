@@ -20,6 +20,7 @@ DEFAULT_COLUMN_MAPS: Dict[str, Dict[str, str]] = {
     "VENDOR": {
         "vendor_code": "vendor_code",
         "vendor_name": "vendor_name",
+        "tax_id": "tax_id",
         "vendor_group": "vendor_group",
         "country_code": "country_code",
         "payment_terms": "payment_terms",
@@ -29,6 +30,7 @@ DEFAULT_COLUMN_MAPS: Dict[str, Dict[str, str]] = {
     "ITEM": {
         "item_code": "item_code",
         "item_name": "item_name",
+        "description": "description",
         "item_type": "item_type",
         "category": "category",
         "uom": "uom",

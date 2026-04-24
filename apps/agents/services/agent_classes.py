@@ -869,6 +869,7 @@ def _get_system_agent_classes():
         SystemBulkExtractionIntakeAgent,
         SystemCaseIntakeAgent,
         SystemCaseSummaryAgent,
+        SystemExportFieldMappingAgent,
         SystemPostingPreparationAgent,
         SystemReviewRoutingAgent,
     )
@@ -878,6 +879,7 @@ def _get_system_agent_classes():
         AgentType.SYSTEM_BULK_EXTRACTION_INTAKE: SystemBulkExtractionIntakeAgent,
         AgentType.SYSTEM_CASE_INTAKE: SystemCaseIntakeAgent,
         AgentType.SYSTEM_POSTING_PREPARATION: SystemPostingPreparationAgent,
+        AgentType.SYSTEM_EXPORT_FIELD_MAPPING: SystemExportFieldMappingAgent,
     }
 
 

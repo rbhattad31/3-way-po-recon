@@ -22,7 +22,7 @@
       {% endif %}
     </h5>
     <p class="mb-0 text-muted small">
-      <span class="badge {% if connection.connector_type == 'CUSTOM' %}bg-secondary{% elif connection.connector_type == 'SQLSERVER' %}bg-dark{% elif connection.connector_type == 'MYSQL' %}bg-dark{% elif connection.connector_type == 'DYNAMICS' %}bg-primary{% else %}bg-info{% endif %}">
+      <span class="badge {% if connection.connector_type == 'CUSTOM' %}bg-secondary{% elif connection.connector_type == 'SQLSERVER' or connection.connector_type == 'VOUCHER_SQLSERVER' %}bg-dark{% elif connection.connector_type == 'MYSQL' %}bg-dark{% elif connection.connector_type == 'DYNAMICS' %}bg-primary{% else %}bg-info{% endif %}">
         {{ connection.get_connector_type_display }}
       </span>
       <span class="mx-1">|</span>
@@ -44,10 +44,16 @@
     </p>
   </div>
   <div class="d-flex gap-2">
-    <form method="post" action="{% url 'erp_integration:erp_connection_test' connection.pk %}">
+    {% if can_manage %}
+    <form method="post" action="{% url 'erp_integration:erp_connection_purge' connection.pk %}" onsubmit="return confirm('Permanently remove this connection from the system? This cannot be undone from UI.')">
       {% csrf_token %}
-      <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-plug me-1"></i>Test Connection</button>
+      <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-trash3 me-1"></i>Delete Permanently</button>
     </form>
+    {% else %}
+    <button type="button" class="btn btn-danger btn-sm" disabled title="Requires erp.manage permission">
+      <i class="bi bi-trash3 me-1"></i>Delete Permanently
+    </button>
+    {% endif %}
     <form method="post" action="{% url 'erp_integration:erp_connection_delete' connection.pk %}" onsubmit="return confirm('Deactivate this connection?')">
       {% csrf_token %}
       <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash me-1"></i>Deactivate</button>
@@ -497,6 +503,7 @@
   var SECTIONS = {
     CUSTOM:     ['section-rest'],
     SQLSERVER:  ['section-sql'],
+    VOUCHER_SQLSERVER: ['section-sql'],
     MYSQL:      ['section-sql'],
     DYNAMICS:   ['section-rest', 'section-oauth'],
     ZOHO:       ['section-rest', 'section-oauth'],
@@ -513,7 +520,7 @@
     // Toggle SQL Server-only fields
     var sqlOnly = document.querySelectorAll('.sqlserver-only');
     for (var j = 0; j < sqlOnly.length; j++) {
-      sqlOnly[j].style.display = (val === 'SQLSERVER') ? '' : 'none';
+      sqlOnly[j].style.display = (val === 'SQLSERVER' || val === 'VOUCHER_SQLSERVER') ? '' : 'none';
     }
     // Update section title and port hint
     var titleEl = document.getElementById('sql-section-title');
@@ -525,14 +532,13 @@
       if (titleEl) titleEl.textContent = 'SQL Server Configuration';
       if (portField) portField.placeholder = '1433';
     }
-    if (val === 'SQLSERVER' || val === 'MYSQL') initSqlMode();
+    if (val === 'SQLSERVER' || val === 'VOUCHER_SQLSERVER' || val === 'MYSQL') initSqlMode();
   }
 
   typeSelect.addEventListener('change', function() {
     toggleSections();
     resetTest();
   });
-  toggleSections();
 
   // ── SQL mode toggle (builder vs env) ──
   var sqlModeBuilder = document.getElementById('sql_mode_builder');
@@ -544,14 +550,14 @@
     // Auto-select env mode if connection_string_env has a value but builder fields are empty
     var csEnv = document.getElementById('id_connection_string_env');
     var dbHost = document.getElementById('id_db_host');
-    if (csEnv && csEnv.value && (!dbHost || !dbHost.value)) {
+    if (csEnv && csEnv.value && (!dbHost || !dbHost.value) && sqlModeEnv) {
       sqlModeEnv.checked = true;
     }
     applySqlMode();
   }
 
   function applySqlMode() {
-    if (!sqlBuilderFields) return;
+    if (!sqlBuilderFields || !sqlEnvFields || !sqlModeBuilder) return;
     if (sqlModeBuilder.checked) {
       sqlBuilderFields.style.display = '';
       sqlEnvFields.style.display = 'none';
@@ -563,6 +569,7 @@
 
   if (sqlModeBuilder) sqlModeBuilder.addEventListener('change', function() { applySqlMode(); resetTest(); });
   if (sqlModeEnv) sqlModeEnv.addEventListener('change', function() { applySqlMode(); resetTest(); });
+  toggleSections();
 
   // ── Test connection ──
   var btnTest = document.getElementById('btn-test');
@@ -589,6 +596,8 @@
     testResult.style.display = 'none';
     testResult.innerHTML = '';
   }
+
+  if (!btnTest || !btnSubmit || !testResult || !testSpinner) return;
 
   btnTest.addEventListener('click', function() {
     testResult.style.display = 'none';

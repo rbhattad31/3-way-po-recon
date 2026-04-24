@@ -134,7 +134,15 @@ class SQLServerERPConnector(BaseERPConnector):
                 env_var = auth.get("connection_string_env", "")
 
             if env_var:
-                self._conn_str = resolve_secret(env_var)
+                try:
+                    self._conn_str = resolve_secret(env_var)
+                except KeyError:
+                    # Graceful fallback: if builder fields are present,
+                    # use them instead of failing hard on missing env var.
+                    if self.config.get("db_host"):
+                        self._conn_str = self._build_connection_string()
+                    else:
+                        raise
             else:
                 # Build from individual fields.
                 self._conn_str = self._build_connection_string()
@@ -454,6 +462,56 @@ class SQLServerERPConnector(BaseERPConnector):
                 reason=f"SQL error: {type(exc).__name__}: {str(exc)[:200]}",
                 metadata={"duration_ms": elapsed, "error": str(exc)[:200]},
             )
+
+    def execute_bulk_query(
+        self, query_key: str, params: list = None
+    ) -> List[Dict[str, Any]]:
+        """Execute a bulk SELECT query and return ALL matching rows (not just the first).
+        
+        Used for data imports that need all records, not just the first match.
+        
+        Args:
+            query_key: Key into self._queries to look up the SQL
+            params: List of parameter values for parameterized query
+            
+        Returns:
+            List of dict rows; empty list if no matches or query not found
+            
+        Raises:
+            Exception if query not found or database error
+        """
+        query = self._queries.get(query_key)
+        if not query:
+            raise ValueError(f"No query configured for '{query_key}'")
+
+        start = time.time()
+        try:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                rows = _rows_to_dicts(cursor)
+                elapsed = int((time.time() - start) * 1000)
+                
+                logger.info(
+                    "Bulk query '%s' returned %d rows in %dms",
+                    query_key, len(rows), elapsed
+                )
+                return rows
+            finally:
+                conn.close()
+
+        except ImportError:
+            logger.error("pyodbc is not installed -- cannot use SQLServerERPConnector")
+            raise
+
+        except Exception as exc:
+            elapsed = int((time.time() - start) * 1000)
+            logger.exception("SQL Server error for bulk query '%s'", query_key)
+            raise
 
     def _do_submit(
         self, query_key: str, payload: Dict[str, Any]

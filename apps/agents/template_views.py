@@ -2039,6 +2039,7 @@ def agent_runs_list(request):
         AgentType.SYSTEM_BULK_EXTRACTION_INTAKE,
         AgentType.SYSTEM_CASE_INTAKE,
         AgentType.SYSTEM_POSTING_PREPARATION,
+        AgentType.SYSTEM_EXPORT_FIELD_MAPPING,
     }
     type_counts = {
         row["agent_type"]: row["count"]

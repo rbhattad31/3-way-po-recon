@@ -90,6 +90,7 @@ class AgentType(models.TextChoices):
     SYSTEM_BULK_EXTRACTION_INTAKE = "SYSTEM_BULK_EXTRACTION_INTAKE", "System Bulk Extraction Intake"
     SYSTEM_CASE_INTAKE = "SYSTEM_CASE_INTAKE", "System Case Intake"
     SYSTEM_POSTING_PREPARATION = "SYSTEM_POSTING_PREPARATION", "System Posting Preparation"
+    SYSTEM_EXPORT_FIELD_MAPPING = "SYSTEM_EXPORT_FIELD_MAPPING", "System Export Field Mapping"
     # Supervisor agent -- full lifecycle orchestrator
     SUPERVISOR = "SUPERVISOR", "Supervisor"
     # Procurement runtime convergence agents

@@ -10,6 +10,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.core.decorators import observed_action
@@ -29,16 +30,17 @@ logger = logging.getLogger(__name__)
 # List
 # ────────────────────────────────────────────────────────────────
 @login_required
-@permission_required_code("users.manage")
-@observed_action("erp.view_connections", permission="users.manage", entity_type="ERPConnection")
+@permission_required_code("erp.view")
+@observed_action("erp.view_connections", permission="erp.view", entity_type="ERPConnection")
 def erp_connection_list(request):
     """List all ERP connections with filters."""
     from apps.core.tenant_utils import get_tenant_or_none
     tenant = get_tenant_or_none(request)
 
-    qs = ERPConnection.objects.order_by("-is_default", "name")
+    qs = ERPConnection.objects.filter(is_active=True).order_by("-is_default", "name")
     if tenant is not None:
-        qs = qs.filter(tenant=tenant)
+        # Include tenant-scoped connections AND global (tenant=None) connections.
+        qs = qs.filter(Q(tenant=tenant) | Q(tenant=None))
 
     search = request.GET.get("q", "").strip()
     if search:
@@ -56,9 +58,9 @@ def erp_connection_list(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # Quick stats
-    stats_base = ERPConnection.objects.all()
+    stats_base = ERPConnection.objects.filter(is_active=True)
     if tenant is not None:
-        stats_base = stats_base.filter(tenant=tenant)
+        stats_base = stats_base.filter(Q(tenant=tenant) | Q(tenant=None))
     total = stats_base.count()
     active = stats_base.filter(status=ERPConnectionStatus.ACTIVE).count()
     default_conn = stats_base.filter(is_default=True).first()
@@ -87,16 +89,20 @@ def erp_connection_list(request):
 # Create
 # ────────────────────────────────────────────────────────────────
 @login_required
-@permission_required_code("users.manage")
-@observed_action("erp.create_connection", permission="users.manage", entity_type="ERPConnection")
+@permission_required_code("erp.manage")
+@observed_action("erp.create_connection", permission="erp.manage", entity_type="ERPConnection")
 def erp_connection_create(request):
     """Create a new ERP connection."""
+    from apps.core.tenant_utils import get_tenant_or_none
+    tenant = get_tenant_or_none(request)
+    
     if request.method == "POST":
         form = ERPConnectionForm(request.POST)
         if form.is_valid():
             conn = form.save(commit=False)
             conn.created_by = request.user
             conn.updated_by = request.user
+            conn.tenant = tenant  # Set from logged-in user's company
             conn.save()
             messages.success(request, f"ERP Connection '{conn.name}' created.")
             return redirect("erp_integration:erp_connection_detail", pk=conn.pk)
@@ -113,17 +119,32 @@ def erp_connection_create(request):
 # Detail / Edit
 # ────────────────────────────────────────────────────────────────
 @login_required
-@permission_required_code("users.manage")
-@observed_action("erp.view_connection", permission="users.manage", entity_type="ERPConnection")
+@permission_required_code("erp.view")
+@observed_action("erp.view_connection", permission="erp.view", entity_type="ERPConnection")
 def erp_connection_detail(request, pk):
     """View and edit an ERP connection."""
-    conn = get_object_or_404(ERPConnection, pk=pk)
+    from apps.core.tenant_utils import get_tenant_or_none
+    tenant = get_tenant_or_none(request)
+    if tenant is not None and not request.user.is_platform_admin:
+        conn = get_object_or_404(
+            ERPConnection,
+            Q(pk=pk) & Q(is_active=True) & (Q(tenant=tenant) | Q(tenant=None)),
+        )
+    else:
+        conn = get_object_or_404(ERPConnection, pk=pk, is_active=True)
 
+    can_manage = request.user.is_platform_admin or request.user.has_permission("erp.manage")
     if request.method == "POST":
+        if not can_manage:
+            messages.error(request, "You do not have permission to edit ERP connections.")
+            return redirect("erp_integration:erp_connection_detail", pk=pk)
         form = ERPConnectionForm(request.POST, instance=conn)
         if form.is_valid():
             updated = form.save(commit=False)
             updated.updated_by = request.user
+            if updated.tenant is None:
+                # Preserve tenant assignment (set from user's company if first time)
+                updated.tenant = tenant
             updated.save()
             messages.success(request, f"Connection '{updated.name}' updated.")
             return redirect("erp_integration:erp_connection_detail", pk=pk)
@@ -149,6 +170,7 @@ def erp_connection_detail(request, pk):
         "form": form,
         "recent_logs": recent_logs,
         "cache_entries": cache_entries,
+        "can_manage": can_manage,
     })
 
 
@@ -157,14 +179,66 @@ def erp_connection_detail(request, pk):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("users.manage")
+@permission_required_code("erp.manage")
 def erp_connection_delete(request, pk):
     """Soft-delete an ERP connection."""
-    conn = get_object_or_404(ERPConnection, pk=pk)
+    conn = get_object_or_404(ERPConnection, pk=pk, is_active=True)
     conn.status = ERPConnectionStatus.INACTIVE
     conn.updated_by = request.user
     conn.save(update_fields=["status", "updated_by", "updated_at"])
     messages.success(request, f"Connection '{conn.name}' deactivated.")
+    return redirect("erp_integration:erp_connection_list")
+
+
+@login_required
+@require_POST
+@permission_required_code("erp.manage")
+def erp_connection_purge(request, pk):
+    """Remove an ERP connection from active use (soft purge).
+
+    This does NOT hard-delete the DB row. It deactivates and hides the record,
+    and scrubs credential-bearing fields.
+    """
+    conn = get_object_or_404(ERPConnection, pk=pk, is_active=True)
+    deleted_suffix = timezone.now().strftime("%Y%m%d%H%M%S")
+    conn.name = f"{conn.name}__deleted__{deleted_suffix}"
+    conn.status = ERPConnectionStatus.INACTIVE
+    conn.is_default = False
+    conn.is_active = False
+    conn.base_url = ""
+    conn.api_key_env = ""
+    conn.connection_string_env = ""
+    conn.database_name = ""
+    conn.db_host = ""
+    conn.db_port = None
+    conn.db_username = ""
+    conn.db_password_encrypted = ""
+    conn.erp_tenant_id = ""
+    conn.client_id_env = ""
+    conn.client_secret_env = ""
+    conn.updated_by = request.user
+    conn.save(
+        update_fields=[
+            "name",
+            "status",
+            "is_default",
+            "is_active",
+            "base_url",
+            "api_key_env",
+            "connection_string_env",
+            "database_name",
+            "db_host",
+            "db_port",
+            "db_username",
+            "db_password_encrypted",
+            "erp_tenant_id",
+            "client_id_env",
+            "client_secret_env",
+            "updated_by",
+            "updated_at",
+        ]
+    )
+    messages.success(request, "Connection removed permanently from active system.")
     return redirect("erp_integration:erp_connection_list")
 
 
@@ -173,7 +247,7 @@ def erp_connection_delete(request, pk):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("users.manage")
+@permission_required_code("erp.manage")
 def erp_connection_test(request, pk):
     """Quick connectivity test for an ERP connection."""
     conn = get_object_or_404(ERPConnection, pk=pk)
@@ -197,7 +271,7 @@ def erp_connection_test(request, pk):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("users.manage")
+@permission_required_code("erp.manage")
 def erp_connection_test_ajax(request):
     """Test connectivity from form data without saving the record.
 
@@ -266,8 +340,8 @@ def erp_connection_test_ajax(request):
 # ERP Reference Data Browser
 # ────────────────────────────────────────────────────────────────
 @login_required
-@permission_required_code("invoices.view")
-@observed_action("erp.view_reference_data", permission="invoices.view", entity_type="ERPReferenceData")
+@permission_required_code("erp.view")
+@observed_action("erp.view_reference_data", permission="erp.view", entity_type="ERPReferenceData")
 def erp_reference_data(request):
     """Browse all imported ERP reference data (vendors, items, tax codes, cost centers, PO refs).
 

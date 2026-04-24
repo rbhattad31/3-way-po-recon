@@ -158,6 +158,9 @@ _AGENT_FIELD_EXTRACTORS: Dict[str, List[tuple]] = {
     "SYSTEM_BULK_EXTRACTION_INTAKE": [
         ("recommendation", _extract_recommendation),
     ],
+    "SYSTEM_EXPORT_FIELD_MAPPING": [
+        ("recommendation", _extract_recommendation),
+    ],
     # Supervisor agent -- full lifecycle orchestrator
     "SUPERVISOR": [
         ("recommendation", _extract_recommendation),

@@ -272,6 +272,7 @@
   var SECTIONS = {
     CUSTOM:     ['section-rest'],
     SQLSERVER:  ['section-sql'],
+    VOUCHER_SQLSERVER: ['section-sql'],
     MYSQL:      ['section-sql'],
     DYNAMICS:   ['section-rest', 'section-oauth'],
     ZOHO:       ['section-rest', 'section-oauth'],
@@ -288,7 +289,7 @@
     // Toggle SQL Server-only fields (ODBC driver, trust cert, integrated auth hint)
     var sqlOnly = document.querySelectorAll('.sqlserver-only');
     for (var j = 0; j < sqlOnly.length; j++) {
-      sqlOnly[j].style.display = (val === 'SQLSERVER') ? '' : 'none';
+      sqlOnly[j].style.display = (val === 'SQLSERVER' || val === 'VOUCHER_SQLSERVER') ? '' : 'none';
     }
     // Update section title and port hint
     var titleEl = document.getElementById('sql-section-title');

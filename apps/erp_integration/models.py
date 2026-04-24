@@ -47,6 +47,7 @@ class ERPConnection(BaseModel):
         default=ERPConnectionStatus.ACTIVE,
         db_index=True,
     )
+    is_active = models.BooleanField(default=True, db_index=True)
     timeout_seconds = models.PositiveIntegerField(default=30)
     is_default = models.BooleanField(default=False)
     metadata_json = models.JSONField(default=dict, blank=True)

@@ -498,3 +498,94 @@ class SystemPostingPreparationAgent(DeterministicSystemAgent):
             },
             decisions=decisions,
         )
+
+
+class SystemExportFieldMappingAgent(DeterministicSystemAgent):
+    """System agent representing deterministic export field mapping.
+
+    Wraps export mapping outcomes for governance and audit visibility.
+    Expected context payload (ctx.extra):
+      - scope: "single" | "bulk"
+      - invoices_count: int
+      - header_unresolved_count: int
+      - line_unresolved_count: int
+      - ai_fallback_enabled: bool
+      - ai_fallback_used: bool
+      - ai_fields_applied: int
+    """
+
+    agent_type = AgentType.SYSTEM_EXPORT_FIELD_MAPPING
+
+    def execute_deterministic(self, ctx: AgentContext) -> AgentOutput:
+        extra = ctx.extra or {}
+        scope = str(extra.get("scope", "single") or "single")
+        invoices_count = int(extra.get("invoices_count", 1) or 1)
+        header_unresolved_count = int(extra.get("header_unresolved_count", 0) or 0)
+        line_unresolved_count = int(extra.get("line_unresolved_count", 0) or 0)
+        ai_fallback_enabled = bool(extra.get("ai_fallback_enabled", False))
+        ai_fallback_used = bool(extra.get("ai_fallback_used", False))
+        ai_fields_applied = int(extra.get("ai_fields_applied", 0) or 0)
+
+        total_unresolved = header_unresolved_count + line_unresolved_count
+        resolved_without_ai = total_unresolved == 0
+
+        decisions: List[Dict[str, Any]] = [
+            {
+                "decision": "Export field mapping completed",
+                "rationale": (
+                    f"scope={scope}, invoices={invoices_count}, "
+                    f"unresolved_header={header_unresolved_count}, "
+                    f"unresolved_line={line_unresolved_count}"
+                ),
+                "confidence": 1.0 if resolved_without_ai else 0.8,
+                "evidence": {
+                    "scope": scope,
+                    "invoices_count": invoices_count,
+                    "header_unresolved_count": header_unresolved_count,
+                    "line_unresolved_count": line_unresolved_count,
+                },
+            },
+            {
+                "decision": (
+                    "AI fallback used for unresolved fields"
+                    if ai_fallback_used
+                    else "AI fallback not used"
+                ),
+                "rationale": (
+                    f"enabled={ai_fallback_enabled}, used={ai_fallback_used}, "
+                    f"applied_fields={ai_fields_applied}"
+                ),
+                "confidence": 1.0,
+                "evidence": {
+                    "ai_fallback_enabled": ai_fallback_enabled,
+                    "ai_fallback_used": ai_fallback_used,
+                    "ai_fields_applied": ai_fields_applied,
+                },
+            },
+        ]
+
+        reasoning = (
+            f"Export mapping completed for {invoices_count} invoice(s) in {scope} mode. "
+            f"Unresolved fields: header={header_unresolved_count}, line={line_unresolved_count}. "
+            f"AI fallback enabled={ai_fallback_enabled}, used={ai_fallback_used}, "
+            f"applied_fields={ai_fields_applied}."
+        )
+
+        confidence = 1.0 if resolved_without_ai else (0.85 if ai_fallback_used else 0.75)
+        confidence = max(0.0, min(1.0, confidence))
+
+        return AgentOutput(
+            reasoning=reasoning,
+            confidence=confidence,
+            evidence={
+                "scope": scope,
+                "invoices_count": invoices_count,
+                "header_unresolved_count": header_unresolved_count,
+                "line_unresolved_count": line_unresolved_count,
+                "ai_fallback_enabled": ai_fallback_enabled,
+                "ai_fallback_used": ai_fallback_used,
+                "ai_fields_applied": ai_fields_applied,
+                "invoice_id": ctx.invoice_id,
+            },
+            decisions=decisions,
+        )
