@@ -19,7 +19,13 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.enums import FileProcessingState, InvoiceStatus, ExtractionApprovalStatus
+from apps.core.enums import (
+    CaseStageType,
+    CaseStatus,
+    ExtractionApprovalStatus,
+    FileProcessingState,
+    InvoiceStatus,
+)
 from apps.core.decorators import observed_task
 from apps.core.evaluation_constants import (
     EXTRACTION_APPROVAL_CONFIDENCE,
@@ -248,6 +254,24 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
                 f"Please upload this document through the appropriate channel."
             )
             _fail_upload(upload, reject_msg)
+            try:
+                if case_id:
+                    from apps.cases.models import APCase
+                    APCase.objects.filter(pk=case_id).update(
+                        status=CaseStatus.REJECTED,
+                        current_stage=CaseStageType.EXTRACTION,
+                        updated_at=timezone.now(),
+                    )
+                    logger.info(
+                        "Marked case %s as REJECTED due to non-invoice classification (%s)",
+                        case_id,
+                        doc_type_result.document_type,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to mark case %s as REJECTED for non-invoice document",
+                    case_id,
+                )
             _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
             logger.info(
                 "Upload %s rejected: classified as %s (confidence=%.2f, keywords=%s)",

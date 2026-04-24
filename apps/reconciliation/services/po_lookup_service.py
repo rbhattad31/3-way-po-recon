@@ -93,7 +93,7 @@ class POLookupService:
             )
 
             if result.resolved:
-                po = self._hydrate_po(result)
+                po = self._hydrate_po(result, invoice=invoice)
                 if po:
                     logger.info(
                         "PO resolved for invoice %s: PO %s via %s (stale=%s)",
@@ -128,28 +128,161 @@ class POLookupService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hydrate_po(result) -> Optional[PurchaseOrder]:
+    def _hydrate_po(result, invoice: Optional[Invoice] = None) -> Optional[PurchaseOrder]:
         """Hydrate a PurchaseOrder ORM object from an ERPResolutionResult.
 
         When the result comes from MIRROR_DB, po_id is available directly.
         When from DB_FALLBACK (ERPPOReference snapshot), we normalise and
-        search by po_number — the PO may not exist as a full document.
+        search by po_number. If the PO is still absent, create a lightweight
+        mirror PurchaseOrder + line items from the snapshot so reconciliation
+        can proceed without a false PO_NOT_FOUND.
         """
+        from apps.documents.models import PurchaseOrderLineItem
+        from apps.vendors.models import Vendor
+
         value = result.value or {}
         po_id = value.get("po_id")
         if po_id:
-            return PurchaseOrder.objects.filter(pk=po_id).first()
+            po = PurchaseOrder.objects.filter(pk=po_id).first()
+            if po:
+                POLookupService._dedupe_po_lines(po)
+            return po
 
         # DB_FALLBACK path: try to find the PO by number
         po_number = value.get("po_number", "")
-        if po_number:
-            return (
-                PurchaseOrder.objects.filter(po_number=po_number).first()
-                or PurchaseOrder.objects.filter(
-                    normalized_po_number=normalize_po_number(po_number)
-                ).first()
+        if not po_number:
+            return None
+
+        existing = (
+            PurchaseOrder.objects.filter(po_number=po_number).first()
+            or PurchaseOrder.objects.filter(
+                normalized_po_number=normalize_po_number(po_number)
+            ).first()
+        )
+        if existing:
+            POLookupService._dedupe_po_lines(existing)
+            return existing
+
+        # If the fallback has no line-level data, do not synthesize an empty PO.
+        snapshot_lines = value.get("line_items") or []
+        if not snapshot_lines:
+            return None
+
+        tenant = getattr(invoice, "tenant", None) if invoice else None
+        vendor = None
+        vendor_code = value.get("vendor_code") or ""
+        if vendor_code:
+            vendor_qs = Vendor.objects.filter(code=vendor_code, is_active=True)
+            if tenant is not None:
+                vendor_qs = vendor_qs.filter(tenant=tenant)
+            vendor = vendor_qs.first() or Vendor.objects.filter(code=vendor_code, is_active=True).first()
+
+        po, created = PurchaseOrder.objects.get_or_create(
+            po_number=po_number,
+            tenant=tenant,
+            defaults={
+                "normalized_po_number": normalize_po_number(po_number),
+                "vendor": vendor,
+                "currency": value.get("currency") or "USD",
+                "total_amount": Decimal(str(value.get("total_amount") or "0")),
+                "status": value.get("status") or "OPEN",
+            },
+        )
+
+        if created:
+            deduped_lines = []
+            seen_signatures = set()
+            for idx, raw_line in enumerate(snapshot_lines, start=1):
+                if not isinstance(raw_line, dict):
+                    continue
+
+                signature = (
+                    str(raw_line.get("line_number") or ""),
+                    str(raw_line.get("item_code") or ""),
+                    str(raw_line.get("description") or ""),
+                    str(raw_line.get("quantity") or ""),
+                    str(raw_line.get("unit_price") or ""),
+                    str(raw_line.get("line_amount") or ""),
+                    str(raw_line.get("unit_of_measure") or ""),
+                    str(raw_line.get("tax_amount") or ""),
+                )
+                if signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
+                deduped_lines.append((idx, raw_line))
+
+            for idx, raw_line in deduped_lines:
+                line_no = raw_line.get("line_number")
+                try:
+                    line_no_int = int(line_no) if line_no is not None else idx
+                except Exception:
+                    line_no_int = idx
+
+                PurchaseOrderLineItem.objects.create(
+                    tenant=tenant,
+                    purchase_order=po,
+                    line_number=line_no_int,
+                    item_code=str(raw_line.get("item_code") or ""),
+                    description=str(raw_line.get("description") or ""),
+                    quantity=Decimal(str(raw_line.get("quantity") or "0")),
+                    unit_price=Decimal(str(raw_line.get("unit_price") or "0")),
+                    line_amount=Decimal(str(raw_line.get("line_amount") or "0")),
+                    unit_of_measure=str(raw_line.get("unit_of_measure") or "EA"),
+                    tax_amount=(
+                        Decimal(str(raw_line.get("tax_amount")))
+                        if raw_line.get("tax_amount") not in (None, "") else None
+                    ),
+                )
+
+            logger.info(
+                "Created mirrored PurchaseOrder %s from ERP fallback snapshot with %d lines (%d deduped)",
+                po.po_number,
+                len(deduped_lines),
+                max(len(snapshot_lines) - len(deduped_lines), 0),
             )
-        return None
+
+        return po
+
+    @staticmethod
+    def _dedupe_po_lines(po: PurchaseOrder) -> None:
+        """Remove exact duplicate PO lines (same line_number and values).
+
+        This is a defensive cleanup for previously mirrored fallback POs that
+        may have imported duplicate snapshot rows.
+        """
+        from apps.documents.models import PurchaseOrderLineItem
+
+        lines = list(
+            PurchaseOrderLineItem.objects.filter(purchase_order=po).order_by("id")
+        )
+        if not lines:
+            return
+
+        seen = set()
+        duplicate_ids = []
+        for line in lines:
+            signature = (
+                int(line.line_number or 0),
+                line.item_code or "",
+                line.description or "",
+                str(line.quantity or ""),
+                str(line.unit_price or ""),
+                str(line.line_amount or ""),
+                line.unit_of_measure or "",
+                str(line.tax_amount or ""),
+            )
+            if signature in seen:
+                duplicate_ids.append(line.pk)
+                continue
+            seen.add(signature)
+
+        if duplicate_ids:
+            PurchaseOrderLineItem.objects.filter(pk__in=duplicate_ids).delete()
+            logger.info(
+                "Deduped %d duplicate PO lines for PO %s",
+                len(duplicate_ids),
+                po.po_number,
+            )
 
     # ------------------------------------------------------------------
     # Deterministic vendor + amount discovery

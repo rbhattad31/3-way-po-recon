@@ -66,6 +66,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "po_lookup": "purchase_orders.view",
     "grn_lookup": "grns.view",
     "vendor_search": "vendors.view",
+    "item_search": "purchase_orders.view",
     "invoice_details": "invoices.view",
     "exception_list": "reconciliation.view",
     "reconciliation_summary": "reconciliation.view",
