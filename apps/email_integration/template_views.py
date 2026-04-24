@@ -24,6 +24,8 @@ from apps.email_integration.enums import (
     EmailRoutingDecisionStatus,
     EmailRoutingDecisionType,
     EmailRoutingStatus,
+    MailboxAuthMode,
+    MailboxType,
     TargetDomain,
 )
 from apps.email_integration.models import (
@@ -36,6 +38,7 @@ from apps.email_integration.models import (
     MailboxConfig,
 )
 from apps.email_integration.services.inbound_ingestion_service import InboundIngestionService
+from apps.email_integration.services.attachment_service import AttachmentService
 from apps.email_integration.services.mailbox_service import MailboxService
 from apps.email_integration.services.outbound_email_service import OutboundEmailService
 from apps.email_integration.services.processing_service import EmailProcessingService
@@ -65,6 +68,22 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
 
     def _redirect_current(self):
         return redirect(self.get_redirect_view_name())
+
+    def _redirect_current_with_request(self, request):
+        url = reverse(self.get_redirect_view_name())
+        query_params = {}
+        config_mode = (
+            (request.GET.get("config") or "").strip().lower() in {"1", "true", "yes", "on"}
+            or (request.POST.get("config_mode") or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        if config_mode:
+            query_params["config"] = "1"
+            edit_mailbox_id = (request.POST.get("mailbox_id") or request.GET.get("edit") or "").strip()
+            if (request.POST.get("action") or "").strip() == "update_mailbox" and edit_mailbox_id:
+                query_params["edit"] = edit_mailbox_id
+        if query_params:
+            url = f"{url}?{urlencode(query_params)}"
+        return redirect(url)
 
     def _redirect_connect(self):
         return redirect(self.get_connect_view_name())
@@ -108,6 +127,182 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
         return qs
 
     @staticmethod
+    def _all_scoped_mailboxes(*, tenant, is_platform_admin):
+        qs = MailboxConfig.objects.all()
+        if tenant is not None and not is_platform_admin:
+            qs = qs.filter(tenant=tenant)
+        return qs
+
+    @staticmethod
+    def _managed_mailbox_config_keys() -> set:
+        return {
+            "provider",
+            "tenant_id",
+            "client_id",
+            "client_secret",
+            "certificate",
+            "redirect_uri",
+            "access_token",
+            "refresh_token",
+            "scopes",
+            "service_account_key.json",
+            "service_account_key_json",
+            "client_email",
+            "delegated_user_email",
+            "smtp_host",
+            "smtp_port",
+            "smtp_security",
+            "smtp_username",
+            "smtp_password",
+            "user_id",
+            "scope",
+            "graph_base_url",
+            "webhook_url",
+            "project_id",
+            "topic_name",
+            "subscription",
+            "timeout_seconds",
+            "poll_page_size",
+            "webhook_token",
+            "llm_classification_enabled",
+            "auto_process_sender_emails",
+            "auto_process_sender_names",
+        }
+
+    @classmethod
+    def _additional_config_json_text(cls, config_json) -> str:
+        if not isinstance(config_json, dict):
+            return "{}"
+        extra_config = {
+            key: value
+            for key, value in config_json.items()
+            if key not in cls._managed_mailbox_config_keys()
+        }
+        return json.dumps(extra_config or {}, indent=2, sort_keys=True)
+
+    @staticmethod
+    def _parse_config_json_text(raw_value: str) -> dict:
+        text = (raw_value or "").strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Additional config JSON is invalid: {exc.msg}.")
+        if not isinstance(parsed, dict):
+            raise ValueError("Additional config JSON must be a JSON object.")
+        return parsed
+
+    @staticmethod
+    def _parse_positive_int(raw_value, *, field_label: str, default=None, minimum: int = 1):
+        text = str(raw_value or "").strip()
+        if not text:
+            return default
+        try:
+            value = int(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field_label} must be a whole number.")
+        if value < minimum:
+            raise ValueError(f"{field_label} must be at least {minimum}.")
+        return value
+
+    @staticmethod
+    def _parse_scopes(raw_value: str):
+        text = str(raw_value or "").replace("\n", ",")
+        return [part.strip() for part in text.split(",") if part.strip()]
+
+    @staticmethod
+    def _allowed_auth_modes(*, provider: str, mailbox_type: str):
+        if provider == EmailProvider.GMAIL:
+            if mailbox_type == MailboxType.USER:
+                return {MailboxAuthMode.SERVICE_ACCOUNT}
+            return set()
+        if provider == EmailProvider.MICROSOFT_365:
+            return {MailboxAuthMode.OAUTH, MailboxAuthMode.APP_REGISTRATION}
+        if mailbox_type == MailboxType.USER:
+            return {MailboxAuthMode.OAUTH}
+        if mailbox_type == MailboxType.SHARED:
+            return {MailboxAuthMode.APP_REGISTRATION}
+        if mailbox_type == MailboxType.SYSTEM:
+            if provider == EmailProvider.GMAIL:
+                return {MailboxAuthMode.SERVICE_ACCOUNT}
+            if provider == EmailProvider.MICROSOFT_365:
+                return {MailboxAuthMode.APP_REGISTRATION}
+        return set()
+
+    @staticmethod
+    def _validate_provider_mailbox_auth_combination(*, provider: str, mailbox_type: str, auth_mode: str):
+        if provider == EmailProvider.GMAIL and mailbox_type != MailboxType.USER:
+            raise ValueError("For GMAIL provider, mailbox type must be USER.")
+        allowed_modes = EmailIntegrationDashboardView._allowed_auth_modes(provider=provider, mailbox_type=mailbox_type)
+        if auth_mode not in allowed_modes:
+            readable_allowed = ", ".join(sorted(list(allowed_modes))) or "NONE"
+            raise ValueError(
+                f"Invalid auth mode '{auth_mode}' for provider '{provider}' and mailbox type '{mailbox_type}'. Allowed: {readable_allowed}."
+            )
+
+    @staticmethod
+    def _validate_config_json(*, provider: str, auth_mode: str, webhook_enabled: bool, polling_enabled: bool, poll_interval_minutes: int, mailbox_config: dict):
+        missing = []
+
+        if auth_mode == MailboxAuthMode.OAUTH:
+            if not mailbox_config.get("client_id"):
+                missing.append("client_id")
+            if not mailbox_config.get("client_secret"):
+                missing.append("client_secret")
+            if not mailbox_config.get("redirect_uri"):
+                missing.append("redirect_uri")
+            if not mailbox_config.get("access_token"):
+                missing.append("access_token")
+            if not mailbox_config.get("refresh_token"):
+                missing.append("refresh_token")
+            scopes = mailbox_config.get("scopes") or []
+            if not isinstance(scopes, list) or not scopes:
+                missing.append("scopes")
+
+        if auth_mode == MailboxAuthMode.SERVICE_ACCOUNT:
+            if provider != EmailProvider.GMAIL:
+                raise ValueError("SERVICE_ACCOUNT auth mode is supported only for GMAIL provider.")
+            service_key = mailbox_config.get("service_account_key.json") or mailbox_config.get("service_account_key_json")
+            if not service_key:
+                missing.append("service_account_key.json")
+            if not mailbox_config.get("client_email"):
+                missing.append("client_email")
+            if not mailbox_config.get("delegated_user_email"):
+                missing.append("delegated_user_email")
+
+        if auth_mode == MailboxAuthMode.APP_REGISTRATION:
+            if provider != EmailProvider.MICROSOFT_365:
+                raise ValueError("APP_REGISTRATION auth mode is supported only for MICROSOFT_365 provider.")
+            if not mailbox_config.get("client_id"):
+                missing.append("client_id")
+            has_secret = bool(mailbox_config.get("client_secret"))
+            has_certificate = bool(mailbox_config.get("certificate"))
+            if not has_secret and not has_certificate:
+                missing.append("client_secret or certificate")
+            if not mailbox_config.get("tenant_id"):
+                missing.append("tenant_id")
+            if ".default" not in str(mailbox_config.get("scope") or "").strip():
+                missing.append("scope (.default)")
+
+        if webhook_enabled:
+            if provider == EmailProvider.MICROSOFT_365 and not mailbox_config.get("webhook_url"):
+                missing.append("webhook_url")
+            if provider == EmailProvider.GMAIL:
+                if not mailbox_config.get("project_id"):
+                    missing.append("project_id")
+                if not mailbox_config.get("topic_name"):
+                    missing.append("topic_name")
+                if not mailbox_config.get("subscription"):
+                    missing.append("subscription")
+
+        if polling_enabled and (poll_interval_minutes is None or int(poll_interval_minutes) < 1):
+            missing.append("poll_interval_minutes")
+
+        if missing:
+            raise ValueError("Missing required config for selected provider/auth mode: " + ", ".join(missing))
+
+    @staticmethod
     def _scoped_messages(*, tenant, is_platform_admin):
         qs = EmailMessage.objects.all()
         if tenant is not None and not is_platform_admin:
@@ -134,43 +329,149 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
         return qs.exclude(last_success_at__isnull=True).filter(last_error_message="")
 
     @staticmethod
-    def _build_mailbox_config(request, mailbox_address: str, existing_config=None) -> dict:
+    def _build_mailbox_config(request, mailbox_address: str, existing_config=None, extra_config=None) -> dict:
         merged_config = dict(existing_config or {})
         provider = (request.POST.get("provider") or "").strip()
+        auth_mode = (request.POST.get("auth_mode") or "").strip()
         tenant_id = (request.POST.get("graph_tenant_id") or "").strip() or str(merged_config.get("tenant_id") or "").strip()
-        client_id = (request.POST.get("graph_client_id") or "").strip() or str(merged_config.get("client_id") or "").strip()
-        client_secret = (request.POST.get("graph_client_secret") or "").strip() or str(merged_config.get("client_secret") or "").strip()
+        oauth_client_id = (request.POST.get("oauth_client_id") or "").strip()
+        oauth_client_secret = (request.POST.get("oauth_client_secret") or "").strip()
+        app_client_id = (request.POST.get("graph_client_id") or "").strip()
+        app_client_secret = (request.POST.get("graph_client_secret") or "").strip()
+
+        if auth_mode == MailboxAuthMode.OAUTH:
+            client_id = oauth_client_id or app_client_id or str(merged_config.get("client_id") or "").strip()
+            client_secret = oauth_client_secret or app_client_secret or str(merged_config.get("client_secret") or "").strip()
+        else:
+            client_id = app_client_id or oauth_client_id or str(merged_config.get("client_id") or "").strip()
+            client_secret = app_client_secret or oauth_client_secret or str(merged_config.get("client_secret") or "").strip()
+        certificate = (request.POST.get("graph_certificate") or "").strip() or str(merged_config.get("certificate") or "").strip()
+        redirect_uri = (request.POST.get("oauth_redirect_uri") or "").strip() or str(merged_config.get("redirect_uri") or "").strip()
+        access_token = (request.POST.get("oauth_access_token") or "").strip() or str(merged_config.get("access_token") or "").strip()
+        refresh_token = (request.POST.get("oauth_refresh_token") or "").strip() or str(merged_config.get("refresh_token") or "").strip()
+        scopes = EmailIntegrationDashboardView._parse_scopes(
+            (request.POST.get("oauth_scopes") or "").strip() or ",".join(merged_config.get("scopes") or [])
+        )
+        service_account_key_json = (request.POST.get("service_account_key_json") or "").strip() or str(merged_config.get("service_account_key.json") or merged_config.get("service_account_key_json") or "").strip()
+        client_email = (request.POST.get("service_account_client_email") or "").strip() or str(merged_config.get("client_email") or "").strip()
+        delegated_user_email = (request.POST.get("service_account_delegated_user_email") or "").strip() or str(merged_config.get("delegated_user_email") or "").strip()
         smtp_host = (request.POST.get("smtp_host") or "").strip() or str(merged_config.get("smtp_host") or "").strip()
         smtp_port = (request.POST.get("smtp_port") or "").strip() or str(merged_config.get("smtp_port") or "").strip()
         smtp_security = (request.POST.get("smtp_security") or "").strip().upper() or str(merged_config.get("smtp_security") or "").strip().upper()
         smtp_username = (request.POST.get("smtp_username") or "").strip() or str(merged_config.get("smtp_username") or "").strip()
         smtp_password = (request.POST.get("smtp_password") or "").strip() or str(merged_config.get("smtp_password") or "").strip()
-        user_id = str(merged_config.get("user_id") or "").strip() or mailbox_address
-        scope = str(merged_config.get("scope") or "https://graph.microsoft.com/.default").strip() or "https://graph.microsoft.com/.default"
-        graph_base_url = str(merged_config.get("graph_base_url") or "https://graph.microsoft.com/v1.0").strip() or "https://graph.microsoft.com/v1.0"
+        user_id = (request.POST.get("graph_user_id") or "").strip() or str(merged_config.get("user_id") or "").strip() or mailbox_address
+        scope = (request.POST.get("graph_scope") or "").strip() or str(merged_config.get("scope") or "https://graph.microsoft.com/.default").strip() or "https://graph.microsoft.com/.default"
+        graph_base_url = (request.POST.get("graph_base_url") or "").strip() or str(merged_config.get("graph_base_url") or "https://graph.microsoft.com/v1.0").strip() or "https://graph.microsoft.com/v1.0"
+        webhook_url = (request.POST.get("webhook_url") or "").strip() or str(merged_config.get("webhook_url") or "").strip()
+        project_id = (request.POST.get("pubsub_project_id") or "").strip() or str(merged_config.get("project_id") or "").strip()
+        topic_name = (request.POST.get("pubsub_topic_name") or "").strip() or str(merged_config.get("topic_name") or "").strip()
+        subscription = (request.POST.get("pubsub_subscription") or "").strip() or str(merged_config.get("subscription") or "").strip()
 
-        timeout_seconds = str(merged_config.get("timeout_seconds") or "30").strip()
-        poll_page_size = str(merged_config.get("poll_page_size") or "25").strip()
+        timeout_seconds = EmailIntegrationDashboardView._parse_positive_int(
+            (request.POST.get("timeout_seconds") or "").strip() or str(merged_config.get("timeout_seconds") or "30").strip(),
+            field_label="Timeout Seconds",
+            default=30,
+            minimum=1,
+        )
+        poll_page_size = EmailIntegrationDashboardView._parse_positive_int(
+            (request.POST.get("poll_page_size") or "").strip() or str(merged_config.get("poll_page_size") or "25").strip(),
+            field_label="Poll Page Size",
+            default=25,
+            minimum=1,
+        )
+        webhook_token = (request.POST.get("webhook_token") or "").strip() or str(merged_config.get("webhook_token") or "").strip()
+        llm_classification_enabled = EmailIntegrationDashboardView._checkbox_checked(
+            request,
+            "llm_classification_enabled",
+            default=bool(merged_config.get("llm_classification_enabled", True)),
+        )
+
+        if extra_config:
+            merged_config.update(extra_config)
 
         merged_config.update(
             {
                 "provider": provider,
+                "auth_mode": auth_mode,
                 "tenant_id": tenant_id,
                 "client_id": client_id,
                 "client_secret": client_secret,
+                "certificate": certificate,
+                "redirect_uri": redirect_uri,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "scopes": scopes,
+                "service_account_key.json": service_account_key_json,
+                "service_account_key_json": service_account_key_json,
+                "client_email": client_email,
+                "delegated_user_email": delegated_user_email,
                 "smtp_host": smtp_host,
-                "smtp_port": int(smtp_port) if smtp_port else None,
+                "smtp_port": EmailIntegrationDashboardView._parse_positive_int(
+                    smtp_port,
+                    field_label="SMTP Port",
+                    default=None,
+                    minimum=1,
+                ),
                 "smtp_security": smtp_security,
                 "smtp_username": smtp_username,
                 "smtp_password": smtp_password,
                 "user_id": user_id,
                 "scope": scope,
                 "graph_base_url": graph_base_url,
-                "timeout_seconds": int(timeout_seconds or "30"),
-                "poll_page_size": int(poll_page_size or "25"),
+                "webhook_url": webhook_url,
+                "project_id": project_id,
+                "topic_name": topic_name,
+                "subscription": subscription,
+                "timeout_seconds": timeout_seconds,
+                "poll_page_size": poll_page_size,
+                "webhook_token": webhook_token,
+                "llm_classification_enabled": llm_classification_enabled,
             }
         )
         return merged_config
+
+    @staticmethod
+    def _checkbox_checked(request, field_name: str, *, default: bool = False) -> bool:
+        raw_value = request.POST.get(field_name)
+        if raw_value is None:
+            return default
+        return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _routing_source_label(decision) -> str:
+        if decision is None:
+            return "Pending"
+        if decision.llm_used:
+            return "LLM"
+        if decision.decision_type == EmailRoutingDecisionType.MANUAL:
+            return "Manual"
+        return "Rule"
+
+    @staticmethod
+    def _attach_latest_routing_metadata(messages_list):
+        message_ids = [msg.pk for msg in messages_list if getattr(msg, "pk", None)]
+        if not message_ids:
+            return
+
+        decision_map = {}
+        decisions = EmailRoutingDecision.objects.filter(email_message_id__in=message_ids).order_by("email_message_id", "-created_at")
+        for decision in decisions:
+            if decision.email_message_id not in decision_map:
+                decision_map[decision.email_message_id] = decision
+
+        for message_obj in messages_list:
+            decision = decision_map.get(message_obj.pk)
+            message_obj.latest_routing_decision = decision
+            message_obj.classification_source_label = EmailIntegrationDashboardView._routing_source_label(decision)
+            message_obj.classification_confidence_pct = int(round((decision.confidence_score or 0.0) * 100)) if decision else None
+            message_obj.classification_reasoning_summary = getattr(decision, "reasoning_summary", "") or ""
+            message_obj.classification_model_name = ""
+            message_obj.latest_target_domain = ""
+            if decision is not None:
+                evidence = decision.evidence_json or {}
+                message_obj.classification_model_name = str(evidence.get("classification_model") or "").strip()
+                message_obj.latest_target_domain = decision.target_domain
 
     @staticmethod
     def _record_action(*, tenant, actor_user, action_type, action_status, trace_id="", payload=None, result=None, error="", email_message=None, thread=None):
@@ -227,7 +528,6 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
             TargetDomain.AP,
             TargetDomain.PROCUREMENT,
             TargetDomain.TRIAGE,
-            TargetDomain.NOTIFICATION_ONLY,
         ]:
             raise ValueError("Invalid target domain")
 
@@ -326,6 +626,17 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
             if item not in deduped:
                 deduped.append(item)
         return deduped
+
+    @staticmethod
+    def _parse_domain_text(value: str):
+        domains = []
+        for item in EmailIntegrationDashboardView._parse_multivalue_text(value):
+            normalized = item.lower().strip()
+            if "@" in normalized:
+                normalized = normalized.split("@", 1)[1]
+            if normalized and normalized not in domains:
+                domains.append(normalized)
+        return domains
 
     def _send_outbound(self, *, request, mailbox, tenant):
         template_code = (request.POST.get("template_code") or "").strip()
@@ -509,6 +820,13 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
                 msg.extraction_status = (linked_upload.processing_state or "QUEUED").upper()
                 extraction_result = linked_upload.extraction_results.order_by("-created_at").first()
                 if extraction_result is None:
+                    if msg.extraction_status == "COMPLETED":
+                        extraction_workbench_url = reverse("extraction:workbench")
+                        if linked_upload.original_filename:
+                            q = urlencode({"q": linked_upload.original_filename})
+                            msg.extraction_result_url = f"{extraction_workbench_url}?{q}"
+                        else:
+                            msg.extraction_result_url = extraction_workbench_url
                     continue
 
                 msg.extraction_result_id = extraction_result.pk
@@ -517,6 +835,22 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
                     kwargs={"pk": extraction_result.pk},
                 )
                 msg.extraction_status = "COMPLETED" if extraction_result.success else "FAILED"
+            self._attach_latest_routing_metadata(inbox_messages)
+
+        recent_messages = list(
+            message_qs.select_related("mailbox", "thread", "linked_document_upload")
+            .prefetch_related("attachments")
+            .order_by("-received_at", "-created_at")[:20]
+        )
+        self._attach_latest_routing_metadata(recent_messages)
+
+        triage_messages = list(
+            message_qs.filter(routing_status=EmailRoutingStatus.TRIAGED)
+            .select_related("mailbox", "thread")
+            .prefetch_related("attachments")
+            .order_by("-received_at", "-created_at")[:15]
+        )
+        self._attach_latest_routing_metadata(triage_messages)
 
         attachment_candidates_qs = (
             self._scoped_attachments(tenant=tenant, is_platform_admin=is_platform_admin)
@@ -606,21 +940,12 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
             "action_count": actions.count(),
             "inbox_messages": inbox_messages,
             "inbox_requires_mailbox_selection": inbox_requires_mailbox_selection,
-            "recent_messages": (
-                message_qs.select_related("mailbox", "thread", "linked_document_upload")
-                .prefetch_related("attachments")
-                .order_by("-received_at", "-created_at")[:20]
-            ),
+            "recent_messages": recent_messages,
             "recent_actions": (
                 actions.select_related("email_message", "performed_by_user")
                 .order_by("-created_at")[:20]
             ),
-            "triage_messages": (
-                message_qs.filter(routing_status=EmailRoutingStatus.TRIAGED)
-                .select_related("mailbox", "thread")
-                .prefetch_related("attachments")
-                .order_by("-received_at", "-created_at")[:15]
-            ),
+            "triage_messages": triage_messages,
             "failed_actions": (
                 actions.filter(action_status=EmailActionStatus.FAILED)
                 .select_related("email_message", "performed_by_user")
@@ -640,6 +965,9 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
             "selected_mailbox": selected_mailbox,
             "auto_sender_emails_text": "\n".join(auto_sender_emails),
             "auto_sender_names_text": "\n".join(auto_sender_names),
+            "selected_mailbox_allowed_domains_text": "\n".join(selected_mailbox.allowed_sender_domains_json or []) if selected_mailbox else "",
+            "selected_mailbox_webhook_token": str(selected_mailbox_config.get("webhook_token") or "") if selected_mailbox else "",
+            "selected_mailbox_llm_enabled": bool(selected_mailbox_config.get("llm_classification_enabled", True)) if selected_mailbox else True,
             "filters": {
                 "q": query,
                 "mailbox": mailbox_filter,
@@ -656,11 +984,11 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
                 TargetDomain.AP,
                 TargetDomain.PROCUREMENT,
                 TargetDomain.TRIAGE,
-                TargetDomain.NOTIFICATION_ONLY,
             ],
             "active_templates": EmailTemplate.objects.filter(is_active=True)
             .filter(Q(tenant=tenant) | Q(tenant__isnull=True))
             .order_by("template_code"),
+            "default_route_choices": [choice[0] for choice in TargetDomain.choices],
         }
 
     def post(self, request, *args, **kwargs):
@@ -700,46 +1028,89 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
             if action == "update_mailbox":
                 if not mailbox_id:
                     messages.error(request, "Mailbox selection is required for update.")
-                    return self._redirect_current()
-                mailbox = mailbox_qs.filter(pk=mailbox_id, is_active=True).first()
+                    return self._redirect_current_with_request(request)
+                mailbox = mailbox_qs.filter(pk=mailbox_id).first()
                 if mailbox is None:
                     messages.error(request, "Mailbox not found for your tenant.")
-                    return self._redirect_current()
+                    return self._redirect_current_with_request(request)
 
-            mailbox_config = self._build_mailbox_config(
-                request,
-                mailbox_address,
-                existing_config=getattr(mailbox, "config_json", {}) if mailbox else {},
-            )
-
-            if provider == EmailProvider.MICROSOFT_365:
-                if not mailbox_config.get("tenant_id") or not mailbox_config.get("client_id") or not mailbox_config.get("client_secret"):
-                    messages.error(request, "Mail ID, Tenant ID, Client ID, and Client Secret are required for Microsoft 365 mailbox connection.")
-                    return self._redirect_current()
+            try:
+                additional_config_json = self._parse_config_json_text(request.POST.get("config_json_text") or "")
+                poll_interval_minutes = self._parse_positive_int(
+                    request.POST.get("poll_interval_minutes"),
+                    field_label="Poll Interval Minutes",
+                    default=5,
+                    minimum=1,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return self._redirect_current_with_request(request)
 
             if provider == EmailProvider.GMAIL:
-                missing = []
-                if not mailbox_config.get("smtp_host"):
-                    missing.append("SMTP Server")
-                if not mailbox_config.get("smtp_port"):
-                    missing.append("SMTP Port")
-                if not mailbox_config.get("smtp_username"):
-                    missing.append("SMTP Username")
-                if not mailbox_config.get("smtp_password"):
-                    missing.append("SMTP Password")
-                if missing:
-                    messages.error(request, "Gmail configuration requires: " + ", ".join(missing))
-                    return self._redirect_current()
+                mailbox_type = MailboxType.USER
+                auth_mode = MailboxAuthMode.SERVICE_ACCOUNT
+            else:
+                mailbox_type = (request.POST.get("mailbox_type") or MailboxType.SHARED).strip() or MailboxType.SHARED
+                auth_mode = (request.POST.get("auth_mode") or MailboxAuthMode.OAUTH).strip() or MailboxAuthMode.OAUTH
+
+            try:
+                self._validate_provider_mailbox_auth_combination(
+                    provider=provider,
+                    mailbox_type=mailbox_type,
+                    auth_mode=auth_mode,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return self._redirect_current_with_request(request)
+
+            try:
+                mailbox_config = self._build_mailbox_config(
+                    request,
+                    mailbox_address,
+                    existing_config=getattr(mailbox, "config_json", {}) if mailbox else {},
+                    extra_config=additional_config_json,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return self._redirect_current_with_request(request)
+
+            delivery_mode = (request.POST.get("delivery_mode") or "").strip().upper()
+            if delivery_mode not in {"WEBHOOK", "POLL"}:
+                webhook_default = True if mailbox is None else bool(getattr(mailbox, "webhook_enabled", True))
+                polling_default = bool(getattr(mailbox, "polling_enabled", False)) if mailbox is not None else False
+                webhook_checked = self._checkbox_checked(request, "webhook_enabled", default=webhook_default)
+                polling_checked = self._checkbox_checked(request, "polling_enabled", default=polling_default)
+                delivery_mode = "POLL" if polling_checked and not webhook_checked else "WEBHOOK"
+
+            webhook_enabled = delivery_mode == "WEBHOOK"
+            polling_enabled = delivery_mode == "POLL"
+
+            try:
+                self._validate_config_json(
+                    provider=provider,
+                    auth_mode=auth_mode,
+                    webhook_enabled=webhook_enabled,
+                    polling_enabled=polling_enabled,
+                    poll_interval_minutes=poll_interval_minutes,
+                    mailbox_config=mailbox_config,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return self._redirect_current_with_request(request)
 
             mailbox_defaults = {
                 "name": name,
                 "provider": provider,
-                "is_active": True,
-                "is_inbound_enabled": True,
-                "is_outbound_enabled": False,
-                "webhook_enabled": True,
-                "polling_enabled": False,
-                "poll_interval_minutes": 5,
+                "mailbox_type": mailbox_type,
+                "auth_mode": auth_mode,
+                "is_active": self._checkbox_checked(request, "is_active", default=True),
+                "is_inbound_enabled": self._checkbox_checked(request, "is_inbound_enabled", default=True),
+                "is_outbound_enabled": self._checkbox_checked(request, "is_outbound_enabled", default=False),
+                "webhook_enabled": webhook_enabled,
+                "polling_enabled": polling_enabled,
+                "poll_interval_minutes": poll_interval_minutes,
+                "default_domain_route": (request.POST.get("default_domain_route") or TargetDomain.TRIAGE).strip() or TargetDomain.TRIAGE,
+                "allowed_sender_domains_json": self._parse_domain_text(request.POST.get("allowed_sender_domains") or ""),
                 "config_json": mailbox_config,
             }
 
@@ -756,6 +1127,15 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
                 for field, value in mailbox_defaults.items():
                     setattr(mailbox, field, value)
                 mailbox.save()
+
+            if not mailbox.is_active:
+                mailbox.last_error_message = ""
+                mailbox.save(update_fields=["last_error_message", "updated_at"])
+                if action == "update_mailbox":
+                    messages.success(request, f"Mailbox '{mailbox.mailbox_address}' updated and marked inactive.")
+                else:
+                    messages.success(request, f"Mailbox '{mailbox.mailbox_address}' saved as inactive.")
+                return self._redirect_current_with_request(request)
 
             try:
                 result = MailboxService.sync_mailbox(mailbox)
@@ -790,22 +1170,48 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
                     messages.error(request, f"Mailbox updated, but connection verification failed: {exc}")
                 else:
                     messages.error(request, f"Mailbox saved, but connection verification failed: {exc}")
-            return self._redirect_current()
+            return self._redirect_current_with_request(request)
 
         if action == "delete_mailbox":
             mailbox_id = (request.POST.get("mailbox_id") or "").strip()
             if not mailbox_id:
                 messages.error(request, "Mailbox selection is required for delete.")
-                return self._redirect_current()
-            mailbox_qs = self._scoped_mailboxes(tenant=tenant, is_platform_admin=is_platform_admin)
+                return self._redirect_current_with_request(request)
+            mailbox_qs = self._all_scoped_mailboxes(tenant=tenant, is_platform_admin=is_platform_admin)
             mailbox = mailbox_qs.filter(pk=mailbox_id).first()
             if mailbox is None:
                 messages.error(request, "Mailbox not found for your tenant.")
-                return self._redirect_current()
+                return self._redirect_current_with_request(request)
             mailbox.is_active = False
             mailbox.save(update_fields=["is_active", "updated_at"])
             messages.success(request, f"Mailbox '{mailbox.mailbox_address}' deleted.")
-            return self._redirect_current()
+            return self._redirect_current_with_request(request)
+
+        if action == "toggle_mailbox_active":
+            mailbox_id = (request.POST.get("mailbox_id") or "").strip()
+            desired_state = (request.POST.get("desired_state") or "").strip().lower()
+            if not mailbox_id:
+                messages.error(request, "Mailbox selection is required.")
+                return self._redirect_current_with_request(request)
+            if desired_state not in {"enable", "disable"}:
+                messages.error(request, "Invalid mailbox action.")
+                return self._redirect_current_with_request(request)
+
+            mailbox_qs = self._all_scoped_mailboxes(tenant=tenant, is_platform_admin=is_platform_admin)
+            mailbox = mailbox_qs.filter(pk=mailbox_id).first()
+            if mailbox is None:
+                messages.error(request, "Mailbox not found for your tenant.")
+                return self._redirect_current_with_request(request)
+
+            mailbox.is_active = desired_state == "enable"
+            if mailbox.is_active:
+                mailbox.last_error_message = ""
+                mailbox.save(update_fields=["is_active", "last_error_message", "updated_at"])
+                messages.success(request, f"Mailbox '{mailbox.mailbox_address}' enabled.")
+            else:
+                mailbox.save(update_fields=["is_active", "updated_at"])
+                messages.success(request, f"Mailbox '{mailbox.mailbox_address}' disabled.")
+            return self._redirect_current_with_request(request)
 
         if action == "test_mailbox_connection":
             mailbox_id = request.POST.get("mailbox_id")
@@ -813,7 +1219,7 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
             mailbox = mailbox_qs.filter(pk=mailbox_id).first()
             if mailbox is None:
                 messages.error(request, "Mailbox not found for your tenant.")
-                return self._redirect_current()
+                return self._redirect_current_with_request(request)
             try:
                 result = MailboxService.sync_mailbox(mailbox)
                 mailbox.last_success_at = timezone.now()
@@ -840,7 +1246,7 @@ class EmailIntegrationDashboardView(PermissionRequiredMixin, View):
                     error=str(exc),
                 )
                 messages.error(request, f"Connection test failed: {exc}")
-            return self._redirect_current()
+            return self._redirect_current_with_request(request)
 
         if action == "save_auto_sender_rules":
             mailbox_id = (request.POST.get("mailbox_id") or "").strip()
@@ -1177,6 +1583,14 @@ class EmailIntegrationConnectView(EmailIntegrationDashboardView):
                 "page_title": "Connect Mailbox",
                 "config_mode": config_mode,
                 "editing_mailbox": edit_mailbox,
+                "editing_mailbox_extra_config_json": self._additional_config_json_text(
+                    getattr(edit_mailbox, "config_json", {}) if edit_mailbox else {}
+                ),
+                "provider_choices": list(EmailProvider.choices),
+                "mailbox_type_choices": list(MailboxType.choices),
+                "auth_mode_choices": list(MailboxAuthMode.choices),
+                "default_route_choices": list(TargetDomain.choices),
+                "mailboxes": self._scoped_mailboxes(tenant=tenant, is_platform_admin=is_platform_admin).order_by("name", "mailbox_address"),
             }
         )
         return render(request, self.template_name, context)
@@ -1228,6 +1642,329 @@ class EmailIntegrationInboxProcessingView(EmailIntegrationFeatureView):
     redirect_view_name = "email_integration:inbox_processing"
     page_title = "Inbox Processing"
     page_description = "Review inbound messages with attachments and run processing operations."
+    INBOX_COUNT_CACHE_KEY = "inbox_monitor_counts"
+
+    @staticmethod
+    def _mailbox_monitor_sync_due(mailbox, now=None) -> bool:
+        now = now or timezone.now()
+        if mailbox is None or not getattr(mailbox, "is_inbound_enabled", False):
+            return False
+
+        if getattr(mailbox, "polling_enabled", False):
+            interval_seconds = max(60, int(getattr(mailbox, "poll_interval_minutes", 5) or 5) * 60)
+        elif getattr(mailbox, "webhook_enabled", False):
+            interval_seconds = 60
+        else:
+            return False
+
+        last_sync_at = getattr(mailbox, "last_sync_at", None)
+        if last_sync_at is None:
+            return True
+        elapsed_seconds = (now - last_sync_at).total_seconds()
+        return elapsed_seconds >= interval_seconds
+
+    def _sync_selected_mailbox_if_due(self, request):
+        tenant = getattr(request, "tenant", None)
+        is_platform_admin = getattr(request.user, "is_platform_admin", False)
+        mailbox = self._verified_mailboxes(tenant=tenant, is_platform_admin=is_platform_admin).order_by("name").first()
+        if mailbox is None:
+            return None
+        if not self._mailbox_monitor_sync_due(mailbox):
+            return mailbox
+        try:
+            EmailProcessingService.sync_mailbox_messages(mailbox)
+        except Exception:
+            pass
+        return mailbox
+
+    @classmethod
+    def _get_count_cache(cls, mailbox) -> dict:
+        config = mailbox.config_json if isinstance(getattr(mailbox, "config_json", None), dict) else {}
+        cached = config.get(cls.INBOX_COUNT_CACHE_KEY)
+        return cached if isinstance(cached, dict) else {}
+
+    @classmethod
+    def _set_count_cache(cls, mailbox, *, counts: dict):
+        config = mailbox.config_json if isinstance(getattr(mailbox, "config_json", None), dict) else {}
+        config = dict(config)
+        config[cls.INBOX_COUNT_CACHE_KEY] = {
+            "total": int(counts.get("total") or 0),
+            "with_attachments": int(counts.get("with_attachments") or 0),
+            "unread": int(counts.get("unread") or 0),
+            "cached_at": timezone.now().isoformat(),
+        }
+        mailbox.config_json = config
+        mailbox.save(update_fields=["config_json", "updated_at"])
+
+    @classmethod
+    def _count_cache_due(cls, mailbox, *, delivery_mode: str, poll_interval_minutes: int) -> bool:
+        cached = cls._get_count_cache(mailbox)
+        cached_at_raw = str(cached.get("cached_at") or "").strip()
+        if not cached_at_raw:
+            return True
+        cached_at = MicrosoftGraphEmailAdapter._iso_to_datetime(cached_at_raw)
+        if cached_at is None:
+            return True
+        now = timezone.now()
+        refresh_seconds = 60 if delivery_mode == "WEBHOOK" else max(60, poll_interval_minutes * 60)
+        return (now - cached_at).total_seconds() >= refresh_seconds
+
+    def _get_mailbox_count_summary(self, mailbox, *, delivery_mode: str, poll_interval_minutes: int):
+        cached = self._get_count_cache(mailbox)
+        fetch_error = ""
+        cache_source = "db"
+
+        if self._count_cache_due(mailbox, delivery_mode=delivery_mode, poll_interval_minutes=poll_interval_minutes):
+            try:
+                counts = MicrosoftGraphEmailAdapter().get_inbox_counts(mailbox)
+                self._set_count_cache(mailbox, counts=counts)
+                cached = self._get_count_cache(mailbox)
+                cache_source = "graph"
+            except Exception as exc:
+                fetch_error = str(exc)
+
+        return {
+            "total": int(cached.get("total") or 0),
+            "with_attachments": int(cached.get("with_attachments") or 0),
+            "unread": int(cached.get("unread") or 0),
+            "cached_at": str(cached.get("cached_at") or "").strip(),
+            "source": cache_source,
+            "error": fetch_error,
+        }
+
+    def _build_inbox_processing_context(self, request) -> dict:
+        context = self._build_operational_context(request)
+        selected_mailbox = context.get("selected_mailbox")
+        inbox_messages = list(context.get("inbox_messages") or [])
+
+        latest_failed_action_by_message = {}
+        message_ids = [msg.pk for msg in inbox_messages if getattr(msg, "pk", None)]
+        if message_ids:
+            failed_actions = (
+                EmailAction.objects.filter(
+                    email_message_id__in=message_ids,
+                    action_status=EmailActionStatus.FAILED,
+                )
+                .order_by("email_message_id", "-created_at")
+            )
+            for action in failed_actions:
+                if action.email_message_id not in latest_failed_action_by_message:
+                    latest_failed_action_by_message[action.email_message_id] = action
+
+        detailed_rows = []
+        processed_count = 0
+        failed_count = 0
+        classified_count = 0
+        extraction_completed_count = 0
+        extraction_failed_count = 0
+
+        for msg in inbox_messages:
+            processing_status = str(getattr(msg, "processing_status", "") or "").strip()
+            classification = str(getattr(msg, "message_classification", "") or "").strip()
+            extraction_status = str(getattr(msg, "extraction_status", "NOT_STARTED") or "NOT_STARTED").strip()
+            latest_decision = getattr(msg, "latest_routing_decision", None)
+            latest_evidence = getattr(latest_decision, "evidence_json", {}) if latest_decision is not None else {}
+            manual_decision_required = bool(
+                latest_evidence.get("requires_human_decision")
+                or (
+                    latest_evidence.get("classification_source") == "RULE_FALLBACK"
+                    and str(getattr(msg, "routing_status", "") or "").strip() == EmailRoutingStatus.TRIAGED
+                )
+            )
+
+            if processing_status in {EmailProcessingStatus.PROCESSED, EmailProcessingStatus.ROUTED, EmailProcessingStatus.LINKED}:
+                processed_count += 1
+            if processing_status == EmailProcessingStatus.FAILED:
+                failed_count += 1
+            if classification and classification != EmailMessageClassification.UNKNOWN:
+                classified_count += 1
+            if extraction_status == "COMPLETED":
+                extraction_completed_count += 1
+            if extraction_status == "FAILED":
+                extraction_failed_count += 1
+
+            failed_action = latest_failed_action_by_message.get(msg.pk)
+            detailed_rows.append(
+                {
+                    "message": msg,
+                    "classification": classification,
+                    "classification_source": getattr(msg, "classification_source_label", "Pending") or "Pending",
+                    "processing_status": processing_status,
+                    "routing_status": str(getattr(msg, "routing_status", "") or "").strip(),
+                    "extraction_status": extraction_status,
+                    "attachment_count": msg.attachments.count() if hasattr(msg, "attachments") else 0,
+                    "failure_reason": str(getattr(failed_action, "error_message", "") or "").strip(),
+                    "manual_decision_required": manual_decision_required,
+                    "manual_decision_reason": "LLM classification fallback; user decision required." if manual_decision_required else "",
+                }
+            )
+
+        if selected_mailbox is not None:
+            if getattr(selected_mailbox, "polling_enabled", False):
+                delivery_mode = "POLL"
+            else:
+                delivery_mode = "WEBHOOK"
+            poll_interval_minutes = int(getattr(selected_mailbox, "poll_interval_minutes", 5) or 5)
+        else:
+            delivery_mode = "WEBHOOK"
+            poll_interval_minutes = 5
+
+        count_summary = {
+            "total": 0,
+            "with_attachments": 0,
+            "unread": 0,
+            "cached_at": "",
+            "source": "db",
+            "error": "",
+        }
+        if selected_mailbox is not None and str(getattr(selected_mailbox, "provider", "")) == EmailProvider.MICROSOFT_365:
+            count_summary = self._get_mailbox_count_summary(
+                selected_mailbox,
+                delivery_mode=delivery_mode,
+                poll_interval_minutes=poll_interval_minutes,
+            )
+
+        auto_refresh_seconds = 0
+        if selected_mailbox is not None:
+            if delivery_mode == "POLL":
+                auto_refresh_seconds = max(60, poll_interval_minutes * 60)
+            elif getattr(selected_mailbox, "webhook_enabled", False):
+                auto_refresh_seconds = 60
+
+        context.update(
+            {
+                "inbox_delivery_mode": delivery_mode,
+                "inbox_poll_interval_minutes": poll_interval_minutes,
+                "inbox_auto_refresh_seconds": auto_refresh_seconds,
+                "inbox_graph_fetch_error": count_summary["error"],
+                "inbox_graph_counts_cached_at": count_summary["cached_at"],
+                "inbox_graph_counts_source": count_summary["source"],
+                "inbox_processing_rows": detailed_rows,
+                "inbox_processing_summary": {
+                    "total": count_summary["total"],
+                    "with_attachments": count_summary["with_attachments"],
+                    "unread": count_summary["unread"],
+                    "processed": processed_count,
+                    "failed": failed_count,
+                    "classified": classified_count,
+                    "extraction_completed": extraction_completed_count,
+                    "extraction_failed": extraction_failed_count,
+                },
+            }
+        )
+        return context
+
+    def get(self, request, *args, **kwargs):
+        redirect_response = self._require_verified_mailbox(request)
+        if redirect_response is not None:
+            return redirect_response
+
+        mailbox_id = (request.GET.get("mailbox") or "").strip()
+        sync_selected = (request.GET.get("sync_selected") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if sync_selected and mailbox_id:
+            tenant = getattr(request, "tenant", None)
+            is_platform_admin = getattr(request.user, "is_platform_admin", False)
+            mailbox = self._all_scoped_mailboxes(tenant=tenant, is_platform_admin=is_platform_admin).filter(
+                pk=mailbox_id,
+                is_active=True,
+                is_inbound_enabled=True,
+            ).first()
+            if mailbox is not None:
+                try:
+                    EmailProcessingService.sync_mailbox_messages(mailbox)
+                except Exception:
+                    pass
+            return redirect(f"{reverse('email_integration:inbox_processing')}?mailbox={mailbox_id}")
+
+        context = self._build_inbox_processing_context(request)
+        context.update(
+            {
+                "page_title": self.page_title,
+                "page_description": self.page_description,
+            }
+        )
+        return render(request, self.template_name, context)
+
+    def post(self, request, *args, **kwargs):
+        action = (request.POST.get("action") or "").strip().lower()
+        mailbox_id = (request.POST.get("mailbox") or request.GET.get("mailbox") or "").strip()
+
+        if action not in {"approve_uncertain_classification", "reject_uncertain_classification"}:
+            messages.info(request, "Inbox Processing supports approve/reject actions only for uncertain LLM classifications.")
+            return self._redirect_with_mailbox(mailbox_id)
+
+        if not self._can_manage(request):
+            messages.error(request, "You do not have permission to approve or reject inbox classification decisions.")
+            return self._redirect_with_mailbox(mailbox_id)
+
+        tenant = getattr(request, "tenant", None)
+        is_platform_admin = getattr(request.user, "is_platform_admin", False)
+        message_id = (request.POST.get("message_id") or "").strip()
+        message_obj = (
+            self._scoped_messages(tenant=tenant, is_platform_admin=is_platform_admin)
+            .filter(pk=message_id, direction=EmailDirection.INBOUND)
+            .select_related("mailbox", "thread", "linked_document_upload")
+            .prefetch_related("attachments")
+            .first()
+        )
+        if message_obj is None:
+            messages.error(request, "Message not found for your tenant.")
+            return self._redirect_with_mailbox(mailbox_id)
+
+        if not self._message_requires_manual_decision(message_obj):
+            messages.info(request, "This message does not require a manual classification decision.")
+            return self._redirect_with_mailbox(mailbox_id)
+
+        try:
+            if action == "approve_uncertain_classification":
+                self._override_route(request=request, message_obj=message_obj, target_domain=TargetDomain.AP)
+                self._trigger_message_extraction(message_obj)
+                messages.success(request, f"Message #{message_obj.pk} approved and queued for extraction.")
+            else:
+                self._ignore_message(request=request, message_obj=message_obj)
+                messages.success(request, f"Message #{message_obj.pk} rejected and ignored.")
+        except Exception as exc:
+            messages.error(request, f"Action failed: {exc}")
+
+        return self._redirect_with_mailbox(mailbox_id)
+
+    def _redirect_with_mailbox(self, mailbox_id: str):
+        url = reverse("email_integration:inbox_processing")
+        mailbox_id = str(mailbox_id or "").strip()
+        if mailbox_id:
+            return redirect(f"{url}?mailbox={mailbox_id}")
+        return redirect(url)
+
+    @staticmethod
+    def _message_requires_manual_decision(message_obj) -> bool:
+        latest_decision = message_obj.routing_decisions.order_by("-created_at").first()
+        if latest_decision is None:
+            return False
+        evidence = latest_decision.evidence_json or {}
+        if evidence.get("requires_human_decision"):
+            return True
+        return (
+            evidence.get("classification_source") == "RULE_FALLBACK"
+            and str(getattr(message_obj, "routing_status", "") or "").strip() == EmailRoutingStatus.TRIAGED
+        )
+
+    @staticmethod
+    def _trigger_message_extraction(message_obj):
+        seen_upload_ids = set()
+
+        linked_upload = getattr(message_obj, "linked_document_upload", None)
+        if linked_upload is not None and getattr(linked_upload, "pk", None):
+            seen_upload_ids.add(linked_upload.pk)
+            AttachmentService._trigger_extraction(linked_upload, tenant=message_obj.tenant)
+
+        for attachment_obj in message_obj.attachments.all():
+            attachment_upload = getattr(attachment_obj, "linked_document_upload", None)
+            if attachment_upload is None or not getattr(attachment_upload, "pk", None):
+                continue
+            if attachment_upload.pk in seen_upload_ids:
+                continue
+            seen_upload_ids.add(attachment_upload.pk)
+            AttachmentService._trigger_extraction(attachment_upload, tenant=message_obj.tenant)
 
 
 class EmailIntegrationRecentMessagesView(EmailIntegrationFeatureView):

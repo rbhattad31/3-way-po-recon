@@ -944,12 +944,15 @@ def extraction_ajax_filter(request):
     rows = []
     for r in qs[:200]:
         inv = r.invoice
+        source_is_email = bool(r.document_upload and r.document_upload.source_message_id)
         rows.append({
             "pk": r.pk,
             "filename": r.document_upload.original_filename if r.document_upload else "—",
             "invoice_number": inv.invoice_number if inv else "",
             "vendor": (inv.vendor.name if inv and inv.vendor else inv.raw_vendor_name if inv else ""),
             "vendor_linked": bool(inv and inv.vendor_id),
+            "source": "EMAIL" if source_is_email else "MANUAL",
+            "source_is_email": source_is_email,
             "currency": inv.currency if inv else "",
             "total_amount": str(inv.total_amount) if inv and inv.total_amount else "",
             "confidence": round(r.confidence * 100) if r.confidence is not None else None,

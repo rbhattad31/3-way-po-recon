@@ -17,100 +17,170 @@
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
-    <div class="text-muted" style="font-size:.82rem;">{{ page_description }}</div>
+    <div class="text-muted" style="font-size:.82rem;">Webhook or polling driven inbox processing with classification and extraction tracking.</div>
   </div>
   <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back to Dashboard</a>
 </div>
 
 <div class="card border-0 shadow-sm mb-3">
-  <div class="card-header bg-white fw-semibold">Auto Process Configuration</div>
+  <div class="card-header bg-white fw-semibold">Inbox Delivery Controls</div>
   <div class="card-body">
-    <form method="get" class="row g-2 align-items-end mb-3">
+    <div class="row g-2 align-items-end mb-3">
       <div class="col-12 col-md-4">
         <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
-        <select name="mailbox" class="form-select form-select-sm" required>
-          <option value="">Select mailbox</option>
-          {% for mailbox in mailboxes %}<option value="{{ mailbox.pk }}" {% if filters.mailbox == mailbox.pk|stringformat:"s" %}selected{% endif %}>{{ mailbox.name }}</option>{% endfor %}
-        </select>
+        {% if verified_mailboxes %}
+        <form method="get" class="mb-0">
+          <input type="hidden" name="sync_selected" value="0">
+          <select name="mailbox" class="form-select form-select-sm" onchange="this.form.sync_selected.value='1'; this.form.submit();">
+            {% for mailbox in verified_mailboxes %}
+            <option value="{{ mailbox.pk }}" {% if selected_mailbox and selected_mailbox.pk == mailbox.pk %}selected{% endif %}>
+              {{ mailbox.name|default:mailbox.mailbox_address }} ({{ mailbox.mailbox_address }})
+            </option>
+            {% endfor %}
+          </select>
+        </form>
+        {% else %}
+        <div class="text-muted">No verified mailbox configured</div>
+        {% endif %}
       </div>
-      <div class="col-12 col-md-2 d-grid"><button type="submit" class="btn btn-sm btn-primary">Load Inbox</button></div>
-    </form>
-
-    <form method="post" class="row g-2 align-items-end">
-      {% csrf_token %}
-      <input type="hidden" name="mailbox_id" value="{{ filters.mailbox }}">
+    </div>
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" style="font-size:.78rem;">Delivery Mode</label>
+        <div>
+          <span class="badge bg-light text-dark border">{{ inbox_delivery_mode|default:"WEBHOOK" }}</span>
+        </div>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label mb-1" style="font-size:.78rem;">Poll Interval (minutes)</label>
+        <div>
+          <span class="badge bg-light text-dark border">{{ inbox_poll_interval_minutes }}</span>
+        </div>
+      </div>
       <div class="col-12 col-md-5">
-        <label class="form-label mb-1" style="font-size:.78rem;">Auto Process Sender Email IDs</label>
-        <textarea name="auto_sender_emails" class="form-control form-control-sm" rows="3" placeholder="one per line or comma separated">{{ auto_sender_emails_text }}</textarea>
+        <div class="text-muted" style="font-size:.75rem; padding-top:1.5rem;">Configured on mailbox setup. Inbox processing runs automatically via webhook/polling; monitor status here.</div>
+        {% if inbox_auto_refresh_seconds %}
+        <div class="text-muted mt-1" style="font-size:.72rem;">This page auto-refreshes every {{ inbox_auto_refresh_seconds }} seconds.</div>
+        {% endif %}
       </div>
-      <div class="col-12 col-md-5">
-        <label class="form-label mb-1" style="font-size:.78rem;">Auto Process Sender Names (optional)</label>
-        <textarea name="auto_sender_names" class="form-control form-control-sm" rows="3" placeholder="one per line or comma separated">{{ auto_sender_names_text }}</textarea>
-      </div>
-      <div class="col-12 col-md-2 d-grid gap-2">
-        <button type="submit" name="action" value="save_auto_sender_rules" class="btn btn-sm btn-outline-primary">Save Rules</button>
-        <button type="submit" name="action" value="run_auto_sender_processing" class="btn btn-sm btn-primary">Run Auto Process</button>
-      </div>
-    </form>
+    </div>
+    {% if inbox_graph_fetch_error %}
+    <div class="alert alert-warning py-2 mt-3 mb-0" role="alert" style="font-size:.78rem;">
+      Graph API read failed: {{ inbox_graph_fetch_error|truncatechars:220 }}
+    </div>
+    {% endif %}
+    {% if inbox_graph_counts_cached_at %}
+    <div class="text-muted mt-2" style="font-size:.72rem;">
+      Count source: {{ inbox_graph_counts_source|upper }}. Cached at {{ inbox_graph_counts_cached_at }}.
+    </div>
+    {% endif %}
   </div>
+</div>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">Total</div><div class="fw-semibold">{{ inbox_processing_summary.total }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">With Attachments</div><div class="fw-semibold">{{ inbox_processing_summary.with_attachments }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">Unread</div><div class="fw-semibold">{{ inbox_processing_summary.unread }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">Failed</div><div class="fw-semibold text-danger">{{ inbox_processing_summary.failed }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">Classified</div><div class="fw-semibold">{{ inbox_processing_summary.classified }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">Extracted</div><div class="fw-semibold text-primary">{{ inbox_processing_summary.extraction_completed }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="text-muted" style="font-size:.72rem;">Extraction Failed</div><div class="fw-semibold text-danger">{{ inbox_processing_summary.extraction_failed }}</div></div></div></div>
 </div>
 
 <div class="card border-0 shadow-sm">
   <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <span class="fw-semibold">Inbox Messages With Attachments</span>
-    <span class="text-muted" style="font-size:.75rem;">Sender email/name is auto-read from each message and extraction status is shown below.</span>
+    <span class="fw-semibold">Detailed Processing Results</span>
+    <span class="text-muted" style="font-size:.75rem;">Auto-ingested messages with classification, routing, and extraction outcomes.</span>
   </div>
   <div class="table-responsive">
-    <form method="post">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="run_selected_messages">
       <table class="table table-sm mb-0" style="font-size:.82rem;">
         <thead>
           <tr>
-            {% if can_manage %}<th class="px-3 py-2" style="width:42px;">Run</th>{% endif %}
             <th class="py-2">Received</th>
-            <th class="py-2">Mailbox</th>
             <th class="py-2">From</th>
             <th class="py-2">Subject</th>
             <th class="py-2">Attachments</th>
-            <th class="py-2">Extraction Status</th>
-            <th class="py-2">Result</th>
-            <th class="py-2">Status</th>
+            <th class="py-2">Classification</th>
+            <th class="py-2">Processing</th>
+            <th class="py-2">Routing</th>
+            <th class="py-2">Extraction</th>
+            <th class="py-2">Failure Reason</th>
+            <th class="py-2">Result / Decision</th>
           </tr>
         </thead>
         <tbody>
-          {% if inbox_requires_mailbox_selection %}
-          <tr><td colspan="9" class="text-center text-muted py-3">Choose a mailbox from filters and click Apply to load inbox messages.</td></tr>
+          {% if not selected_mailbox %}
+          <tr><td colspan="10" class="text-center text-muted py-3">No verified mailbox configured for this tenant.</td></tr>
           {% else %}
-          {% for msg in inbox_messages %}
+          {% for row in inbox_processing_rows %}
+          {% with msg=row.message %}
           <tr>
-            {% if can_manage %}<td class="px-3 py-2 align-middle"><input class="form-check-input" type="checkbox" name="selected_message_ids" value="{{ msg.pk }}"></td>{% endif %}
             <td class="py-2 align-middle">{{ msg.received_at|date:"Y-m-d H:i" }}</td>
-            <td class="py-2 align-middle">{{ msg.mailbox.name }}</td>
             <td class="py-2 align-middle">
               <div>{{ msg.from_email|default:"--" }}</div>
               <div class="text-muted" style="font-size:.72rem;">{{ msg.from_name|default:"--" }}</div>
             </td>
             <td class="py-2 align-middle">{{ msg.subject|default:"(no subject)"|truncatechars:70 }}</td>
-            <td class="py-2">{% for attachment in msg.attachments.all %}<div class="d-flex align-items-center gap-1 flex-wrap"><span class="badge bg-light text-dark border">{{ attachment.filename }}</span><span class="text-muted" style="font-size:.72rem;">{{ attachment.processing_status }}</span></div>{% empty %}--{% endfor %}</td>
-            <td class="py-2 align-middle"><span class="badge bg-light text-dark border">{{ msg.extraction_status|default:"NOT_STARTED" }}</span></td>
+            <td class="py-2"><span class="badge bg-light text-dark border">{{ row.attachment_count }}</span></td>
             <td class="py-2 align-middle">
-              {% if msg.extraction_result_url %}
+              <div class="badge bg-light text-dark border">{{ row.classification|default:"UNKNOWN" }}</div>
+              <div class="text-muted" style="font-size:.72rem;">{{ row.classification_source }}</div>
+            </td>
+            <td class="py-2 align-middle"><span class="badge bg-light text-dark border">{{ row.processing_status|default:"--" }}</span></td>
+            <td class="py-2 align-middle"><span class="badge bg-light text-dark border">{{ row.routing_status|default:"--" }}</span></td>
+            <td class="py-2 align-middle"><span class="badge bg-light text-dark border">{{ row.extraction_status|default:"NOT_STARTED" }}</span></td>
+            <td class="py-2 align-middle text-muted" style="max-width:280px;">{{ row.failure_reason|default:"--"|truncatechars:100 }}</td>
+            <td class="py-2 align-middle">
+              {% if row.manual_decision_required %}
+                <div class="mb-1 text-warning" style="font-size:.72rem;">{{ row.manual_decision_reason }}</div>
+                <div class="d-flex gap-1 flex-wrap">
+                  <form method="post" class="mb-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="approve_uncertain_classification">
+                    <input type="hidden" name="message_id" value="{{ msg.pk }}">
+                    {% if selected_mailbox %}<input type="hidden" name="mailbox" value="{{ selected_mailbox.pk }}">{% endif %}
+                    <button type="submit" class="btn btn-sm btn-outline-success">Approve</button>
+                  </form>
+                  <form method="post" class="mb-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reject_uncertain_classification">
+                    <input type="hidden" name="message_id" value="{{ msg.pk }}">
+                    {% if selected_mailbox %}<input type="hidden" name="mailbox" value="{{ selected_mailbox.pk }}">{% endif %}
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Reject</button>
+                  </form>
+                </div>
+              {% elif msg.extraction_result_url %}
                 <a href="{{ msg.extraction_result_url }}" class="btn btn-sm btn-outline-primary">View Result</a>
               {% else %}
                 <span class="text-muted">--</span>
               {% endif %}
             </td>
-            <td class="py-2 align-middle">{{ msg.processing_status }}</td>
           </tr>
+          {% endwith %}
           {% empty %}
-          <tr><td colspan="9" class="text-center text-muted py-3">No inbox messages with attachments are available yet.</td></tr>
+          <tr><td colspan="10" class="text-center text-muted py-3">No inbox messages with attachments are available yet.</td></tr>
           {% endfor %}
           {% endif %}
         </tbody>
       </table>
-      {% if can_manage and inbox_messages %}<div class="p-3 border-top bg-light text-end"><button class="btn btn-sm btn-primary" type="submit">Run Selected Messages</button></div>{% endif %}
-    </form>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+{% if inbox_auto_refresh_seconds %}
+<script>
+  (function () {
+    var refreshSeconds = parseInt("{{ inbox_auto_refresh_seconds|default:'0'|escapejs }}", 10) || 0;
+    var refreshMs = refreshSeconds * 1000;
+    if (!refreshMs) {
+      return;
+    }
+    window.setTimeout(function () {
+      window.location.reload();
+    }, refreshMs);
+  })();
+</script>
+{% endif %}
 {% endblock %}

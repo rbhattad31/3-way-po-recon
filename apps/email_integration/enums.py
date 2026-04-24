@@ -23,7 +23,7 @@ class TargetDomain(models.TextChoices):
     AP = "AP", "AP"
     PROCUREMENT = "PROCUREMENT", "Procurement"
     TRIAGE = "TRIAGE", "Triage"
-    NOTIFICATION_ONLY = "NOTIFICATION_ONLY", "Notification Only"
+    #NOTIFICATION_ONLY = "NOTIFICATION_ONLY", "Notification Only"
 
 
 class EmailThreadStatus(models.TextChoices):
@@ -94,7 +94,7 @@ class EmailIntentType(models.TextChoices):
     THREAD_REPLY = "THREAD_REPLY", "Thread Reply"
     APPROVAL_ACTION = "APPROVAL_ACTION", "Approval Action"
     CLARIFICATION_RESPONSE = "CLARIFICATION_RESPONSE", "Clarification Response"
-    NOTIFICATION = "NOTIFICATION", "Notification"
+    # NOTIFICATION = "NOTIFICATION", "Notification"
     MANUAL_TRIAGE = "MANUAL_TRIAGE", "Manual Triage"
 
 
@@ -153,6 +153,12 @@ class EmailActionType(models.TextChoices):
     QUEUE_FOR_TRIAGE = "QUEUE_FOR_TRIAGE", "Queue For Triage"
     REOPEN_ENTITY = "REOPEN_ENTITY", "Reopen Entity"
     IGNORE_EMAIL = "IGNORE_EMAIL", "Ignore Email"
+
+
+# Backwards compatibility aliases for test fixtures and legacy imports
+Classification = EmailMessageClassification
+ProcessingStatus = EmailProcessingStatus
+ActionType = EmailActionType
 
 
 class EmailActionStatus(models.TextChoices):

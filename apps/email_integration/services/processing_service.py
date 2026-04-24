@@ -1,6 +1,8 @@
 """Service-layer orchestration for enterprise email processing workflows."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -100,7 +102,16 @@ class EmailProcessingService:
     @observed_service("email.mailbox.sync_messages")
     def sync_mailbox_messages(cls, mailbox: MailboxConfig) -> dict:
         adapter = MailboxService.get_adapter(mailbox)
-        messages = adapter.poll_messages(mailbox, since_cursor=None)
+        now = timezone.now()
+        poll_interval_minutes = max(1, int(getattr(mailbox, "poll_interval_minutes", 5) or 5))
+        last_sync_at = getattr(mailbox, "last_sync_at", None)
+        if last_sync_at is not None:
+            since_dt = last_sync_at - timedelta(minutes=1)
+        else:
+            since_dt = now - timedelta(minutes=poll_interval_minutes)
+
+        since_cursor = since_dt.isoformat()
+        messages = adapter.poll_messages(mailbox, since_cursor=since_cursor)
         processed = 0
         ingested_ids = []
         for payload in messages:
@@ -108,11 +119,15 @@ class EmailProcessingService:
             processed += 1
             ingested_ids.append(message.pk)
 
-        mailbox.last_sync_at = timezone.now()
-        mailbox.last_success_at = timezone.now()
+        mailbox.last_sync_at = now
+        mailbox.last_success_at = now
         mailbox.last_error_message = ""
         mailbox.save(update_fields=["last_sync_at", "last_success_at", "last_error_message", "updated_at"])
-        return {"processed_messages": processed, "message_ids": ingested_ids}
+        return {
+            "processed_messages": processed,
+            "message_ids": ingested_ids,
+            "since_cursor": since_cursor,
+        }
 
     @classmethod
     @observed_service("email.message.process")

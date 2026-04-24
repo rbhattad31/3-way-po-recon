@@ -25,7 +25,14 @@ class InvoiceUploadService:
 
     @staticmethod
     @observed_service("extraction.upload", entity_type="DocumentUpload", audit_event="INVOICE_UPLOADED")
-    def upload(file: UploadedFile, uploaded_by=None, *, tenant=None, document_type: str = DocumentType.INVOICE) -> DocumentUpload:
+    def upload(
+        file: UploadedFile,
+        uploaded_by=None,
+        *,
+        tenant=None,
+        document_type: str = DocumentType.INVOICE,
+        source_message=None,
+    ) -> DocumentUpload:
         """Validate, hash, and save uploaded file.
 
         Returns the created DocumentUpload instance.
@@ -44,6 +51,7 @@ class InvoiceUploadService:
             document_type=document_type,
             processing_state=FileProcessingState.QUEUED,
             uploaded_by=uploaded_by,
+            source_message=source_message,
             tenant=tenant,
         )
         doc.save()
