@@ -51,6 +51,10 @@ class POLookupTool(BaseTool):
 
         # If vendor_id given without po_number, list POs for that vendor
         if vendor_id and not po_number:
+            erp_vendor_po_result = self._list_vendor_pos_via_erp(vendor_id)
+            if erp_vendor_po_result is not None:
+                return erp_vendor_po_result
+
             pos = self._scoped(PurchaseOrder.objects.filter(vendor_id=vendor_id, status="OPEN"))[:10]
             if not pos:
                 return ToolResult(success=True, data={
@@ -143,6 +147,72 @@ class POLookupTool(BaseTool):
             return ToolResult(success=True, data=data)
         except Exception:
             logger.debug("ERPResolutionService not available for PO lookup", exc_info=True)
+            return None
+
+    def _list_vendor_pos_via_erp(self, vendor_id: int):
+        """List open POs for a vendor from ERP reference snapshots.
+
+        This closes the gap where vendor-only PO lookup previously queried
+        only internal PurchaseOrder rows.
+        """
+        try:
+            from apps.vendors.models import Vendor
+            from apps.posting_core.models import ERPPOReference
+
+            vendor = self._scoped(
+                Vendor.objects.filter(pk=vendor_id, is_active=True)
+            ).first()
+            if not vendor or not vendor.code:
+                return None
+
+            refs = self._scoped(
+                ERPPOReference.objects.filter(vendor_code=vendor.code, is_open=True)
+            ).order_by("po_number", "po_line_number")
+
+            if not refs.exists():
+                return ToolResult(success=True, data={
+                    "found": False,
+                    "vendor_id": vendor_id,
+                    "message": "No open POs found for this vendor",
+                    "_erp_source": "DB_FALLBACK",
+                    "_erp_fallback_used": True,
+                })
+
+            grouped = {}
+            for ref in refs[:500]:
+                po_number = ref.po_number
+                row = grouped.setdefault(po_number, {
+                    "po_number": po_number,
+                    "currency": ref.currency or "",
+                    "status": ref.status or "OPEN",
+                    "line_count": 0,
+                    "total_amount": Decimal("0"),
+                })
+                row["line_count"] += 1
+                if ref.line_amount is not None:
+                    row["total_amount"] += ref.line_amount
+
+            po_list = []
+            for po in grouped.values():
+                po_list.append({
+                    "po_number": po["po_number"],
+                    "currency": po["currency"],
+                    "status": po["status"],
+                    "line_count": po["line_count"],
+                    "total_amount": str(po["total_amount"]),
+                })
+
+            return ToolResult(success=True, data={
+                "found": True,
+                "vendor_id": vendor_id,
+                "vendor_code": vendor.code,
+                "po_count": len(po_list),
+                "purchase_orders": po_list[:25],
+                "_erp_source": "DB_FALLBACK",
+                "_erp_fallback_used": True,
+            })
+        except Exception:
+            logger.debug("ERP vendor PO listing unavailable", exc_info=True)
             return None
 
 
@@ -273,6 +343,8 @@ class VendorSearchTool(BaseTool):
 
     def run(self, *, query: str = "", **kwargs) -> ToolResult:
         from apps.core.utils import normalize_string
+        from apps.erp_integration.services.resolution_service import ERPResolutionService
+        from apps.posting_core.models import ERPVendorReference
         from apps.vendors.models import Vendor
         from apps.posting_core.models import VendorAliasMapping
 
@@ -281,6 +353,62 @@ class VendorSearchTool(BaseTool):
 
         norm = normalize_string(query)
         results = []
+        seen_keys = set()
+
+        # ERP-first exact resolution
+        try:
+            svc = ERPResolutionService.with_default_connector()
+            erp_result = svc.resolve_vendor(
+                vendor_code=query,
+                vendor_name=query,
+                lf_parent_span=kwargs.get("lf_parent_span"),
+            )
+            if erp_result.resolved:
+                erp_val = erp_result.value or {}
+                code = erp_val.get("vendor_code", "")
+                name = erp_val.get("vendor_name", "")
+                mapped_vendor = None
+                if code:
+                    mapped_vendor = self._scoped(
+                        Vendor.objects.filter(code=code, is_active=True)
+                    ).first()
+                key = (mapped_vendor.pk if mapped_vendor else None, code, name)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    results.append({
+                        "vendor_id": mapped_vendor.pk if mapped_vendor else None,
+                        "code": code,
+                        "name": name,
+                        "match_type": "erp_exact",
+                        "_erp_source": erp_result.source_type,
+                        "_erp_confidence": erp_result.confidence,
+                        "_erp_fallback_used": erp_result.fallback_used,
+                    })
+        except Exception:
+            logger.debug("ERP exact vendor resolution unavailable", exc_info=True)
+
+        # ERP reference partial search
+        erp_candidates = self._scoped(
+            ERPVendorReference.objects.filter(is_active=True)
+        ).filter(
+            erp_vendor_q_name_code(query, norm)
+        )[:10]
+        for e in erp_candidates:
+            mapped_vendor = self._scoped(
+                Vendor.objects.filter(code=e.vendor_code, is_active=True)
+            ).first()
+            key = (mapped_vendor.pk if mapped_vendor else None, e.vendor_code, e.vendor_name)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            results.append({
+                "vendor_id": mapped_vendor.pk if mapped_vendor else None,
+                "code": e.vendor_code,
+                "name": e.vendor_name,
+                "match_type": "erp_reference",
+                "_erp_source": "DB_FALLBACK",
+                "_erp_fallback_used": True,
+            })
 
         # Name / code search
         vendors = self._scoped(Vendor.objects.filter(
@@ -289,6 +417,10 @@ class VendorSearchTool(BaseTool):
             models_q_name_code(query, norm)
         )[:10]
         for v in vendors:
+            key = (v.pk, v.code, v.name)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             results.append({
                 "vendor_id": v.pk,
                 "code": v.code,
@@ -300,9 +432,14 @@ class VendorSearchTool(BaseTool):
         aliases = self._scoped(VendorAliasMapping.objects.filter(
             normalized_alias=norm, is_active=True,
         )).select_related("vendor")[:5]
-        seen = {r["vendor_id"] for r in results}
         for a in aliases:
-            if a.vendor and a.vendor_id not in seen:
+            key = (
+                a.vendor.pk if a.vendor else None,
+                a.vendor.code if a.vendor else "",
+                a.vendor.name if a.vendor else "",
+            )
+            if a.vendor and key not in seen_keys:
+                seen_keys.add(key)
                 results.append({
                     "vendor_id": a.vendor_id,
                     "code": a.vendor.code,
@@ -324,6 +461,137 @@ def models_q_name_code(raw: str, normalized: str):
         Q(code__iexact=raw)
         | Q(normalized_name=normalized)
         | Q(name__icontains=raw)
+    )
+
+
+def erp_vendor_q_name_code(raw: str, normalized: str):
+    from django.db.models import Q
+    return (
+        Q(vendor_code__iexact=raw)
+        | Q(normalized_vendor_name=normalized)
+        | Q(vendor_name__icontains=raw)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item Search Tool
+# ---------------------------------------------------------------------------
+@register_tool
+class ItemSearchTool(BaseTool):
+    name = "item_search"
+    required_permission = "purchase_orders.view"
+    description = "Search ERP items/services by code, description, or alias."
+    when_to_use = "When line-item matching needs ERP item references, especially when internal PO lines are missing."
+    when_not_to_use = "Do not use to infer pricing policy or tax policy by itself."
+    no_result_meaning = "No matching ERP item was found in current references."
+    failure_handling_instruction = "On failure, keep item identity uncertain and route for manual mapping review."
+    authoritative_fields = ["item_code", "item_name", "uom", "category", "match_type"]
+    evidence_keys_produced = ["query", "count", "items"]
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Item code or description to search"},
+        },
+        "required": ["query"],
+    }
+
+    def run(self, *, query: str = "", **kwargs) -> ToolResult:
+        from apps.core.utils import normalize_string
+        from apps.erp_integration.services.resolution_service import ERPResolutionService
+        from apps.posting_core.models import ERPItemReference, ItemAliasMapping
+
+        if not query:
+            return ToolResult(success=False, error="query is required")
+
+        norm = normalize_string(query)
+        items = []
+        seen = set()
+
+        # ERP exact resolver path
+        try:
+            svc = ERPResolutionService.with_default_connector()
+            erp_result = svc.resolve_item(
+                item_code=query,
+                description=query,
+                lf_parent_span=kwargs.get("lf_parent_span"),
+            )
+            if erp_result.resolved:
+                val = erp_result.value or {}
+                code = val.get("item_code", "")
+                name = val.get("item_name", "")
+                key = (code, name)
+                if key not in seen:
+                    seen.add(key)
+                    items.append({
+                        "item_code": code,
+                        "item_name": name,
+                        "uom": val.get("uom", ""),
+                        "category": val.get("category", ""),
+                        "match_type": "erp_exact",
+                        "_erp_source": erp_result.source_type,
+                        "_erp_confidence": erp_result.confidence,
+                        "_erp_fallback_used": erp_result.fallback_used,
+                    })
+        except Exception:
+            logger.debug("ERP exact item resolution unavailable", exc_info=True)
+
+        # ERP reference partial search
+        refs = self._scoped(
+            ERPItemReference.objects.filter(is_active=True)
+        ).filter(
+            erp_item_q_name_code(query, norm)
+        )[:15]
+        for r in refs:
+            key = (r.item_code, r.item_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({
+                "item_code": r.item_code,
+                "item_name": r.item_name,
+                "uom": r.uom,
+                "category": r.category,
+                "match_type": "erp_reference",
+                "_erp_source": "DB_FALLBACK",
+                "_erp_fallback_used": True,
+            })
+
+        # Alias search
+        aliases = self._scoped(
+            ItemAliasMapping.objects.filter(normalized_alias=norm, is_active=True)
+        ).select_related("item_reference")[:10]
+        for a in aliases:
+            if not a.item_reference:
+                continue
+            key = (a.item_reference.item_code, a.item_reference.item_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({
+                "item_code": a.item_reference.item_code,
+                "item_name": a.item_reference.item_name,
+                "uom": a.item_reference.uom,
+                "category": a.item_reference.category,
+                "alias": a.alias_text,
+                "match_type": "alias",
+                "_erp_source": "DB_FALLBACK",
+                "_erp_fallback_used": True,
+            })
+
+        return ToolResult(success=True, data={
+            "query": query,
+            "count": len(items),
+            "items": items,
+        })
+
+
+def erp_item_q_name_code(raw: str, normalized: str):
+    from django.db.models import Q
+    return (
+        Q(item_code__iexact=raw)
+        | Q(normalized_item_name=normalized)
+        | Q(item_name__icontains=raw)
+        | Q(category__icontains=raw)
     )
 
 

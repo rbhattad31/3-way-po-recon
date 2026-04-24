@@ -1,6 +1,7 @@
 """Reconciliation domain models."""
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
 
 from apps.core.enums import (
     ExceptionSeverity,
@@ -78,15 +79,30 @@ class ReconciliationConfig(BaseModel):
                 fields=["name", "tenant"],
                 name="uq_reconconfig_name_tenant",
             ),
-            models.UniqueConstraint(
-                fields=["name"],
-                condition=models.Q(tenant__isnull=True),
-                name="uq_reconconfig_name_global",
-            ),
         ]
 
     def __str__(self) -> str:
         return self.name
+
+    def clean(self):
+        super().clean()
+        # MySQL does not support partial unique constraints. Enforce the
+        # same global-name uniqueness rule at model-validation level.
+        if self.tenant_id is None and self.name:
+            conflict_qs = ReconciliationConfig.objects.filter(
+                tenant__isnull=True,
+                name=self.name,
+            )
+            if self.pk:
+                conflict_qs = conflict_qs.exclude(pk=self.pk)
+            if conflict_qs.exists():
+                raise ValidationError({
+                    "name": "A global reconciliation config with this name already exists.",
+                })
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        return super().save(*args, **kwargs)
 
     @staticmethod
     def get_or_create_default(tenant=None):

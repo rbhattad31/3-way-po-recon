@@ -118,7 +118,7 @@
             </a>
           </td>
           <td>
-            <span class="badge {% if conn.connector_type == 'CUSTOM' %}bg-secondary{% elif conn.connector_type == 'DYNAMICS' %}bg-primary{% elif conn.connector_type == 'ZOHO' %}bg-info{% elif conn.connector_type == 'SALESFORCE' %}bg-info{% else %}bg-secondary{% endif %}">
+            <span class="badge {% if conn.connector_type == 'CUSTOM' %}bg-secondary{% elif conn.connector_type == 'SQLSERVER' or conn.connector_type == 'VOUCHER_SQLSERVER' %}bg-dark{% elif conn.connector_type == 'DYNAMICS' %}bg-primary{% elif conn.connector_type == 'ZOHO' %}bg-info{% elif conn.connector_type == 'SALESFORCE' %}bg-info{% else %}bg-secondary{% endif %}">
               {{ conn.get_connector_type_display }}
             </span>
           </td>

@@ -68,7 +68,15 @@
               {{ inv.invoice_number|default:"--"|truncatechars:22 }}
             </a>
           </td>
-          <td>{{ inv.vendor.name|default:inv.raw_vendor_name|default:"--"|truncatechars:24 }}</td>
+          <td>
+            {% if inv.vendor and inv.vendor.name %}
+              {{ inv.vendor.name|truncatechars:24 }}
+            {% elif inv.raw_vendor_name %}
+              {{ inv.raw_vendor_name|truncatechars:24 }}
+            {% else %}
+              --
+            {% endif %}
+          </td>
           <td>
             {% if inv.total_amount %}
               <span class="fw-semibold">{{ inv.currency|default:"" }} {{ inv.total_amount|floatformat:2 }}</span>
@@ -124,7 +132,15 @@
             </a>
           </td>
           <td>{{ case.invoice.invoice_number|default:"--"|truncatechars:22 }}</td>
-          <td>{{ case.vendor.name|default:case.invoice.raw_vendor_name|default:"--"|truncatechars:24 }}</td>
+          <td>
+            {% if case.vendor and case.vendor.name %}
+              {{ case.vendor.name|truncatechars:24 }}
+            {% elif case.invoice and case.invoice.raw_vendor_name %}
+              {{ case.invoice.raw_vendor_name|truncatechars:24 }}
+            {% else %}
+              --
+            {% endif %}
+          </td>
           <td><span class="ap-badge ap-badge-info"><i class="bi bi-arrow-repeat"></i> {{ case.get_status_display }}</span></td>
           <td>
             {% if case.assigned_to %}

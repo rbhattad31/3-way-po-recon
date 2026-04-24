@@ -14,6 +14,9 @@ from apps.erp_integration.services.connectors.dynamics import DynamicsConnector
 from apps.erp_integration.services.connectors.mysql import MySQLERPConnector
 from apps.erp_integration.services.connectors.salesforce import SalesforceConnector
 from apps.erp_integration.services.connectors.sqlserver import SQLServerERPConnector
+from apps.erp_integration.services.connectors.voucher_sqlserver import (
+    VoucherSQLServerERPConnector,
+)
 from apps.erp_integration.services.connectors.zoho import ZohoConnector
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,7 @@ logger = logging.getLogger(__name__)
 _CONNECTOR_MAP = {
     ERPConnectorType.CUSTOM: CustomERPConnector,
     ERPConnectorType.SQLSERVER: SQLServerERPConnector,
+    ERPConnectorType.VOUCHER_SQLSERVER: VoucherSQLServerERPConnector,
     ERPConnectorType.MYSQL: MySQLERPConnector,
     ERPConnectorType.DYNAMICS: DynamicsConnector,
     ERPConnectorType.ZOHO: ZohoConnector,
@@ -83,6 +87,7 @@ class ConnectorFactory:
         qs = ERPConnection.objects.filter(
             is_default=True,
             status=ERPConnectionStatus.ACTIVE,
+            is_active=True,
         )
         if tenant is not None:
             qs = qs.filter(models.Q(tenant=tenant) | models.Q(tenant__isnull=True))
@@ -99,6 +104,7 @@ class ConnectorFactory:
             ERPConnection.objects.filter(
                 name=name,
                 status=ERPConnectionStatus.ACTIVE,
+                is_active=True,
             )
             .first()
         )

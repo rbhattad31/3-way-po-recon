@@ -113,13 +113,15 @@ class VendorImporter:
                 vendor_code = ref.vendor_code
                 vendor_name = ref.vendor_name
                 norm_name = normalize_string(vendor_name)
+                tax_id = str(row.get("tax_id", "") or "").strip().upper()
 
-                # Upsert Vendor: update name/fields if code already exists
-                vendor, vendor_created = Vendor.objects.update_or_create(
+                # Upsert Vendor: keep existing tax_id if the import row has no tax_id.
+                vendor, vendor_created = Vendor.objects.get_or_create(
                     code=vendor_code,
                     defaults=dict(
                         name=vendor_name,
                         normalized_name=norm_name,
+                        tax_id=tax_id,
                         country=ref.country_code,
                         currency=ref.currency or "USD",
                         payment_terms=ref.payment_terms,
@@ -127,6 +129,20 @@ class VendorImporter:
                         tenant=batch.tenant,
                     ),
                 )
+                if not vendor_created:
+                    vendor.name = vendor_name
+                    vendor.normalized_name = norm_name
+                    if tax_id:
+                        vendor.tax_id = tax_id
+                    vendor.country = ref.country_code
+                    vendor.currency = ref.currency or "USD"
+                    vendor.payment_terms = ref.payment_terms
+                    vendor.is_active = ref.is_active
+                    vendor.tenant = batch.tenant
+                    vendor.save(update_fields=[
+                        "name", "normalized_name", "tax_id", "country", "currency",
+                        "payment_terms", "is_active", "tenant", "updated_at",
+                    ])
 
                 # Ensure a canonical alias entry for the primary vendor_name
                 norm_alias = normalize_string(vendor_name)

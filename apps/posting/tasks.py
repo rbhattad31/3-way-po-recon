@@ -108,3 +108,63 @@ def import_reference_excel_task(
     except Exception as exc:
         logger.exception("import_reference_excel_task failed for %s (%s)", file_path, batch_type)
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=1, default_retry_delay=30, acks_late=True)
+@observed_task("posting.import_reference_direct", audit_event="ERP_REFERENCE_IMPORT_STARTED", entity_type="ERPReferenceImportBatch")
+def import_reference_direct_task(
+    self,
+    tenant_id: int | None = None,
+    batch_type: str = "",
+    connector_name: str = "",
+    user_id: int | None = None,
+    source_as_of: str | None = None,
+    batch_id: int | None = None,
+) -> dict:
+    """Import ERP reference data directly from a live ERP connector.
+
+    Args:
+        batch_type: One of VENDOR, ITEM, TAX_CODE, COST_CENTER, OPEN_PO.
+        connector_name: Name of the ERPConnection to query.
+        user_id: Importing user PK.
+        source_as_of: ISO date string for the data as-of date.
+    """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
+    from datetime import date
+    from django.contrib.auth import get_user_model
+    from apps.posting_core.services.direct_erp_importer import DirectERPImportOrchestrator
+
+    User = get_user_model()
+    user = None
+    if user_id:
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            pass
+
+    parsed_as_of = None
+    if source_as_of:
+        try:
+            parsed_as_of = date.fromisoformat(source_as_of)
+        except ValueError:
+            pass
+
+    try:
+        batch = DirectERPImportOrchestrator.run_import(
+            batch_type=batch_type,
+            connector_name=connector_name,
+            tenant=tenant,
+            user=user,
+            source_as_of=parsed_as_of,
+            existing_batch_id=batch_id,
+        )
+        return {
+            "status": "ok",
+            "batch_id": batch.pk,
+            "valid_row_count": batch.valid_row_count,
+            "invalid_row_count": batch.invalid_row_count,
+        }
+    except Exception as exc:
+        logger.exception("import_reference_direct_task failed for %s (%s)", connector_name, batch_type)
+        raise self.retry(exc=exc)

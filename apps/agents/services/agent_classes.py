@@ -535,7 +535,7 @@ class InvoiceUnderstandingAgent(BaseAgent):
 
     @property
     def allowed_tools(self) -> List[str]:
-        return ["invoice_details", "po_lookup", "vendor_search"]
+        return ["invoice_details", "po_lookup", "vendor_search", "item_search"]
 
     def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
         data = _parse_agent_json(content)
@@ -565,7 +565,7 @@ class PORetrievalAgent(BaseAgent):
 
     @property
     def allowed_tools(self) -> List[str]:
-        return ["po_lookup", "vendor_search", "invoice_details"]
+        return ["po_lookup", "vendor_search", "invoice_details", "item_search"]
 
     _PO_EVIDENCE_FALLBACK_KEYS = ("po_number", "matched_po", "result", "found", "po")
 
@@ -628,7 +628,7 @@ class GRNRetrievalAgent(BaseAgent):
 
     @property
     def allowed_tools(self) -> List[str]:
-        return ["grn_lookup", "po_lookup", "invoice_details"]
+        return ["grn_lookup", "po_lookup", "invoice_details", "item_search"]
 
     def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
         data = _parse_agent_json(content)
@@ -869,6 +869,7 @@ def _get_system_agent_classes():
         SystemBulkExtractionIntakeAgent,
         SystemCaseIntakeAgent,
         SystemCaseSummaryAgent,
+        SystemExportFieldMappingAgent,
         SystemPostingPreparationAgent,
         SystemReviewRoutingAgent,
     )
@@ -878,6 +879,7 @@ def _get_system_agent_classes():
         AgentType.SYSTEM_BULK_EXTRACTION_INTAKE: SystemBulkExtractionIntakeAgent,
         AgentType.SYSTEM_CASE_INTAKE: SystemCaseIntakeAgent,
         AgentType.SYSTEM_POSTING_PREPARATION: SystemPostingPreparationAgent,
+        AgentType.SYSTEM_EXPORT_FIELD_MAPPING: SystemExportFieldMappingAgent,
     }
 
 

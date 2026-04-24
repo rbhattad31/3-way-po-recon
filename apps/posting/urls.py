@@ -9,6 +9,7 @@ from apps.posting.template_views import (
     posting_submit,
     posting_workbench,
     reference_import_list,
+    trigger_direct_erp_import,
 )
 
 app_name = "posting"
@@ -21,4 +22,5 @@ urlpatterns = [
     path("<int:pk>/submit/", posting_submit, name="posting-submit"),
     path("<int:pk>/retry/", posting_retry, name="posting-retry"),
     path("imports/", reference_import_list, name="posting-imports"),
+    path("imports/trigger-direct/", trigger_direct_erp_import, name="posting-trigger-direct-import"),
 ]

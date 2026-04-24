@@ -35,6 +35,7 @@ class ERPConnectorType(models.TextChoices):
     """Supported ERP connector types."""
     CUSTOM = "CUSTOM", "Custom ERP"
     SQLSERVER = "SQLSERVER", "SQL Server (Direct DB)"
+    VOUCHER_SQLSERVER = "VOUCHER_SQLSERVER", "Voucher SQL Server (Legacy ERP)"
     MYSQL = "MYSQL", "MySQL / MariaDB (Direct DB)"
     DYNAMICS = "DYNAMICS", "Microsoft Dynamics"
     ZOHO = "ZOHO", "Zoho"

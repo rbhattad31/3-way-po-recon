@@ -47,6 +47,7 @@ AGENT_PERMISSIONS: Dict[str, str] = {
     "SYSTEM_BULK_EXTRACTION_INTAKE": "agents.run_system_bulk_extraction_intake",
     "SYSTEM_CASE_INTAKE": "agents.run_system_case_intake",
     "SYSTEM_POSTING_PREPARATION": "agents.run_system_posting_preparation",
+    "SYSTEM_EXPORT_FIELD_MAPPING": "agents.run_system_export_field_mapping",
     # Supervisor agent
     "SUPERVISOR": "agents.run_supervisor",
     # Procurement agents
@@ -65,6 +66,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "po_lookup": "purchase_orders.view",
     "grn_lookup": "grns.view",
     "vendor_search": "vendors.view",
+    "item_search": "purchase_orders.view",
     "invoice_details": "invoices.view",
     "exception_list": "reconciliation.view",
     "reconciliation_summary": "reconciliation.view",

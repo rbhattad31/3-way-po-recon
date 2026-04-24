@@ -316,6 +316,16 @@ EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHO
 EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "0.80"))
 EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "true").lower() == "true"
 
+# Export field mapping
+# Phase 1: deterministic mapping only (default false).
+# Phase 2: set true to allow AI fallback only for unresolved fields.
+EXPORT_MAPPING_AI_FALLBACK_ENABLED = (
+    os.getenv("EXPORT_MAPPING_AI_FALLBACK_ENABLED", "false").lower() == "true"
+)
+EXPORT_MAPPING_AI_MIN_CONFIDENCE = float(
+    os.getenv("EXPORT_MAPPING_AI_MIN_CONFIDENCE", "0.80")
+)
+
 LOKI_ENABLED = os.getenv("LOKI_ENABLED", "false").lower() == "true"
 LOKI_URL = os.getenv("LOKI_URL", "http://localhost:3100/loki/api/v1/push")
 LOKI_APP_LABEL = os.getenv("LOKI_APP_LABEL", "po-recon")

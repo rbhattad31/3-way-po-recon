@@ -352,11 +352,15 @@ def case_inbox(request):
     in_progress_statuses = [
         s.value for s in CaseStatus if "IN_PROGRESS" in s.value
     ] + [CaseStatus.NEW]
+    in_progress_qs = APCase.objects.filter(
+        status__in=in_progress_statuses,
+        is_active=True,
+    ).select_related("invoice", "vendor", "assigned_to")
+    if tenant is not None:
+        in_progress_qs = in_progress_qs.filter(tenant=tenant)
     in_progress_cases = (
         CaseSelectors.scope_for_user(
-            APCase.objects.filter(status__in=in_progress_statuses, is_active=True)
-            .select_related("invoice", "vendor", "assigned_to")
-            .order_by("-updated_at"),
+            in_progress_qs.order_by("-updated_at"),
             request.user,
         )[:20]
     )
@@ -376,6 +380,8 @@ def case_inbox(request):
     )
     if tenant is not None:
         pending_invoices_qs = pending_invoices_qs.filter(tenant=tenant)
+    from apps.documents.template_views import _scope_invoices_for_user
+    pending_invoices_qs = _scope_invoices_for_user(pending_invoices_qs, request.user)
     pending_invoices = pending_invoices_qs[:50]
 
     return render(request, "cases/case_inbox.html", {
