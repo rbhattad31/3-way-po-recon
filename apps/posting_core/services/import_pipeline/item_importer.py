@@ -61,24 +61,28 @@ class ItemImporter:
                 raw_json=row,
             ))
 
+        upserted = 0
         if valid_records:
-            existing_codes = set(
-                ERPItemReference.objects
-                .filter(batch=batch, item_code__in=[r.item_code for r in valid_records])
-                .values_list("item_code", flat=True)
-            )
-            if existing_codes:
-                logger.warning(
-                    "ItemImporter: %d item_code(s) already in batch %s — skipping: %s",
-                    len(existing_codes), batch.pk, sorted(existing_codes),
+            for r in valid_records:
+                ERPItemReference.objects.update_or_create(
+                    tenant=r.tenant,
+                    item_code=r.item_code,
+                    defaults=dict(
+                        batch=batch,
+                        item_name=r.item_name,
+                        normalized_item_name=r.normalized_item_name,
+                        item_type=r.item_type,
+                        category=r.category,
+                        uom=r.uom,
+                        tax_code=r.tax_code,
+                        is_active=r.is_active,
+                        raw_json=r.raw_json,
+                    ),
                 )
-                valid_records = [r for r in valid_records if r.item_code not in existing_codes]
-
-            if valid_records:
-                ERPItemReference.objects.bulk_create(valid_records)
+                upserted += 1
 
         logger.info(
             "ItemImporter: imported %d valid, %d invalid for batch %s",
-            len(valid_records), invalid_count, batch.pk,
+            upserted, invalid_count, batch.pk,
         )
-        return len(valid_records), invalid_count, errors
+        return upserted, invalid_count, errors

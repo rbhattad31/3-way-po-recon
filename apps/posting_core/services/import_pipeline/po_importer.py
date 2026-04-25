@@ -73,30 +73,32 @@ class POImporter:
                 raw_json=row,
             ))
 
+        upserted = 0
         if valid_records:
-            existing_keys = set(
-                ERPPOReference.objects
-                .filter(
-                    batch=batch,
-                    po_number__in=[r.po_number for r in valid_records],
+            for r in valid_records:
+                ERPPOReference.objects.update_or_create(
+                    tenant=r.tenant,
+                    po_number=r.po_number,
+                    po_line_number=r.po_line_number,
+                    defaults=dict(
+                        batch=batch,
+                        vendor_code=r.vendor_code,
+                        item_code=r.item_code,
+                        description=r.description,
+                        normalized_description=r.normalized_description,
+                        quantity=r.quantity,
+                        unit_price=r.unit_price,
+                        line_amount=r.line_amount,
+                        currency=r.currency,
+                        status=r.status,
+                        is_open=r.is_open,
+                        raw_json=r.raw_json,
+                    ),
                 )
-                .values_list("po_number", "po_line_number")
-            )
-            if existing_keys:
-                logger.warning(
-                    "POImporter: %d (po_number, po_line) pair(s) already in batch %s — skipping",
-                    len(existing_keys), batch.pk,
-                )
-                valid_records = [
-                    r for r in valid_records
-                    if (r.po_number, r.po_line_number) not in existing_keys
-                ]
-
-            if valid_records:
-                ERPPOReference.objects.bulk_create(valid_records)
+                upserted += 1
 
         logger.info(
             "POImporter: imported %d valid, %d invalid for batch %s",
-            len(valid_records), invalid_count, batch.pk,
+            upserted, invalid_count, batch.pk,
         )
-        return len(valid_records), invalid_count, errors
+        return upserted, invalid_count, errors

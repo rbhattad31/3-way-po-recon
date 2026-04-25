@@ -82,34 +82,29 @@ class VendorImporter:
             parsed_rows.append(row)
 
         if valid_records:
-            # Check which vendor_codes already exist in *this batch* (re-run safety)
-            existing_in_batch = set(
-                ERPVendorReference.objects
-                .filter(batch=batch, vendor_code__in=[r.vendor_code for r in valid_records])
-                .values_list("vendor_code", flat=True)
-            )
-            if existing_in_batch:
-                logger.warning(
-                    "VendorImporter: %d vendor_code(s) already exist in batch %s — skipping: %s",
-                    len(existing_in_batch), batch.pk, sorted(existing_in_batch),
+            # Upsert ERPVendorReference by (tenant, vendor_code) — cross-batch dedup.
+            upserted_refs: dict = {}
+            for ref_obj in valid_records:
+                ref, _ = ERPVendorReference.objects.update_or_create(
+                    tenant=ref_obj.tenant,
+                    vendor_code=ref_obj.vendor_code,
+                    defaults=dict(
+                        batch=batch,
+                        vendor_name=ref_obj.vendor_name,
+                        normalized_vendor_name=ref_obj.normalized_vendor_name,
+                        vendor_group=ref_obj.vendor_group,
+                        country_code=ref_obj.country_code,
+                        is_active=ref_obj.is_active,
+                        payment_terms=ref_obj.payment_terms,
+                        currency=ref_obj.currency,
+                        raw_json=ref_obj.raw_json,
+                    ),
                 )
-                valid_records = [r for r in valid_records if r.vendor_code not in existing_in_batch]
-                parsed_rows = [
-                    r for r in parsed_rows
-                    if str(r.get("vendor_code", "")).strip() not in existing_in_batch
-                ]
-
-            ERPVendorReference.objects.bulk_create(valid_records)
-            # Re-query to get DB-assigned PKs (bulk_create does not populate
-            # them on MySQL, unlike PostgreSQL).
-            created_refs = {
-                r.vendor_code: r
-                for r in ERPVendorReference.objects.filter(batch=batch)
-            }
+                upserted_refs[ref_obj.vendor_code] = ref
 
             # --- Upsert Vendor master records and alias mappings ---
             for ref_obj, row in zip(valid_records, parsed_rows):
-                ref = created_refs.get(ref_obj.vendor_code, ref_obj)
+                ref = upserted_refs.get(ref_obj.vendor_code, ref_obj)
                 vendor_code = ref.vendor_code
                 vendor_name = ref.vendor_name
                 norm_name = normalize_string(vendor_name)
@@ -171,6 +166,6 @@ class VendorImporter:
 
         logger.info(
             "VendorImporter: imported %d valid, %d invalid for batch %s",
-            len(valid_records), invalid_count, batch.pk,
+            len(upserted_refs) if valid_records else 0, invalid_count, batch.pk,
         )
-        return len(valid_records), invalid_count, errors
+        return len(upserted_refs) if valid_records else 0, invalid_count, errors

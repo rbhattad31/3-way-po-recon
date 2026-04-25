@@ -444,6 +444,12 @@ class ERPVendorReference(TimestampMixin):
             models.Index(fields=["vendor_code"], name="idx_vref_code"),
             models.Index(fields=["normalized_vendor_name"], name="idx_vref_norm_name"),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "vendor_code"],
+                name="uq_erp_vendor_ref_tenant_code",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.vendor_code} — {self.vendor_name}"
@@ -484,6 +490,12 @@ class ERPItemReference(TimestampMixin):
             models.Index(fields=["item_code"], name="idx_iref_code"),
             models.Index(fields=["normalized_item_name"], name="idx_iref_norm_name"),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "item_code"],
+                name="uq_erp_item_ref_tenant_code",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.item_code} — {self.item_name}"
@@ -517,6 +529,12 @@ class ERPTaxCodeReference(TimestampMixin):
         ordering = ["tax_code"]
         verbose_name = "ERP Tax Code Reference"
         verbose_name_plural = "ERP Tax Code References"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "tax_code"],
+                name="uq_erp_tax_ref_tenant_code",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.tax_code} — {self.tax_label}"
@@ -550,6 +568,12 @@ class ERPCostCenterReference(TimestampMixin):
         ordering = ["cost_center_code"]
         verbose_name = "ERP Cost Center Reference"
         verbose_name_plural = "ERP Cost Center References"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "cost_center_code"],
+                name="uq_erp_cc_ref_tenant_code",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.cost_center_code} — {self.cost_center_name}"
@@ -592,6 +616,12 @@ class ERPPOReference(TimestampMixin):
         verbose_name_plural = "ERP PO References"
         indexes = [
             models.Index(fields=["po_number"], name="idx_poref_number"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "po_number", "po_line_number"],
+                name="uq_erp_po_ref_tenant_po_line",
+            ),
         ]
 
     def __str__(self) -> str:

@@ -57,24 +57,25 @@ class CostCenterImporter:
                 raw_json=row,
             ))
 
+        upserted = 0
         if valid_records:
-            existing_codes = set(
-                ERPCostCenterReference.objects
-                .filter(batch=batch, cost_center_code__in=[r.cost_center_code for r in valid_records])
-                .values_list("cost_center_code", flat=True)
-            )
-            if existing_codes:
-                logger.warning(
-                    "CostCenterImporter: %d cost_center_code(s) already in batch %s — skipping: %s",
-                    len(existing_codes), batch.pk, sorted(existing_codes),
+            for r in valid_records:
+                ERPCostCenterReference.objects.update_or_create(
+                    tenant=r.tenant,
+                    cost_center_code=r.cost_center_code,
+                    defaults=dict(
+                        batch=batch,
+                        cost_center_name=r.cost_center_name,
+                        department=r.department,
+                        business_unit=r.business_unit,
+                        is_active=r.is_active,
+                        raw_json=r.raw_json,
+                    ),
                 )
-                valid_records = [r for r in valid_records if r.cost_center_code not in existing_codes]
-
-            if valid_records:
-                ERPCostCenterReference.objects.bulk_create(valid_records)
+                upserted += 1
 
         logger.info(
             "CostCenterImporter: imported %d valid, %d invalid for batch %s",
-            len(valid_records), invalid_count, batch.pk,
+            upserted, invalid_count, batch.pk,
         )
-        return len(valid_records), invalid_count, errors
+        return upserted, invalid_count, errors

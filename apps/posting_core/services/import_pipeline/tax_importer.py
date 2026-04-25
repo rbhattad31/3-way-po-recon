@@ -57,24 +57,25 @@ class TaxImporter:
                 raw_json=row,
             ))
 
+        upserted = 0
         if valid_records:
-            existing_codes = set(
-                ERPTaxCodeReference.objects
-                .filter(batch=batch, tax_code__in=[r.tax_code for r in valid_records])
-                .values_list("tax_code", flat=True)
-            )
-            if existing_codes:
-                logger.warning(
-                    "TaxImporter: %d tax_code(s) already in batch %s — skipping: %s",
-                    len(existing_codes), batch.pk, sorted(existing_codes),
+            for r in valid_records:
+                ERPTaxCodeReference.objects.update_or_create(
+                    tenant=r.tenant,
+                    tax_code=r.tax_code,
+                    defaults=dict(
+                        batch=batch,
+                        tax_label=r.tax_label,
+                        country_code=r.country_code,
+                        rate=r.rate,
+                        is_active=r.is_active,
+                        raw_json=r.raw_json,
+                    ),
                 )
-                valid_records = [r for r in valid_records if r.tax_code not in existing_codes]
-
-            if valid_records:
-                ERPTaxCodeReference.objects.bulk_create(valid_records)
+                upserted += 1
 
         logger.info(
             "TaxImporter: imported %d valid, %d invalid for batch %s",
-            len(valid_records), invalid_count, batch.pk,
+            upserted, invalid_count, batch.pk,
         )
-        return len(valid_records), invalid_count, errors
+        return upserted, invalid_count, errors
