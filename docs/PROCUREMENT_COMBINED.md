@@ -2996,3 +2996,1392 @@ The procurement module depends on these existing platform services:
 | `RequestTraceMiddleware` | `apps.core.middleware` | Root TraceContext creation per request |
 | `DjangoFilterBackend` | `django_filters` | API filtering |
 | `Celery` | `config.celery` | Async task execution |
+
+---
+
+## Appendix B: Should-Cost Benchmarking — Phase 2 Flow Plan
+
+> **Status**: Planning / TODO — all items in the implementation checklist below are pending.  
+> This appendix captures the **Phase 2 expansion design** for the should-cost benchmarking feature built on top of the core models described in §3 and §5.8 above.
+
+# Should-Cost Benchmarking -- Complete Flow Plan
+
+## Architecture Overview
+
+```
+ProcurementRequest
+    |
+    +-- GeneratedRFQ  --------------------------------- sent to vendors
+    |                                                       |
+    |                                         SupplierQuotation (one per vendor)
+    |                                                       |
+    |                                         QuotationLineItem (N lines)
+    |                                                       |
+    +-- AnalysisRun (run_type=BENCHMARK)                    |
+    |       |                                               |
+    |       +-- BenchmarkResult  <------------ matches -----+
+    |               |
+    |               +-- BenchmarkResultLine (one per QuotationLineItem)
+    |                       +-- benchmark_min / avg / max  (should-cost band)
+    |                       +-- quoted_value
+    |                       +-- variance_pct
+    |                       +-- variance_status
+    |
+    +-- request status --> COMPLETED | REVIEW_REQUIRED | FAILED
+```
+
+---
+
+## Stage 1 -- RFQ Generation
+
+### What already exists
+
+- `GeneratedRFQ` model (`apps/procurement/models.py`) stores `rfq_ref`, `system_code`, `scope_json`, `line_items_json`
+- `generate_rfq` view (template_views.py) builds Excel + PDF
+- Scope rows come from `HVACServiceScope` or JS fallback table (category, description, unit, qty)
+
+### What the RFQ must carry for benchmarking
+
+| RFQ Field | Purpose |
+|---|---|
+| `rfq_ref` | Ties quotations back to a specific RFQ scope |
+| `line_items_json` | Canonical scope rows that all vendors must price against |
+| `system_code` | VRF / SPLIT_AC / CASSETTE etc. for reference lookup routing |
+| `currency` | AED / SAR / OMR -- normalises all vendor prices to one currency |
+| `geography_country` | Routes Perplexity / web-search market data to correct region |
+
+### Gap to Fill -- Phase 2 Hook
+
+Add a `scope_version` field to `GeneratedRFQ` so that re-issued RFQs do not pollute
+the benchmark of an earlier version. When a vendor quotes against `rfq_ref`, their
+`SupplierQuotation` links to that specific `GeneratedRFQ` (FK not yet on the model).
+
+---
+
+## Stage 2 -- Quotation Ingestion
+
+### Two ingestion paths (both exist)
+
+**Path A -- PDF upload -> LLM extraction**
+
+```
+DocumentUpload (PDF)
+    -> QuotationDocumentPrefillService._extract_quotation_data()
+    -> prefill_payload_json stored on SupplierQuotation
+    -> PrefillReviewService.confirm_quotation_prefill()
+    -> QuotationLineItem rows created
+```
+
+**Path B -- Manual entry**
+
+```
+POST /api/v1/procurement/quotations/
+    -> QuotationService.create_quotation()
+    -> QuotationService.add_line_items()
+    -> QuotationLineItem rows created
+```
+
+### Line Item Fields Critical for Benchmarking
+
+```python
+QuotationLineItem:
+    description              # "VRF Outdoor Unit 10HP"
+    normalized_description   # canonical form used for matching
+    category_code            # "Equipment" | "Piping" | "Electrical" etc.
+    quantity                 # 2
+    unit                     # "Nos" | "RM" | "LS"
+    unit_rate                # 45000.00  <-- compared against should-cost band
+    total_amount             # unit_rate x qty
+    brand / model            # used to route to brand-specific pricing data
+```
+
+---
+
+## Stage 3 -- Should-Cost Reference Resolution
+
+This is the core intelligence step. `BenchmarkService._resolve_benchmark()` already has
+a 3-tier priority chain. Here is the full expanded design:
+
+### Resolution Chain (per line item)
+
+```
+Tier 1 -- Deterministic DB lookup
+|    BenchmarkCatalogueEntry model (new)
+|    Match by: normalized_description + category_code + unit
+|    Returns: {min, avg, max, source: "catalogue", freshness_days}
+|
+Tier 2 -- MarketIntelligenceSuggestion (already seeded via Perplexity)
+|    Match by: system_type -> product suggestions with price_range_low/high
+|    Returns: {min, avg, max, source: "market_intelligence", confidence}
+|
+Tier 3 -- Perplexity live web search (WebSearchService.search_benchmark)
+|    Query: "{description} unit price {geography} {currency} HVAC"
+|    Returns: {min, avg, max, source: "web_search", citations}
+|
+Tier 4 -- Historical quotations (cross-request lookup)
+|    SELECT avg(unit_rate) FROM QuotationLineItem
+|      WHERE normalized_description ILIKE '%{keyword}%'
+|        AND quotation__request__geography_country = '{country}'
+|    Returns: {min, avg, max, source: "historical", sample_count}
+|
+Fallback -- No data -> variance_status = "NO_DATA"
+```
+
+### New Model: `BenchmarkCatalogueEntry`
+
+```python
+# apps/procurement/models.py (new)
+class BenchmarkCatalogueEntry(TimestampMixin):
+    category_code        = models.CharField(max_length=100, db_index=True)
+    description_keywords = models.TextField()   # comma-separated
+    unit                 = models.CharField(max_length=50)
+    geography            = models.CharField(max_length=100, db_index=True)  # "UAE", "KSA"
+    currency             = models.CharField(max_length=3)
+    price_min            = models.DecimalField(max_digits=18, decimal_places=4)
+    price_avg            = models.DecimalField(max_digits=18, decimal_places=4)
+    price_max            = models.DecimalField(max_digits=18, decimal_places=4)
+    source_label         = models.CharField(max_length=200)  # "Daikin UAE pricelist Q1 2026"
+    valid_from           = models.DateField()
+    valid_until          = models.DateField(null=True, blank=True)
+    is_active            = models.BooleanField(default=True)
+```
+
+---
+
+## Stage 4 -- Line-by-Line Comparison Logic
+
+`BenchmarkService._compute_variance()` already exists. Expand it to:
+
+### Variance Bands (per line)
+
+```
+quoted_value vs benchmark_avg:
+
+  < -30%          -->  BELOW_BENCHMARK   (suspiciously cheap, quality risk)
+  -30% to -5%     -->  BELOW_BENCHMARK   (favourable but verify scope)
+  -5%  to  +5%    -->  WITHIN_RANGE      (GREEN -- acceptable)
+  +5%  to +15%    -->  ABOVE_BENCHMARK   (AMBER -- negotiate)
+  +15% to +30%    -->  HIGH              (RED -- escalate or reject)
+  > +30%          -->  CRITICAL          (BLOCK -- likely scope mismatch)
+```
+
+### Cross-Vendor Comparison (multi-quotation)
+
+When more than one `SupplierQuotation` exists for the same `ProcurementRequest`,
+run a secondary comparison layer:
+
+```
+For each normalized_description (line descriptor):
+    collect [vendor_A.unit_rate, vendor_B.unit_rate, vendor_C.unit_rate]
+    compute: cross_vendor_min, cross_vendor_avg, cross_vendor_max
+    flag: outlier vendors whose rate deviates > 2 std-dev from cross_vendor_avg
+```
+
+### New Fields to Add to `BenchmarkResultLine`
+
+```python
+cross_vendor_min      # lowest price across all vendors for this line
+cross_vendor_avg      # mean across vendors
+cross_vendor_rank     # 1 = cheapest vendor for this line
+is_outlier            # True if > 2 std-dev from cross_vendor_avg
+source_tier           # "catalogue" | "market_intelligence" | "web_search" | "historical" | "none"
+source_label          # human-readable: "Perplexity UAE Q1 2026"
+citations_json        # [{url, snippet}] from web search
+```
+
+---
+
+## Stage 5 -- Risk Aggregation & Header Score
+
+Current logic in `BenchmarkService.run_benchmark()` computes a single
+`overall_variance_pct`. Expand to a full scorecard:
+
+### `BenchmarkResult.summary_json` (expanded)
+
+```json
+{
+  "line_count": 12,
+  "lines_with_data": 10,
+  "lines_no_data": 2,
+  "lines_within_range": 7,
+  "lines_above_benchmark": 2,
+  "lines_critical": 1,
+  "total_quoted": "480000.00",
+  "total_benchmark": "420000.00",
+  "variance_pct": "14.3",
+  "risk_level": "MEDIUM",
+  "negotiation_potential_aed": "60000.00",
+  "vendor_count": 3,
+  "cheapest_vendor": "Carrier UAE",
+  "highest_risk_line": "VRF Outdoor Unit -- 38% above benchmark",
+  "recommendation": "Negotiate line 3 and line 7 before award"
+}
+```
+
+### Risk Level Mapping
+
+| Condition | Risk Level |
+|---|---|
+| All lines WITHIN_RANGE | LOW |
+| 1-2 lines ABOVE_BENCHMARK, none CRITICAL | MEDIUM |
+| Any line HIGH or overall variance > 15% | HIGH |
+| Any line CRITICAL or variance > 30% | CRITICAL |
+
+---
+
+## Stage 6 -- Fetching & Displaying Results
+
+### API Endpoint
+
+```
+GET /api/v1/procurement/requests/{pk}/benchmark/
+```
+
+### Response Structure
+
+```json
+{
+  "request_id": 42,
+  "rfq_ref": "RFQ-2026-0001",
+  "benchmark_results": [
+    {
+      "vendor": "Carrier UAE",
+      "total_quoted": "480000.00",
+      "total_benchmark": "420000.00",
+      "variance_pct": "14.3",
+      "risk_level": "MEDIUM",
+      "lines": [
+        {
+          "line_number": 1,
+          "description": "VRF Outdoor Unit 10HP",
+          "category": "Equipment",
+          "qty": 2,
+          "unit": "Nos",
+          "quoted_unit_rate": "45000.00",
+          "benchmark_min": "38000.00",
+          "benchmark_avg": "41000.00",
+          "benchmark_max": "46000.00",
+          "variance_pct": "9.7",
+          "variance_status": "ABOVE_BENCHMARK",
+          "source_tier": "market_intelligence",
+          "source_label": "Perplexity UAE Q1 2026",
+          "cross_vendor_rank": 1,
+          "is_outlier": false,
+          "citations_json": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Template View -- Benchmark Dashboard
+
+**URL:** `/procurement/requests/{pk}/benchmark/`
+**Template:** `templates/procurement/benchmark_dashboard.html`
+
+**Sections:**
+
+1. **Header KPI cards**
+   - Total quoted vs total benchmark
+   - Overall variance % with RAG badge
+   - Negotiation potential (AED)
+   - Risk level badge (LOW / MEDIUM / HIGH / CRITICAL)
+
+2. **Vendor comparison table** (one column per vendor)
+   - Rows = line items
+   - Cells = unit_rate with colour coding by variance_status
+   - Footer = totals + overall variance per vendor
+   - Cheapest cell highlighted in green per row
+
+3. **Line-item detail accordion**
+   - Benchmark band bar (min--avg--max) with quoted price marker
+   - Source tier badge + source label
+   - Citations list (for web_search tier)
+   - Cross-vendor rank badge
+
+4. **Negotiation summary panel**
+   - Lines sorted by descending variance_pct
+   - Recommended negotiation focus items (CRITICAL + HIGH)
+   - Estimated saving if negotiated to benchmark_avg
+
+---
+
+## Stage 7 -- Celery Task Integration
+
+```python
+# apps/procurement/tasks.py
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True)
+def run_benchmark_task(self, request_id: int, quotation_ids: list):
+    """
+    Triggered after all quotations for a request are marked SUBMITTED.
+    1. Resolve benchmark reference per line (4-tier chain)
+    2. Compute variance per line per vendor
+    3. Run cross-vendor comparison
+    4. Persist BenchmarkResult + BenchmarkResultLine
+    5. Update ProcurementRequest.status
+    6. Emit AuditEvent + Langfuse trace
+    """
+    from apps.procurement.services.benchmark_service import BenchmarkService
+    BenchmarkService.run_benchmark(request_id=request_id, quotation_ids=quotation_ids)
+```
+
+**Trigger point:** `QuotationService.mark_submitted()` -- when the last expected
+quotation for an RFQ is marked SUBMITTED, enqueue `run_benchmark_task`.
+
+---
+
+## Stage 8 -- Langfuse Observability
+
+| Score | Value | When |
+|---|---|---|
+| `benchmark_lines_with_data` | 0.0-1.0 (ratio) | After resolution |
+| `benchmark_overall_variance_pct` | raw float | After aggregation |
+| `benchmark_risk_level` | LOW=1.0, MEDIUM=0.7, HIGH=0.4, CRITICAL=0.0 | After aggregation |
+| `benchmark_source_tier_hit` | 1=catalogue, 2=MI, 3=web, 4=historical, 0=none (avg) | After resolution |
+| `benchmark_negotiation_potential` | raw AED float | After aggregation |
+
+Span hierarchy:
+```
+trace: "benchmark_run" (root)
+    +-- span: "resolve_references"   (one per line item)
+    +-- span: "compute_variance"     (one per vendor x line)
+    +-- span: "cross_vendor_compare" (one per request)
+    +-- span: "aggregate_scores"
+```
+
+---
+
+## Implementation Checklist
+
+| # | Task | File(s) | Status |
+|---|---|---|---|
+| 1 | Add `BenchmarkCatalogueEntry` model | `apps/procurement/models.py` | TODO |
+| 2 | Add `scope_version` FK on `GeneratedRFQ` | `apps/procurement/models.py` | TODO |
+| 3 | Add cross-vendor fields to `BenchmarkResultLine` | `apps/procurement/models.py` | TODO |
+| 4 | Expand `_resolve_benchmark()` to 4-tier chain | `apps/procurement/services/benchmark_service.py` | TODO |
+| 5 | Expand `_compute_variance()` with full band logic | `apps/procurement/services/benchmark_service.py` | TODO |
+| 6 | Add cross-vendor comparison method | `apps/procurement/services/benchmark_service.py` | TODO |
+| 7 | Expand `summary_json` scorecard | `apps/procurement/services/benchmark_service.py` | TODO |
+| 8 | `run_benchmark_task` Celery task | `apps/procurement/tasks.py` | TODO |
+| 9 | `GET /api/v1/procurement/requests/{pk}/benchmark/` | `apps/procurement/views.py` | TODO |
+| 10 | Benchmark serializer | `apps/procurement/serializers.py` | TODO |
+| 11 | `benchmark_dashboard.html` template | `templates/procurement/` | TODO |
+| 12 | Benchmark dashboard view + URL | `apps/procurement/template_views.py` | TODO |
+| 13 | Langfuse tracing in `run_benchmark()` | `apps/procurement/services/benchmark_service.py` | TODO |
+| 14 | Migration for new fields/models | `apps/procurement/migrations/` | TODO |
+| 15 | `benchmark.view` + `benchmark.manage` permissions | `seed_rbac.py` | TODO |
+
+---
+
+## Appendix C: End-to-End Request Walkthrough (HVAC AC Unit Example)
+
+> A concrete, data-level walkthrough of a complete procurement request lifecycle using a 2.5-ton AC unit purchase scenario. Shows exact DB rows, URL routes, service calls, and result structures at each step.
+
+================================================================================
+PROCUREMENT REQUEST -- COMPLETE WALKTHROUGH
+Scenario: Procure an AC Unit for Office Block B (HVAC Domain)
+================================================================================
+
+A company needs to buy a 2.5-ton split AC unit for its Block B office.
+The procurement team raises a request, collects 2 vendor quotes, benchmarks
+them, and gets an AI recommendation.
+
+--------------------------------------------------------------------------------
+OVERVIEW -- THE FULL LIFECYCLE
+--------------------------------------------------------------------------------
+
+[User fills form]
+      |
+      v
+  DRAFT (created)
+      |
+      v  (user adds attributes/quotations, clicks Mark Ready)
+  READY
+      |
+      v  (user clicks Trigger Analysis)
+  PROCESSING -- Celery task --> AnalysisRun
+      |
+      +-- COMPLETED           (all analysis passes)
+      +-- REVIEW_REQUIRED     (validation flagged issues)
+      +-- FAILED              (no quotation, service error)
+
+
+DATA MODEL HIERARCHY
+--------------------
+
+ProcurementRequest  (1 row -- the root)
+ |
+ +--< ProcurementRequestAttribute   (dynamic key-value specs -- 1 row per spec)
+ |
+ +--< SupplierQuotation             (1 row per vendor quote)
+ |      +--< QuotationLineItem      (1 row per line item in that quote)
+ |
+ +--< AnalysisRun                   (1 row per trigger click)
+        +-- RecommendationResult    (1 row -- what to buy)
+        +-- BenchmarkResult         (1 row per quotation -- price check)
+        |     +--< BenchmarkResultLine  (1 row per line item)
+        +-- ComplianceResult        (1 row -- policy checks)
+        +-- ValidationResult        (1 row -- completeness checks)
+        |     +--< ValidationItem   (1 row per rule checked)
+        +-- ProcurementAgentExecutionRecord  (1 row per AI call made)
+
+
+URL ROUTES
+----------
+
+GET  /procurement/                    -- Request list
+GET  /procurement/create/             -- New request form
+POST /procurement/create/             -- Submit new request
+GET  /procurement/<pk>/               -- Request workspace (main screen)
+POST /procurement/<pk>/ready/         -- Mark request as READY
+POST /procurement/<pk>/quotation/     -- Upload a vendor quotation
+POST /procurement/<pk>/trigger/       -- Trigger analysis run
+POST /procurement/<pk>/validate/      -- Trigger validation run
+GET  /procurement/run/<pk>/           -- View a single analysis run result
+
+
+KEY FILES
+---------
+
+templates/procurement/request_create.html   -- The create form
+apps/procurement/template_views.py          -- View handling POST + GET
+apps/procurement/services/request_service.py -- DB write (create, status update)
+apps/procurement/tasks.py                   -- Celery task dispatcher
+apps/procurement/models.py                  -- All models
+apps/core/enums.py                          -- ProcurementRequestStatus, ProcurementRequestType
+apps/procurement/urls.py                    -- URL routing
+
+
+================================================================================
+STEP 1 -- NAVIGATE TO THE CREATE FORM
+================================================================================
+
+URL: GET /procurement/create/
+Permission required: procurement.create
+
+The form (templates/procurement/request_create.html) has two entry modes:
+  - Manual     -- fill fields directly by typing
+  - PDF-led    -- upload a quotation/RFQ PDF and the system pre-fills fields
+                  automatically using Azure Document Intelligence + GPT-4o OCR
+
+
+================================================================================
+STEP 2 -- FILL THE FORM FIELDS
+================================================================================
+
+FORM LAYOUT
+-----------
+
++-----------------------------------------------------------------------+
+| Title*          [AC Unit - Office Block B                            ]|
+| Description     [Split AC 2.5 ton for Block B ground floor, 400 sqft]|
+| Domain Code*    [HVAC                                                ]|
+| Schema Code     [HVAC_COOLING_V1                          (optional) ]|
+| Request Type*   [ BOTH (Recommendation + Benchmark)                v]|
+| Priority*       [ HIGH                                              v]|
+| Country         [India                                               ]|
+| City            [Chennai                                             ]|
+| Currency        [INR                                                 ]|
+|                                                                       |
+| + Add Attribute (dynamic rows -- add as many specs as needed)         |
+|  +--------------------+---------+--------------------+               |
+|  | Code               | Type    | Value              |               |
+|  +--------------------+---------+--------------------+               |
+|  | cooling_capacity   | NUMBER  | 2.5                |               |
+|  | star_rating        | NUMBER  | 5                  |               |
+|  | refrigerant_type   | TEXT    | R-32               |               |
+|  | installation_type  | TEXT    | Split Wall Mount   |               |
+|  | room_area_sqft     | NUMBER  | 400                |               |
+|  | inverter_ac        | TEXT    | Yes                |               |
+|  | brand_preferred    | TEXT    | Daikin or LG       |               |
+|  | budget_inr         | NUMBER  | 55000              |               |
+|  +--------------------+---------+--------------------+               |
++-----------------------------------------------------------------------+
+
+FIELD REFERENCE TABLE
+---------------------
+
+Form Field          | DB Column             | Example Value
+--------------------+-----------------------+----------------------------------
+Title               | title                 | AC Unit - Office Block B
+Description         | description           | Split AC 2.5 ton for Block B...
+Domain Code         | domain_code           | HVAC
+Schema Code         | schema_code           | HVAC_COOLING_V1
+Request Type        | request_type          | BOTH
+Priority            | priority              | HIGH
+Country             | geography_country     | India
+City                | geography_city        | Chennai
+Currency            | currency              | INR
+
+NOTE: "Status" is NOT a form field. It is always set to DRAFT on creation.
+NOTE: "Created by" is auto-set from the logged-in user session.
+NOTE: "Trace ID" is auto-generated from the distributed tracing system.
+
+REQUEST TYPE OPTIONS:
+  RECOMMENDATION  -- AI recommends which product/vendor to buy
+  BENCHMARK       -- Price comparison against market should-cost rates
+  BOTH            -- Run both recommendation and benchmark analysis
+
+PRIORITY OPTIONS:
+  LOW / MEDIUM / HIGH / CRITICAL
+
+DYNAMIC ATTRIBUTES:
+  No fixed schema -- any code/label/value combination is valid.
+  Examples per domain:
+    HVAC:       cooling_capacity_ton, star_rating, refrigerant_type, budget_inr
+    IT:         cpu_cores, ram_gb, storage_tb, form_factor
+    FACILITIES: area_sqft, floor_level, occupancy_count
+    CIVIL:      concrete_grade, load_bearing_kn, rebar_type
+
+
+================================================================================
+STEP 3 -- POST SUBMIT --> ProcurementRequestService.create_request()
+================================================================================
+
+URL: POST /procurement/create/
+File: apps/procurement/services/request_service.py
+
+SERVICE CODE (simplified):
+
+    with transaction.atomic():
+        request = ProcurementRequest.objects.create(
+            title=title,
+            description=description,
+            domain_code=domain_code,
+            schema_code=schema_code,
+            request_type=request_type,
+            status=ProcurementRequestStatus.DRAFT,   # always DRAFT on create
+            priority=priority,
+            geography_country=geography_country,
+            geography_city=geography_city,
+            currency=currency,
+            created_by=created_by,
+            assigned_to=assigned_to,
+            trace_id=ctx.trace_id,                   # auto from TraceContext
+        )
+        if attributes:
+            AttributeService.bulk_set_attributes(request, attributes)
+
+    AuditService.log_event(event_type="PROCUREMENT_REQUEST_CREATED", ...)
+
+What happens:
+  1. DB transaction opens (atomic -- all or nothing)
+  2. ProcurementRequest row inserted with status=DRAFT
+  3. For each attribute row the user added: ProcurementRequestAttribute row inserted
+  4. AuditEvent row written (PROCUREMENT_REQUEST_CREATED)
+  5. Transaction commits
+  6. Page redirects to /procurement/<pk>/ (the workspace)
+
+DB ROW WRITTEN (procurement_request table):
+
+    id                  = 42
+    request_id          = "a3f2c1d0-..."         (UUID, auto-generated)
+    title               = "AC Unit - Office Block B"
+    description         = "Split AC 2.5 ton for Block B ground floor..."
+    domain_code         = "HVAC"
+    schema_code         = "HVAC_COOLING_V1"
+    request_type        = "BOTH"
+    status              = "DRAFT"
+    priority            = "HIGH"
+    geography_country   = "India"
+    geography_city      = "Chennai"
+    currency            = "INR"
+    created_by_id       = 7
+    assigned_to_id      = null
+    trace_id            = "5f3a9c..."
+    prefill_status      = "NOT_STARTED"
+    uploaded_document   = null
+    created_at          = 2026-04-04 09:15:00
+
+
+================================================================================
+MODEL 2 -- ProcurementRequestAttribute
+================================================================================
+
+Table: procurement_request_attribute
+Each attribute the user added in the form becomes one row here.
+Unique constraint: (request, attribute_code) -- no duplicate codes per request.
+
+DATA TYPE OPTIONS:
+  TEXT     -- plain text value  --> stored in value_text
+  NUMBER   -- decimal number    --> stored in value_number
+  DATE     -- date value        --> stored in value_text (ISO string)
+  JSON     -- complex object    --> stored in value_json
+  BOOLEAN  -- yes/no            --> stored in value_text ("true"/"false")
+
+EXAMPLE ROWS (procurement_request_attribute for request_id=42):
+
+  Row 1:  request_id=42, attribute_code="cooling_capacity_ton",
+          attribute_label="Cooling Capacity (Ton)", data_type="NUMBER",
+          value_text="", value_number=2.5, is_required=True,
+          extraction_source="MANUAL", confidence_score=null
+
+  Row 2:  request_id=42, attribute_code="star_rating",
+          attribute_label="BEE Star Rating", data_type="NUMBER",
+          value_text="", value_number=5.0, is_required=True,
+          extraction_source="MANUAL"
+
+  Row 3:  request_id=42, attribute_code="refrigerant_type",
+          attribute_label="Refrigerant Type", data_type="TEXT",
+          value_text="R-32", value_number=null, is_required=False,
+          extraction_source="MANUAL"
+
+  Row 4:  request_id=42, attribute_code="installation_type",
+          attribute_label="Installation Type", data_type="TEXT",
+          value_text="Split Wall Mount", value_number=null,
+          extraction_source="MANUAL"
+
+  Row 5:  request_id=42, attribute_code="room_area_sqft",
+          attribute_label="Room Area (sq ft)", data_type="NUMBER",
+          value_text="", value_number=400.0
+          extraction_source="MANUAL"
+
+  Row 6:  request_id=42, attribute_code="inverter_ac",
+          attribute_label="Inverter AC Required", data_type="TEXT",
+          value_text="Yes"
+
+  Row 7:  request_id=42, attribute_code="brand_preferred",
+          attribute_label="Preferred Brand", data_type="TEXT",
+          value_text="Daikin or LG"
+
+  Row 8:  request_id=42, attribute_code="budget_inr",
+          attribute_label="Budget (INR)", data_type="NUMBER",
+          value_text="", value_number=55000.0, is_required=True
+
+WHY DYNAMIC ATTRIBUTES?
+  HVAC domain needs: cooling_capacity_ton, star_rating, refrigerant_type
+  IT domain needs:   cpu_cores, ram_gb, storage_tb, form_factor
+  Civil domain needs: concrete_grade, rebar_type, load_bearing_kn
+  One model handles all domains -- no fixed columns per domain.
+  This avoids creating a new DB table for every procurement category.
+
+EXTRACTION SOURCE values:
+  MANUAL          -- user typed the value
+  PDF_EXTRACTED   -- Azure Document Intelligence read it from uploaded PDF
+  AI_INFERRED     -- GPT-4o inferred it from document context
+  PREFILL         -- came from the prefill/review confirmation flow
+
+
+================================================================================
+STEP 4 -- THE REQUEST WORKSPACE (main working screen)
+================================================================================
+
+URL: GET /procurement/<pk>/
+Permission: procurement.view
+File: apps/procurement/template_views.py (request_workspace function)
+
+This screen shows everything loaded in one query set:
+  - All attributes on the request
+  - All uploaded supplier quotations
+  - All past AnalysisRun records
+  - Latest RecommendationResult (if any)
+  - All BenchmarkResults with their lines
+  - Latest ComplianceResult (if any)
+  - Latest ValidationResult with all items (if any)
+  - Audit timeline (last 50 events)
+
+From this workspace the user takes three actions:
+  [1] Mark Ready      -- validates required attributes, moves to READY status
+  [2] Add Quotation   -- uploads a vendor's PDF quote
+  [3] Trigger Analysis -- fires the Celery task, starts AI processing
+
+
+================================================================================
+STEP 5a -- MARK READY
+================================================================================
+
+URL: POST /procurement/<pk>/ready/
+Permission: procurement.edit
+
+CODE (request_service.py):
+
+    def mark_ready(request, user):
+        required_attrs = request.attributes.filter(is_required=True)
+        for attr in required_attrs:
+            if not attr.value_text and attr.value_number is None:
+                raise ValueError(
+                    f"Required attribute '{attr.attribute_code}' is missing."
+                )
+        update_status(request, ProcurementRequestStatus.READY)
+
+WHAT HAPPENS:
+  1. Loops through all ProcurementRequestAttribute rows where is_required=True
+  2. Checks that each has either value_text or value_number filled in
+  3. If any required attribute is empty --> raises ValueError, user sees error message
+  4. If all OK --> status changes DRAFT --> READY
+  5. AuditEvent written (PROCUREMENT_REQUEST_STATUS_CHANGED)
+  6. Nothing else -- no AI, no analysis yet
+
+EXAMPLE:
+  Request has budget_inr (required) and star_rating (required).
+  User forgot to fill budget_inr --> error: "Required attribute 'budget_inr' is missing."
+  User fills it in --> Mark Ready succeeds --> status = READY
+
+
+================================================================================
+STEP 5b -- UPLOAD SUPPLIER QUOTATION
+================================================================================
+
+URL: POST /procurement/<pk>/quotation/
+Permission: procurement.manage_quotations
+
+FORM:
+
+  +-----------------------------------------------------------------------+
+  | [Add Quotation for Request: AC Unit - Office Block B]                 |
+  |                                                                       |
+  | Vendor Name*    [Daikin India Ltd                                    ]|
+  | Quotation No    [DKN-2026-0041                                       ]|
+  | Total Amount    [52000                                               ]|
+  | Currency        [INR                                                 ]|
+  | Upload PDF      [daikin_quote.pdf                         ](optional) |
+  +-----------------------------------------------------------------------+
+
+Two vendors submit quotes (two separate form submissions):
+
+  Vendor A (Daikin):
+    vendor_name      = "Daikin India Ltd"
+    quotation_number = "DKN-2026-0041"
+    total_amount     = 52000
+    currency         = "INR"
+    PDF              = daikin_quote.pdf
+
+  Vendor B (LG):
+    vendor_name      = "LG Electronics India"
+    quotation_number = "LGE-Q-8821"
+    total_amount     = 49500
+    currency         = "INR"
+    PDF              = lg_quote.pdf
+
+DB ROWS WRITTEN (procurement_supplier_quotation):
+
+  Row A:  id=101, request_id=42, vendor_name="Daikin India Ltd",
+          quotation_number="DKN-2026-0041", total_amount=52000.00,
+          currency="INR", extraction_status="PENDING",
+          prefill_status="NOT_STARTED", uploaded_document_id=501
+
+  Row B:  id=102, request_id=42, vendor_name="LG Electronics India",
+          quotation_number="LGE-Q-8821", total_amount=49500.00,
+          currency="INR", extraction_status="PENDING",
+          prefill_status="NOT_STARTED", uploaded_document_id=502
+
+If a PDF was uploaded:
+  - Azure Document Intelligence runs OCR on the PDF
+  - GPT-4o extracts structured line items from the OCR text
+  - QuotationLineItem rows are created automatically
+  - extraction_status moves PENDING --> COMPLETED
+  - extraction_confidence is set (0.0 to 1.0)
+
+
+================================================================================
+MODEL 4 -- QuotationLineItem
+================================================================================
+
+Table: procurement_quotation_line_item
+Each line item row in the vendor's PDF quote becomes one row here.
+
+DAIKIN QUOTE LINES (quotation_id=101):
+
+  Line 1: line_number=1,
+          description="Daikin 2.5T Split AC FTKF71TV",
+          category_code="HVAC_SPLIT_AC",
+          quantity=1, unit="EA", unit_rate=42000.00, total_amount=42000.00,
+          brand="Daikin", model="FTKF71TV",
+          extraction_confidence=0.97, extraction_source="PDF_EXTRACTED"
+
+  Line 2: line_number=2,
+          description="Installation charges (wall bracket + piping 3m)",
+          category_code="HVAC_INSTALLATION",
+          quantity=1, unit="SET", unit_rate=7500.00, total_amount=7500.00,
+          brand="", model="", extraction_confidence=0.92
+
+  Line 3: line_number=3,
+          description="Copper piping per additional meter",
+          category_code="HVAC_MATERIAL",
+          quantity=5, unit="MTR", unit_rate=500.00, total_amount=2500.00,
+          extraction_confidence=0.88
+
+  Sub-total Daikin: 42000 + 7500 + 2500 = 52000 INR
+
+LG QUOTE LINES (quotation_id=102):
+
+  Line 1: line_number=1,
+          description="LG 2.5T Dual Inverter AC S4-W24JA2WA",
+          category_code="HVAC_SPLIT_AC",
+          quantity=1, unit="EA", unit_rate=40000.00, total_amount=40000.00,
+          brand="LG", model="S4-W24JA2WA", extraction_confidence=0.96
+
+  Line 2: line_number=2,
+          description="Installation + commissioning charges",
+          category_code="HVAC_INSTALLATION",
+          quantity=1, unit="SET", unit_rate=6500.00, total_amount=6500.00,
+          extraction_confidence=0.91
+
+  Line 3: line_number=3,
+          description="Extended 5-year warranty",
+          category_code="WARRANTY",
+          quantity=1, unit="EA", unit_rate=3000.00, total_amount=3000.00,
+          extraction_confidence=0.89
+
+  Sub-total LG: 40000 + 6500 + 3000 = 49500 INR
+
+
+================================================================================
+STEP 6 -- TRIGGER ANALYSIS
+================================================================================
+
+URL: POST /procurement/<pk>/trigger/
+Permission: procurement.run_analysis
+
+VIEW CODE:
+    run = AnalysisRunService.create_run(
+        request=proc_request,
+        run_type="RECOMMENDATION",   # or BENCHMARK or VALIDATION
+        triggered_by=request.user,
+    )
+    run_analysis_task.delay(run.pk)   # fires Celery task async
+
+WHAT HAPPENS:
+  1. AnalysisRun row created with status=QUEUED
+  2. ProcurementRequest status --> PROCESSING
+  3. Celery task enqueued (run_analysis_task)
+  4. User sees "Analysis queued" message
+  5. Page redirects back to workspace
+
+DB ROWS WRITTEN (procurement_analysis_run):
+
+  Run 1:  id=201, run_id="b9e3...", request_id=42,
+          run_type="RECOMMENDATION", status="QUEUED",
+          triggered_by_id=7, started_at=null,
+          input_snapshot_json={
+              "domain_code": "HVAC",
+              "attributes": {
+                  "cooling_capacity_ton": 2.5,
+                  "star_rating": 5,
+                  "refrigerant_type": "R-32",
+                  "budget_inr": 55000
+              },
+              "quotation_count": 2,
+              "geography": "Chennai, India"
+          },
+          trace_id="5f3a9c..."
+
+  Run 2:  id=202, run_id="c7d1...", request_id=42,
+          run_type="BENCHMARK", status="QUEUED"
+
+  Run 3:  id=203, run_id="d2f8...", request_id=42,
+          run_type="VALIDATION", status="QUEUED"
+
+NOTE: Each run is independent.
+      You can re-run just BENCHMARK without re-running RECOMMENDATION.
+      Each click of "Trigger Analysis" creates a new AnalysisRun row.
+
+
+================================================================================
+STEP 7 -- CELERY TASK DISPATCHES TO SERVICES
+================================================================================
+
+File: apps/procurement/tasks.py (run_analysis_task)
+
+ROUTING LOGIC:
+    if run.run_type == RECOMMENDATION  --> RecommendationService.run_recommendation()
+    if run.run_type == BENCHMARK       --> BenchmarkService.run_benchmark()
+    if run.run_type == VALIDATION      --> ValidationOrchestratorService.run_validation()
+
+RECOMMENDATION PATH:
+  1. RecommendationService runs deterministic rules first (attribute scoring)
+  2. If confidence < threshold --> ProcurementAgentOrchestrator is called
+  3. Orchestrator builds ProcurementAgentContext (HVAC domain, all attributes, quotation data)
+  4. Calls RecommendationGraphService.run() --> GPT-4o generates recommendation
+  5. ProcurementAgentExecutionRecord row written (AI call log)
+  6. RecommendationResult row written
+  7. AnalysisRun status --> COMPLETED
+
+BENCHMARK PATH:
+  1. BenchmarkService checks internal catalogue for each QuotationLineItem
+  2. For lines with catalogue data: variance calculated directly
+  3. For lines without: AI benchmark resolution via ProcurementAgentOrchestrator
+  4. BenchmarkResult + BenchmarkResultLine rows written
+
+VALIDATION PATH:
+  1. 6 deterministic validators run (completeness, budget, spec, etc.)
+  2. If >= 3 ambiguous items --> optional AI augmentation via ValidationAgentService
+  3. ValidationResult + ValidationItem rows written
+  4. Request status set based on outcome:
+       PASS / PASS_WITH_WARNINGS --> READY
+       REVIEW_REQUIRED           --> REVIEW_REQUIRED
+       FAIL                      --> FAILED
+
+
+================================================================================
+MODEL 6 -- RecommendationResult
+================================================================================
+
+Table: procurement_recommendation_result
+OneToOne with AnalysisRun (one recommendation per run).
+
+EXAMPLE ROW:
+
+    run_id=201 (OneToOne)
+    recommended_option = "Daikin FTKF71TV 2.5T 5-Star Inverter Split AC"
+    reasoning_summary  = "Based on the 5-star BEE rating requirement, R-32
+                          refrigerant preference, and Chennai climate zone,
+                          Daikin FTKF71TV scores 87% on attribute matching.
+                          LG S4-W24JA2WA scores 82% but lacks documented
+                          R-32 certification in this SKU variant."
+    confidence_score   = 0.87
+    compliance_status  = "COMPLIANT"
+    reasoning_details_json = {
+        "scoring": {
+            "Daikin FTKF71TV": {
+                "attribute_match": 0.91,
+                "budget_fit": 0.85,
+                "geo_factor": 0.83
+            },
+            "LG S4-W24JA2WA": {
+                "attribute_match": 0.82,
+                "budget_fit": 0.92,
+                "geo_factor": 0.82
+            }
+        },
+        "method": "AI_ASSISTED",
+        "model": "gpt-4o",
+        "tokens_used": 1847
+    }
+
+WHAT THIS MEANS FOR THE USER:
+  - "Go with Daikin FTKF71TV" (87% confident)
+  - AI reasoning is fully transparent in reasoning_summary
+  - Both vendors scored so user can see why LG was not picked
+  - Compliance check already done inline
+
+
+================================================================================
+MODEL 7 + 8 -- BenchmarkResult + BenchmarkResultLine
+================================================================================
+
+Table: procurement_benchmark_result (one per quotation checked)
+Table: procurement_benchmark_result_line (one per line item in that quotation)
+
+DAIKIN BENCHMARK HEADER:
+
+    id=301, run_id=202, quotation_id=101
+    total_quoted_amount    = 52000.00
+    total_benchmark_amount = 48500.00   <- market should-cost from catalogue
+    variance_pct           = +7.22      <- 7.2% over market rate
+    risk_level             = "MEDIUM"
+
+DAIKIN PER-LINE BREAKDOWN:
+
+    Line 1 (AC Unit):
+      quoted_value=42000, benchmark_min=36000, benchmark_avg=39500, benchmark_max=44000
+      variance_pct=+6.3%
+      variance_status="ABOVE_RANGE"
+      remarks="Price 6.3% above market average for 2.5T 5-star inverter AC"
+
+    Line 2 (Installation):
+      quoted_value=7500, benchmark_min=5500, benchmark_avg=6800, benchmark_max=8000
+      variance_pct=+10.3%
+      variance_status="ABOVE_RANGE"
+      remarks="Installation charge elevated vs Chennai market (10.3% over avg)"
+
+    Line 3 (Copper piping/mtr):
+      quoted_value=500, benchmark_min=420, benchmark_avg=480, benchmark_max=550
+      variance_pct=+4.2%
+      variance_status="WITHIN_RANGE"
+      remarks="Acceptable variance within tolerance band"
+
+LG BENCHMARK HEADER:
+
+    id=302, run_id=202, quotation_id=102
+    total_quoted_amount    = 49500.00
+    total_benchmark_amount = 48500.00
+    variance_pct           = +2.06
+    risk_level             = "LOW"
+
+RISK LEVEL BANDS:
+  LOW      -- variance within 5%
+  MEDIUM   -- variance 5% to 15%
+  HIGH     -- variance 15% to 30%
+  CRITICAL -- variance over 30%
+
+
+================================================================================
+MODEL 9 -- ComplianceResult
+================================================================================
+
+Table: procurement_compliance_result
+OneToOne with AnalysisRun. Checks procurement policy rules.
+
+EXAMPLE ROW:
+
+    run_id=201 (OneToOne)
+    compliance_status = "COMPLIANT"
+    rules_checked_json = [
+        {
+            "rule": "single_vendor_limit",
+            "threshold_inr": 100000,
+            "quoted_total": 52000,
+            "result": "PASS"
+        },
+        {
+            "rule": "min_quotations_required",
+            "required": 2,
+            "received": 2,
+            "result": "PASS"
+        },
+        {
+            "rule": "budget_overshoot",
+            "budget": 55000,
+            "lowest_quote": 49500,
+            "result": "PASS"
+        }
+    ]
+    violations_json = []
+    recommendations_json = [
+        "Negotiate Daikin installation charges -- 10.3% above market rate",
+        "LG quote is 4.8% cheaper overall but verify R-32 refrigerant spec"
+    ]
+
+COMPLIANCE STATUS OPTIONS:
+  COMPLIANT         -- all policy rules pass
+  NON_COMPLIANT     -- one or more violations found
+  CONDITIONALLY_COMPLIANT -- passes with caveats
+  NOT_CHECKED       -- no compliance run performed yet
+
+
+================================================================================
+MODEL -- ValidationResult + ValidationItem
+================================================================================
+
+Table: procurement_validation_result
+Table: procurement_validation_item (one per rule checked)
+
+EXAMPLE (Run 3, VALIDATION):
+
+ValidationResult:
+  run_id=203, overall_status="PASS_WITH_WARNINGS"
+  completeness_score=0.88
+
+ValidationItem rows:
+
+  Item 1: rule_type="COMPLETENESS", rule_code="required_attr_present",
+          status="PASS", severity="INFO",
+          description="All 4 required attributes filled (capacity, star, budget, city)"
+          next_action="NONE"
+
+  Item 2: rule_type="BUDGET_CHECK", rule_code="lowest_quote_vs_budget",
+          status="PASS", severity="INFO",
+          description="Lowest quote (INR 49500) is within budget (INR 55000)"
+          next_action="NONE"
+
+  Item 3: rule_type="SPEC_CHECK", rule_code="star_rating_verified",
+          status="WARNING", severity="MEDIUM",
+          description="LG SKU S4-W24JA2WA BEE star rating not confirmed in
+                       product catalogue. Daikin FTKF71TV confirmed 5-star."
+          next_action="REQUEST_CLARIFICATION"
+
+  Item 4: rule_type="COMPLETENESS", rule_code="installation_scope_defined",
+          status="WARNING", severity="LOW",
+          description="Copper piping length not specified in request attributes.
+                       Vendors have assumed different lengths (3m vs unspecified)."
+          next_action="AMEND_REQUEST"
+
+OVERALL STATUS OPTIONS:
+  PASS                 -- all rules pass
+  PASS_WITH_WARNINGS   -- passes but some warnings found
+  REVIEW_REQUIRED      -- human must review before proceeding
+  FAIL                 -- critical failures, request cannot proceed
+
+NEXT ACTION OPTIONS per item:
+  NONE                  -- nothing required
+  REQUEST_CLARIFICATION -- ask vendor for more info
+  AMEND_REQUEST         -- edit the procurement request
+  ESCALATE              -- escalate to manager
+  REJECT_QUOTATION      -- reject the vendor's quote
+
+
+================================================================================
+MODEL -- ProcurementAgentExecutionRecord (Phase 1 AI Bridge)
+================================================================================
+
+Table: procurement_agent_execution_record
+One row written every time an AI agent is invoked via ProcurementAgentOrchestrator.
+This is the audit trail for every GPT-4o call the system makes.
+
+EXAMPLE ROWS:
+
+  Record 1 (Recommendation AI call):
+    run_id=201, agent_type="RECOMMENDATION_AGENT", status="COMPLETED"
+    started_at=09:16:02, completed_at=09:16:07  (5 seconds)
+    confidence_score=0.87
+    reasoning_summary="Daikin FTKF71TV selected based on attribute match
+                       (91%) and Chennai climate zone scoring"
+    input_snapshot={
+        "domain_code": "HVAC",
+        "attributes": {"cooling_capacity_ton": 2.5, "star_rating": 5, ...},
+        "quotation_count": 2,
+        "request_type": "RECOMMENDATION"
+    }
+    output_snapshot={
+        "recommended_option": "Daikin FTKF71TV 2.5T",
+        "confidence": 0.87,
+        "method": "AI_ASSISTED"
+    }
+    trace_id="5f3a9c...", span_id="7a1b2c...",
+    actor_user_id=7, actor_primary_role="AP_PROCESSOR"
+
+  Record 2 (Benchmark AI fallback -- no catalogue entry for LG line):
+    run_id=202, agent_type="BENCHMARK_AGENT", status="COMPLETED"
+    confidence_score=0.73
+    reasoning_summary="No catalogue entry for LG S4-W24JA2WA. AI inferred
+                       should-cost from similar 2.5T inverter SKUs in Chennai.
+                       Comparable models range INR 37000-42000."
+    input_snapshot={
+        "line_description": "LG 2.5T Dual Inverter AC S4-W24JA2WA",
+        "category_code": "HVAC_SPLIT_AC",
+        "geography": "Chennai, India"
+    }
+    output_snapshot={
+        "benchmark_avg": 39500,
+        "benchmark_min": 37000,
+        "benchmark_max": 42000,
+        "method": "AI_INFERRED"
+    }
+
+WHY THIS EXISTS:
+  Full traceability for every AI decision.
+  Answers: "Why did the system recommend Daikin?"
+           "What data did AI use when benchmarking LG?"
+           "Which user triggered this AI call?"
+           "How long did the AI call take?"
+           "What was the confidence?"
+
+
+================================================================================
+STEP 8 -- STATUS AFTER ANALYSIS COMPLETES
+================================================================================
+
+Outcome                                  | Final Request Status
+-----------------------------------------+-------------------------
+Recommendation / Benchmark completes OK | COMPLETED
+Validation: PASS or PASS_WITH_WARNINGS  | READY
+Validation: REVIEW_REQUIRED             | REVIEW_REQUIRED
+No quotation found when BENCHMARK runs  | FAILED
+Any unhandled exception in service      | FAILED
+
+
+================================================================================
+STEP 9 -- VIEW RESULTS
+================================================================================
+
+On the workspace page /procurement/<pk>/ the user sees:
+
+  RECOMMENDATION CARD:
+    - Recommended option: "Daikin FTKF71TV 2.5T 5-Star Inverter Split AC"
+    - Confidence: 87%
+    - Reasoning summary
+    - Method used: AI_ASSISTED or RULES_BASED
+
+  BENCHMARK TABLE (per vendor, per line):
+    +-----------------+--------+-----------+----------+-----------+---------+
+    | Description     | Quoted | Bench Min | Bench Avg| Bench Max | Status  |
+    +-----------------+--------+-----------+----------+-----------+---------+
+    | Daikin AC Unit  | 42,000 | 36,000    | 39,500   | 44,000    | ABOVE   |
+    | Daikin Install  |  7,500 |  5,500    |  6,800   |  8,000    | ABOVE   |
+    | Daikin Piping   |    500 |    420    |    480   |    550    | IN RANGE|
+    | LG AC Unit      | 40,000 | 37,000    | 39,500   | 42,000    | IN RANGE|
+    | LG Install      |  6,500 |  5,500    |  6,800   |  8,000    | IN RANGE|
+    | LG Warranty     |  3,000 |    N/A    |    N/A   |    N/A    | NO DATA |
+    +-----------------+--------+-----------+----------+-----------+---------+
+    Overall: Daikin MEDIUM risk (+7.2%), LG LOW risk (+2.1%)
+
+  VALIDATION ITEMS:
+    - PASS   INFO    All required attributes filled
+    - PASS   INFO    Lowest quote within budget
+    - WARN   MEDIUM  LG star rating not confirmed in catalogue
+    - WARN   LOW     Installation scope not fully specified
+
+  AUDIT TIMELINE:
+    09:15:00  PROCUREMENT_REQUEST_CREATED (by user@company.com)
+    09:15:03  PROCUREMENT_REQUEST_STATUS_CHANGED DRAFT -> READY
+    09:15:45  Quotation added: Daikin India Ltd
+    09:16:10  Quotation added: LG Electronics India
+    09:16:15  ANALYSIS_RUN_STARTED run_type=RECOMMENDATION
+    09:16:20  ANALYSIS_RUN_STARTED run_type=BENCHMARK
+    09:16:21  PROCUREMENT_AGENT_RUN_STARTED agent_type=RECOMMENDATION_AGENT
+    09:16:27  PROCUREMENT_AGENT_RUN_COMPLETED confidence=0.87
+    09:16:31  ANALYSIS_RUN_COMPLETED run_type=RECOMMENDATION
+    09:16:35  ANALYSIS_RUN_COMPLETED run_type=BENCHMARK
+
+
+================================================================================
+COMPLETE PICTURE -- ONE REQUEST, ALL TABLES
+================================================================================
+
+procurement_request (id=42)
+  "AC Unit - Office Block B"  |  HVAC  |  BOTH  |  status=COMPLETED
+
+   +-- procurement_request_attribute (8 rows)
+   |     cooling_capacity_ton=2.5, star_rating=5,
+   |     refrigerant_type="R-32", installation_type="Split Wall Mount",
+   |     room_area_sqft=400, inverter_ac="Yes",
+   |     brand_preferred="Daikin or LG", budget_inr=55000
+   |
+   +-- procurement_supplier_quotation (2 rows)
+   |     id=101  Daikin India Ltd       INR 52,000
+   |     id=102  LG Electronics India   INR 49,500
+   |
+   |     +-- procurement_quotation_line_item (6 rows total, 3 per vendor)
+   |           Daikin: AC unit 42000 / Installation 7500 / Piping 2500
+   |           LG:     AC unit 40000 / Installation 6500 / Warranty 3000
+   |
+   +-- procurement_analysis_run (3 rows)
+         id=201  RECOMMENDATION  COMPLETED
+         id=202  BENCHMARK       COMPLETED
+         id=203  VALIDATION      COMPLETED
+
+         Under Run 201 (RECOMMENDATION):
+           +-- procurement_recommendation_result (1 row)
+           |     recommended_option="Daikin FTKF71TV", confidence=0.87
+           +-- procurement_compliance_result (1 row)
+           |     status=COMPLIANT, rules_checked=[3 rules]
+           +-- procurement_agent_execution_record (1 row)
+                 agent_type=RECOMMENDATION_AGENT, 5s, confidence=0.87
+
+         Under Run 202 (BENCHMARK):
+           +-- procurement_benchmark_result (2 rows, one per vendor)
+           |     Daikin: variance=+7.2%, risk=MEDIUM
+           |     LG:     variance=+2.1%, risk=LOW
+           |
+           |     +-- procurement_benchmark_result_line (6 rows)
+           |           3 lines per vendor quoted vs market rates
+           +-- procurement_agent_execution_record (1 row)
+                 agent_type=BENCHMARK_AGENT (AI fallback for LG line)
+
+         Under Run 203 (VALIDATION):
+           +-- procurement_validation_result (1 row)
+           |     overall_status=PASS_WITH_WARNINGS, completeness=0.88
+           +-- procurement_validation_item (4 rows)
+                 2x PASS, 2x WARNING
+
+   audit_event table: 10+ rows tracking every action above
+
+
+================================================================================
+PERMISSIONS REQUIRED AT EACH STEP
+================================================================================
+
+Step                       | Permission Code
+---------------------------+-----------------------------
+View request list          | procurement.view
+Create new request         | procurement.create
+Edit request / mark ready  | procurement.edit
+Add quotation upload       | procurement.manage_quotations
+Trigger analysis run       | procurement.run_analysis
+View run results           | procurement.view_results
+
+
+================================================================================
+END OF WALKTHROUGH
+================================================================================
+
+---
+
+## Appendix D: Benchmarking App — Upload & Field Guide
+
+> User-facing guide for positive-path testing of the benchmarking workflow: from request creation through RFQ selection, quotation upload, and result review.
+
+# Benchmarking App Upload and Field Guide
+
+This guide is for positive-path testing of the benchmarking workflow from request creation to result review.
+
+## 1) Create a new benchmarking request
+
+Open `Benchmarking -> New Request` and fill these fields:
+
+- **Request Title** (required): Example `HVAC Quotation - Positive Test Batch`
+- **Project Name**: Example `Dubai Mall Expansion Phase 3`
+- **Store / Project Type**: Example `MALL`
+- **Geography** (required): choose `UAE` (or your scenario)
+- **Commercial Scope** (required): choose `SITC`, `ITC`, or `EQUIPMENT_ONLY`
+- **Notes** (optional): any internal comments
+
+## 2) RFQ selection rules (important)
+
+In the **RFQ (optional)** section, choose one option:
+
+- **Yes - select from generated RFQs** (`rfq_source=system`)
+  - Use when an RFQ already exists in the procurement module.
+  - Pick one RFQ from the dropdown `Select RFQ Reference`.
+- **Upload RFQ** (`rfq_source=upload`)
+  - Use when RFQ exists outside the system.
+  - Upload one RFQ PDF in `Upload Your RFQ Document`.
+  - `RFQ Reference` is auto-filled from filename (you can edit it).
+- **No** (`rfq_source=manual`)
+  - Use when no RFQ document/reference is available.
+
+## 3) Quotation upload options
+
+Use **Quotation File (PDF or ZIP)**:
+
+- Single vendor test: upload one PDF.
+- Multi-vendor test: upload a ZIP containing multiple PDFs.
+- ZIP rules:
+  - Only PDF files are processed.
+  - Maximum 50 PDFs in one ZIP.
+
+For this repo, generated positive test documents are at:
+
+- `media/benchmarking/positive_test_docs/quotation_01_al_najah_hvac.pdf`
+- `media/benchmarking/positive_test_docs/quotation_02_desert_cooling_solutions.pdf`
+- `media/benchmarking/positive_test_docs/quotation_03_polar_air_mep.pdf`
+- `media/benchmarking/positive_test_docs/quotation_04_gulf_climate_technologies.pdf`
+
+## 4) Recommended positive test runs
+
+### A) Single vendor run
+
+1. Create request with required fields.
+2. Keep RFQ as `No` (manual) or choose valid RFQ source.
+3. Upload one quotation PDF.
+4. Submit `Analyse Quotation`.
+
+Expected behavior:
+
+- Request moves through processing and reaches completed state.
+- Extracted lines are visible on request detail.
+- Benchmark source appears per line (DB corridor or market fallback).
+- Quoted and benchmark columns show `AED` values.
+
+### B) Multi-vendor run
+
+1. Create one request.
+2. Upload multiple quotation PDFs (one by one later) or ZIP upload on create.
+3. Submit and open request detail.
+
+Expected behavior:
+
+- Vendor panels are listed.
+- If supplier name is missing in extraction, UI fallback labels show as `Vendor A`, `Vendor B`, etc.
+- `View Document` opens the quotation preview modal inside the page.
+
+## 5) Field checklist before submit
+
+Verify these minimum inputs:
+
+- `title` not empty
+- `geography` selected
+- `scope_type` selected
+- RFQ path is valid for chosen `rfq_source`
+- Quotation file is PDF or ZIP (with PDFs)
+
+## 6) Quick local generation command
+
+If you need to regenerate the sample quotation files:
+
+```powershell
+"c:/Users/BRADSOL/OneDrive - bradsol.com/Sridhar_Bradsol_Projects/Reconcilation_Project/3-way-po-recon/.venv/Scripts/python.exe" scripts/generate_benchmark_positive_docs.py
+```

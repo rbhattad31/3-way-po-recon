@@ -574,7 +574,10 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
                         raw = ext_result.raw_response or {}
                         raw["_recovery"] = recovery_result.to_serializable()
                         ext_result.raw_response = raw
-                        ext_result.save(update_fields=["raw_response", "updated_at"])
+                        if ext_result.extraction_run_id:
+                            ext_result.extraction_run.save(update_fields=["extracted_data_json", "updated_at"])
+                        else:
+                            ext_result.save(update_fields=["updated_at"])
                     except Exception as persist_exc:
                         logger.warning("Failed to persist recovery data: %s", persist_exc)
         except Exception as rl_exc:
@@ -782,6 +785,19 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
         )
+
+        # Final user-facing status message for polling UIs.
+        _final_message = "Extraction completed"
+        if invoice.status == InvoiceStatus.PENDING_APPROVAL:
+            _final_message = "Extraction completed - awaiting approval"
+        elif invoice.status == InvoiceStatus.READY_FOR_RECON:
+            _final_message = "Extraction completed - ready for reconciliation"
+        elif invoice.status == InvoiceStatus.RECONCILED:
+            _final_message = "Extraction completed - reconciled"
+
+        upload.processing_state = FileProcessingState.COMPLETED
+        upload.processing_message = _final_message
+        upload.save(update_fields=["processing_state", "processing_message", "updated_at"])
 
         # ── Credit: consume reserved credit on successful extraction ──
         _consume_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)

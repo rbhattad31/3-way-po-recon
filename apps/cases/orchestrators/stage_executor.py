@@ -366,7 +366,22 @@ class StageExecutor:
         result = run.results.filter(invoice=case.invoice).first()
         if result:
             case.reconciliation_result = result
-            case.save(update_fields=["reconciliation_result", "updated_at"])
+            mode_to_path = {
+                "TWO_WAY": ProcessingPath.TWO_WAY,
+                "THREE_WAY": ProcessingPath.THREE_WAY,
+                "NON_PO": ProcessingPath.NON_PO,
+            }
+            resolved_path = mode_to_path.get(result.reconciliation_mode, case.processing_path)
+            if resolved_path:
+                case.processing_path = resolved_path
+            if result.reconciliation_mode:
+                case.reconciliation_mode = result.reconciliation_mode
+            case.save(update_fields=[
+                "reconciliation_result",
+                "processing_path",
+                "reconciliation_mode",
+                "updated_at",
+            ])
 
         # Always advance to exception analysis — the full pipeline
         # (exception analysis -> review routing -> case summary) runs

@@ -82,6 +82,19 @@ class ExtractionResult(BaseModel):
         run = self.extraction_run
         return run.extracted_data_json if run else None
 
+    @raw_response.setter
+    def raw_response(self, value):
+        """Backward-compatible write-through for legacy callers.
+
+        The canonical storage now lives on ExtractionRun.extracted_data_json.
+        When no extraction_run exists, keep an in-memory override only.
+        """
+        run = self.extraction_run
+        if run is not None:
+            run.extracted_data_json = value
+        else:
+            self.__dict__["_raw_response_override"] = value
+
     @property
     def invoice(self):
         try:

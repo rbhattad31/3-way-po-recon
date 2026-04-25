@@ -292,6 +292,7 @@ AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "fa
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
+AZURE_DI_OCR_TIMEOUT_SECONDS = int(os.getenv("AZURE_DI_OCR_TIMEOUT_SECONDS", "90"))
 # Set to false to skip Azure DI and use native PDF text extraction (PyPDF2).
 # Useful for accuracy comparison. Runtime override via ExtractionRuntimeSettings.ocr_enabled.
 EXTRACTION_OCR_ENABLED = os.getenv("EXTRACTION_OCR_ENABLED", "true").lower() == "true"

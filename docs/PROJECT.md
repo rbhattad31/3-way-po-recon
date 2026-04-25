@@ -1,6 +1,6 @@
 # 3-Way PO Reconciliation Platform — Comprehensive Project Documentation
 
-> **Version**: 2.0 · **Last Updated**: March 2026  
+> **Version**: 3.0 · **Last Updated**: April 2026  
 > **Stack**: Django 4.2 · MySQL · Celery + Redis · Azure OpenAI · Azure Document Intelligence · Bootstrap 5
 
 ---
@@ -32,6 +32,9 @@
 23. [Invoice Posting Agent](#23-invoice-posting-agent)
 24. [ERP Integration Layer](#24-erp-integration-layer)
 25. [Procurement Intelligence Platform](#25-procurement-intelligence-platform)
+26. [Evaluation & Learning Framework](#26-evaluation--learning-framework)
+27. [Observability & Langfuse Integration](#27-observability--langfuse-integration)
+28. [Multi-Tenant Architecture](#28-multi-tenant-architecture)
 
 ---
 
@@ -2505,7 +2508,7 @@ Templates in `templates/core_eval/`. Sidebar section: "Eval & Learning" (Eval Ru
 
 ## 23. Invoice Posting Agent
 
-> Full reference: [POSTING_AGENT.md](POSTING_AGENT.md)
+> Full reference: [AGENT_ARCHITECTURE_COMBINED.md](AGENT_ARCHITECTURE_COMBINED.md) — Appendix: Invoice Posting Agent
 
 The Invoice Posting Agent bridges approved invoices (past the reconciliation gate) into ERP-ready posting proposals. It spans two Django apps:
 
@@ -2555,7 +2558,7 @@ NOT_READY -> READY_FOR_POSTING -> MAPPING_IN_PROGRESS
 
 ## 24. ERP Integration Layer
 
-> Full reference: [POSTING_AGENT.md](POSTING_AGENT.md) -- ERP Integration section
+> Full reference: [ERP_INTEGRATION_COMBINED.md](ERP_INTEGRATION_COMBINED.md)
 
 `apps/erp_integration/` is a shared connectivity layer used by both the posting pipeline and agent tools.
 
@@ -2624,58 +2627,114 @@ Accessed from the **ERP Integration** sidebar section (separate from Posting Age
 `apps/erp_integration/services/langfuse_helpers.py` provides ERP-specific tracing via context-manager wrappers (`trace_erp_cache_lookup`, `trace_erp_live_lookup`, `trace_erp_db_fallback`, `trace_erp_submission`). Key points:
 
 - **Metadata sanitisation**: `sanitize_erp_metadata()` redacts credentials before attaching to spans.
-- **19 ERP-specific scores**: resolution (6), cache (1), live API (4), DB fallback (2), submission (5), duplicate check (1).
+- **24 ERP-specific scores**: resolution (6), cache (1), live API (4), DB fallback (2), submission (5), duplicate check (1), decision-quality signals (5: `STALE_DATA_ACCEPTED`, `FALLBACK_USED_BUT_SUCCESSFUL`).
 - **Span threading**: All `resolve_*()` methods accept `lf_parent_span` so ERP resolution spans nest under the caller's trace (posting mapping, reconciliation PO lookup, agent tool calls).
 - **Error categorisation**: `sanitize_erp_error()` maps raw exceptions to safe categories for observability without leaking stack traces.
+- **3-stage span hierarchy**: `erp_cache_lookup` → `erp_live_lookup` → `erp_db_fallback`.
 
-> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11
+> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) · [OBSERVABILITY_UPGRADE_SUMMARY.md](OBSERVABILITY_UPGRADE_SUMMARY.md)
 
 ---
 
 ## 25. Procurement Intelligence Platform
 
-> Full reference: [PROCUREMENT.md](PROCUREMENT.md)
+> Full reference: [PROCUREMENT_COMBINED.md](PROCUREMENT_COMBINED.md)
 
-`apps/procurement/` provides three intelligence flows before a purchase request reaches the PO stage.
+`apps/procurement/` is a domain-agnostic procurement intelligence module. All models are tenant-scoped via `CompanyProfile` FK. It operates **before** a purchase request reaches the AP/PO stage.
 
 ### 25.1 Intelligence Flows
 
-| Flow | Entry | Output |
+| Flow | Description |
+|---|---|
+| **Recommendation** | Given attributes (domain, specs, budget), apply deterministic rules then optionally invoke AI to recommend the best product/solution |
+| **Should-Cost Benchmarking** | Given supplier quotations with line items, resolve market benchmark prices, compute variance, classify risk (LOW/MEDIUM/HIGH/CRITICAL), and flag outliers |
+| **Validation** | Run 6 deterministic validation dimensions (attribute completeness, document completeness, scope coverage, ambiguity check, commercial completeness, compliance readiness) with optional AI augmentation |
+
+### 25.2 Request Lifecycle
+
+```
+DRAFT → READY → PROCESSING → COMPLETED | REVIEW_REQUIRED | FAILED
+```
+
+Each `ProcurementRequest` can have multiple `AnalysisRun` records (one per trigger). Run types: `RECOMMENDATION`, `BENCHMARK`, `VALIDATION`.
+
+### 25.3 Key Models (15 DB tables)
+
+| Model | Table | Purpose |
 |---|---|---|
-| **Recommendation** | Product specification + budget | Ranked vendor shortlist with compliance score |
-| **Benchmark** | Line item + quantity | Should-cost estimate vs market data |
-| **Validation** | Draft PO or quotation | 6-dimension compliance score (policy, budget, vendor, quality, ESG, risk) |
+| `ProcurementRequest` | `procurement_request` | Top-level business entity |
+| `ProcurementRequestAttribute` | `procurement_request_attribute` | Dynamic key-value requirements (domain-agnostic) |
+| `SupplierQuotation` | `procurement_supplier_quotation` | Vendor quote linked to DocumentUpload |
+| `QuotationLineItem` | `procurement_quotation_line_item` | Priced line items per quotation |
+| `AnalysisRun` | `procurement_analysis_run` | One execution per trigger (re-runnable) |
+| `RecommendationResult` | `procurement_recommendation_result` | AI/rules recommendation output (1:1 with run) |
+| `BenchmarkResult` | `procurement_benchmark_result` | Header-level benchmark per quotation |
+| `BenchmarkResultLine` | `procurement_benchmark_result_line` | Per-line variance vs market rate |
+| `ComplianceResult` | `procurement_compliance_result` | Policy rule checks (1:1 with run) |
+| `ValidationRuleSet` | `procurement_validation_rule_set` | Domain/schema-scoped rule definitions |
+| `ValidationRule` | `procurement_validation_rule` | Individual rules within a rule set |
+| `ValidationResult` | `procurement_validation_result` | Validation output with readiness flags (1:1 with run) |
+| `ValidationResultItem` | `procurement_validation_result_item` | Per-finding detail |
+| `MarketIntelligenceSuggestion` | `procurement_market_intelligence_suggestion` | AI-generated product suggestions (Perplexity/OpenAI) |
+| `ExternalSourceRegistry` | `procurement_external_source_registry` | Approved external domains per HVAC system type |
 
-### 25.2 Agents
+### 25.4 Agents
 
-| Agent | Class | Purpose |
+| Agent | File | Purpose |
 |---|---|---|
-| RecommendationAgent | `apps/procurement/agents/` | Vendor/product recommendation via LLM + catalog search |
-| BenchmarkAgent | `apps/procurement/agents/` | Should-cost analysis with market reference data |
-| ComplianceAgent | `apps/procurement/agents/` | Multi-dimension PO validation |
-| QuotationExtractionAgent | `apps/procurement/agents/quotation_extraction_agent.py` | LLM extraction of structured data from quotation PDFs (60K char OCR limit, `max_tokens=8192`) |
+| `HVACRecommendationAgent` | `hvac_recommendation_agent.py` | PRIMARY — HVAC system selection (rules-first, AI fallback) |
+| `ReasonSummaryAgent` | `reason_summary_agent.py` | Transforms RecommendationResult into rich UI display |
+| `RFQGeneratorAgent` | `RFQ_Generator_Agent.py` | Generates Excel + PDF RFQ from approved recommendation |
+| `AzureDIExtractorAgent` | `Azure_Document_Intelligence_Extractor_Agent.py` | ReAct-style document OCR (10 formats supported) |
+| `PerplexityMarketResearchAnalystAgent` | `Perplexity_Market_Research_Analyst_Agent.py` | Live web product sourcing via Perplexity sonar-pro |
+| `FallbackWebscraperAgent` | `Fallback_Webscraper_Agent.py` | Playwright + Azure OAI fallback when Perplexity unavailable |
+| `RequestExtractionAgent` | `request_extraction_agent.py` | OCR text → structured ProcurementRequest dict |
+| `ComplianceAgent` | `compliance_agent.py` | LLM compliance check stub (extension point) |
+| `ValidationAgentService` | `services/validation/validation_agent.py` | Ambiguity resolution (triggered when ≥3 ambiguous findings) |
 
-### 25.3 Quotation Extraction Pipeline
+### 25.5 Phase 1 Agentic Bridge
 
-1. OCR via Azure Document Intelligence (60K char truncation)
-2. `QuotationDocumentPrefillService` calls `QuotationExtractionAgent.extract()`
-3. `AttributeMappingService` normalizes field synonyms (`_QUOTATION_FIELD_SYNONYMS`)
-4. Extracted data stored as JSON in `prefill_payload_json` -- NOT persisted to DB
-5. User review + confirmation via `PrefillReviewService.confirm_quotation_prefill()` triggers DB write
+All AI entry points route through `ProcurementAgentOrchestrator` (added April 2026):
+- Creates `ProcurementAgentExecutionRecord` DB row per AI invocation
+- Emits `PROCUREMENT_AGENT_RUN_STARTED/COMPLETED/FAILED` audit events
+- Opens Langfuse span attached to existing trace context
+- Records RBAC snapshot and confidence score per call
 
-### 25.4 Key Models
+### 25.6 Market Intelligence
 
-`ProcurementRequest`, `VendorQuotation`, `QuotationLineItem`, `RecommendationRun`, `BenchmarkRun`, `ValidationRun`, `ComplianceScore`, `ProcurementPolicy`, `MarketReferenceData`, `ProcurementApproval`, `SupplierPerformance`, `ProcurementAuditEvent`, `CategoryBudget`
+`MarketIntelligenceService.generate_auto()` auto-routes between:
+1. **Perplexity sonar-pro** (primary) — live web search with `ExternalSourceRegistry` domain filter
+2. **FallbackWebscraperAgent** (fallback) — Playwright scraping + Azure OAI parsing
 
-### 25.5 API Base Path
+Results stored in `MarketIntelligenceSuggestion` with citation URL resolution via integer indices into Perplexity's `citations[]` array.
 
-`/api/v1/procurement/` -- request CRUD, quotation management, recommendation/benchmark/validation runs, category budgets, supplier performance, market reference data
+### 25.7 Quotation Prefill Pipeline
+
+1. PDF uploaded → Azure Document Intelligence OCR (up to 60K chars)
+2. `QuotationDocumentPrefillService._extract_quotation_data()` → GPT-4o extracts header + line items
+3. `AttributeMappingService.map_quotation_fields()` → synonym normalisation
+4. Stored as `prefill_payload_json` on `SupplierQuotation` (NOT persisted to `QuotationLineItem` yet)
+5. User reviews → `PrefillReviewService.confirm_quotation_prefill()` → `QuotationLineItem` rows created atomically
+
+### 25.8 RBAC Roles & Permissions
+
+Three procurement roles: `PROCUREMENT_MANAGER` (rank 25), `CATEGORY_MANAGER` (rank 35), `PROCUREMENT_BUYER` (rank 55).  
+Eight permissions under module `procurement`: `view`, `create`, `edit`, `delete`, `run_analysis`, `manage_quotations`, `view_results`, `validate`.
+
+### 25.9 API & URL Paths
+
+| Layer | Base Path |
+|---|---|
+| DRF API | `/api/v1/procurement/` |
+| Template views | `/procurement/` |
+| Market intelligence | `/procurement/{id}/market-intelligence/` |
+| External suggestions | `/procurement/{id}/external-suggestions/` |
 
 ---
 
 ## 26. Evaluation & Learning Framework
 
-> Full reference: [EVAL_LEARNING.md](EVAL_LEARNING.md)
+> Full reference: [AGENT_ARCHITECTURE_COMBINED.md](AGENT_ARCHITECTURE_COMBINED.md) — Appendix: Evaluation & Learning Architecture
 
 A domain-agnostic quality-tracking and controlled-learning layer that sits alongside production pipelines without modifying them.
 
@@ -2721,3 +2780,122 @@ python manage.py run_learning_engine [--module extraction] [--days 14] [--dry-ru
 | Reconciliation (runner + review) | `ReconciliationEvalAdapter` | Implemented |
 | Posting | -- | Not yet implemented |
 | Agent orchestrator | -- | Not yet implemented |
+
+---
+
+## 27. Observability & Langfuse Integration
+
+> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) · [OBSERVABILITY_UPGRADE_SUMMARY.md](OBSERVABILITY_UPGRADE_SUMMARY.md)
+
+Langfuse is the LLM observability backend for all AI-driven pipelines. The integration is **fail-silent** — if Langfuse is unreachable the application continues without impact.
+
+### 27.1 What Is Traced
+
+Every significant pipeline operation emits a Langfuse trace with child spans and numeric quality scores:
+
+| Pipeline | Root Trace Constant | Key Scores |
+|---|---|---|
+| Extraction | `TRACE_EXTRACTION_PIPELINE` | `EXTRACTION_SUCCESS`, `EXTRACTION_CONFIDENCE`, `EXTRACTION_APPROVAL_DECISION` (20 total) |
+| Reconciliation | `TRACE_RECONCILIATION_PIPELINE` | `RECON_FINAL_SUCCESS`, `RECON_PO_FOUND`, `RECON_HEADER_MATCH_RATIO` (23 total) |
+| Agent pipeline | `TRACE_AGENT_PIPELINE` | `AGENT_CONFIDENCE`, `AGENT_PIPELINE_FINAL_CONFIDENCE`, `TOOL_CALL_SUCCESS` (11 total) |
+| Case processing | `TRACE_CASE_PIPELINE` | `CASE_CLOSED`, `CASE_MATCH_STATUS`, `CASE_NON_PO_RISK_SCORE` (15 total) |
+| Review workflow | `TRACE_REVIEW_WORKFLOW` | `REVIEW_APPROVED`, `REVIEW_DECISION`, `REVIEW_FIELDS_CORRECTED_COUNT` (8 total) |
+| Posting pipeline | `TRACE_POSTING_PIPELINE` | `POSTING_FINAL_CONFIDENCE`, `POSTING_VENDOR_MAPPING_SUCCESS` (16 total) |
+| ERP submission | `TRACE_ERP_SUBMISSION_PIPELINE` | `ERP_RESOLUTION_SUCCESS`, `ERP_CACHE_HIT`, `ERP_SUBMISSION_SUCCESS` (24 total) |
+| Copilot | `TRACE_COPILOT_SESSION` | `COPILOT_SESSION_LENGTH` |
+
+**Total score constants**: ~145, all defined in `apps/core/evaluation_constants.py`.
+
+### 27.2 Score Name Standardisation (April 2026)
+
+All raw string score names were replaced with typed constants. Files updated:
+
+`apps/erp_integration/services/langfuse_helpers.py` · `apps/reconciliation/tasks.py` · `apps/reconciliation/services/runner_service.py` · `apps/agents/services/orchestrator.py` · `apps/agents/services/base_agent.py` · `apps/agents/tasks.py` · `apps/agents/services/guardrails_service.py` · `apps/cases/tasks.py` · `apps/cases/orchestrators/case_orchestrator.py` · `apps/extraction/tasks.py` · `apps/extraction/bulk_tasks.py` · `apps/extraction/services/approval_service.py` · `apps/posting_core/services/posting_pipeline.py` · `apps/cases/services/review_workflow_service.py` · `apps/copilot/services/copilot_service.py`
+
+### 27.3 Cross-Flow Correlation
+
+`apps/core/observability_helpers.py` provides:
+
+- **`derive_session_id()`** — standardised session ID from case/invoice/upload context (priority: `case-{number}` → `invoice-{id}` → `upload-{id}`)
+- **`build_observability_context()`** — 18-field metadata dict linking `invoice_id`, `case_id`, `reconciliation_result_id`, `posting_run_id`, `extraction_run_id`, `upload_id`, `actor_user_id`, `po_number`, `vendor_id`, etc.
+- **`latency_ok(duration_ms, threshold)`** — boolean latency check against centralized thresholds
+
+### 27.4 Latency Thresholds
+
+| Constant | Value | Use Case |
+|---|---|---|
+| `LATENCY_THRESHOLD_OCR_MS` | 30,000 ms | Azure Document Intelligence OCR |
+| `LATENCY_THRESHOLD_LLM_MS` | 20,000 ms | LLM generation call |
+| `LATENCY_THRESHOLD_ERP_MS` | 5,000 ms | ERP API call |
+| `LATENCY_THRESHOLD_DB_MS` | 2,000 ms | Database query / fallback |
+| `LATENCY_THRESHOLD_RECON_STAGE_MS` | 5,000 ms | Reconciliation sub-stage |
+| `LATENCY_THRESHOLD_POSTING_STAGE_MS` | 5,000 ms | Posting pipeline stage |
+| `LATENCY_THRESHOLD_TOOL_CALL_MS` | 10,000 ms | Agent tool call |
+
+### 27.5 DB Trace ID Fields
+
+`langfuse_trace_id` (VARCHAR 64, indexed) added to three models to enable direct Langfuse deep-links from Django admin / API:
+
+| Model | Migration |
+|---|---|
+| `ReconciliationRun` | `reconciliation/0006_add_langfuse_trace_id` |
+| `ExtractionResult` | `extraction/0011_add_langfuse_trace_id` |
+| `PostingRun` | `posting_core/0004_add_langfuse_trace_id` |
+
+### 27.6 Prompt Management
+
+Prompts are stored in Langfuse with a 60-second cache TTL. `PromptRegistry` falls back to hardcoded defaults if Langfuse is unreachable. See §18 for the full prompt registry reference.
+
+### 27.7 Configuration
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com   # or self-hosted URL
+```
+
+### 27.8 Known Gaps (Deferred)
+
+| Gap | Notes |
+|---|---|
+| `APCase.langfuse_trace_id` | Child `APCaseStage` has `trace_id`; parent linkage is lower priority |
+| Posting observation-level scores | Constants exist but pipeline stages don't emit them yet |
+| `score_latency()` adoption | Helper exists but not yet called from pipeline stages |
+| Decision-quality signals | `DECISION_CONFIDENCE_ALIGNMENT` defined but requires outcome comparison logic |
+
+---
+
+## 28. Multi-Tenant Architecture
+
+> Full reference: [MULTI_TENANT.md](MULTI_TENANT.md)
+
+The platform uses **shared-database row-level tenant isolation**. Every business entity carries a `tenant` FK to `CompanyProfile`.
+
+### 28.1 Tenant Model
+
+`CompanyProfile` is the tenant entity. `User.company` is the tenant FK for all users. Platform admins (`is_platform_admin=True`) have cross-tenant access.
+
+### 28.2 Enforcement Points
+
+| Layer | Mechanism |
+|---|---|
+| **Middleware** | `TenantMiddleware` sets `request.tenant` from `request.user.company` on every request |
+| **QuerySets** | `TenantQuerysetMixin` on all model managers — `get_queryset()` filters by `tenant=request.tenant` |
+| **Services** | All service `create_*` methods receive and persist `tenant` |
+| **Agent tools** | `BaseTool._scoped(queryset)` applies tenant filter before any tool query |
+| **Celery tasks** | `tenant_id` passed as explicit task argument; resolved to `CompanyProfile` at task start |
+| **API ViewSets** | `get_queryset()` calls `TenantQuerysetMixin.for_tenant(request.tenant)` |
+
+### 28.3 Platform Admin Access
+
+Users with `is_platform_admin=True` bypass tenant filtering and can access all tenants' data. This is enforced in `TenantMiddleware` and `TenantQuerysetMixin`.
+
+### 28.4 Tenant Scoping by App
+
+All 15 `procurement_*` tables, `posting_*` tables, `reconciliation_*` tables, `agents_*` tables, `cases_*` tables, and `erp_integration_*` tables carry a `tenant` FK. `ExternalSourceRegistry` and `ValidationRuleSet` are global (not tenant-scoped) as they contain shared configuration.
+
+### 28.5 Key Setting
+
+| Setting | Description |
+|---|---|
+| `PLATFORM_ADMIN_TENANT_ID` | Default tenant assigned to platform admin users for data operations |

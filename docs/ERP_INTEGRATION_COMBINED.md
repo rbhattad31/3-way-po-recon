@@ -1085,3 +1085,812 @@ raw error messages to safe categories -- raw stack traces never reach Langfuse.
 | Agent architecture and tools | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md) |
 | Platform overview and models | [PROJECT.md](PROJECT.md) |
 | Langfuse observability integration | [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) |
+
+---
+
+## Appendix: ERP Shared Resolution Architecture
+
+> Describes the unified ERP data resolution model shared by the reconciliation engine and the posting pipeline.
+
+# ERP Shared Resolution Architecture
+
+## Overview
+
+Both the **reconciliation engine** and the **posting pipeline** previously
+had diverging paths to ERP data. This document describes the unified
+resolution model implemented to eliminate that divergence.
+
+---
+
+## Old Architecture (what was replaced)
+
+| Consumer | How it got data | Problem |
+|---|---|---|
+| `POLookupService` | Direct `PurchaseOrder.objects.filter()` | Bypassed ERP layer entirely |
+| `GRNLookupService` | Direct `GoodsReceiptNote.objects.filter()` | No provenance, no freshness check |
+| `PostingMappingEngine._load_po_refs()` | Direct `ERPPOReference.objects.filter()` | Used reference snapshot instead of canonical mirror |
+| `PostingMappingEngine._try_vendor_via_resolver()` | Instantiated `VendorResolver` directly | Bypassed `ERPResolutionService` facade |
+| `POLookupTool._resolve_via_erp()` | Instantiated `POResolver` directly | Same |
+| `GRNLookupTool._resolve_via_erp()` | Instantiated `GRNResolver` directly | Same |
+
+Result: no shared freshness semantics, no audit provenance for where data
+came from, and no standard "stale data" warning path.
+
+---
+
+## New Architecture
+
+### Single Entry Point: `ERPResolutionService`
+
+`apps/erp_integration/services/resolution_service.py`
+
+All ERP data access -- whether from reconciliation, posting, or agent tools
+-- goes through `ERPResolutionService`. It wraps the existing resolver chain
+(cache => MIRROR_DB => API => DB_FALLBACK) and applies freshness checks
+after every DB-based resolution.
+
+```
+Reconciliation          Posting Pipeline        Agent Tools
+      |                        |                      |
+      v                        v                      v
+ POLookupService        PostingMappingEngine    POLookupTool
+ GRNLookupService            |                 GRNLookupTool
+      |                      |                      |
+      +----------+-----------+----------------------+
+                 |
+                 v
+        ERPResolutionService
+                 |
+       +---------+---------+
+       |                   |
+   POResolver          GRNResolver
+   VendorResolver      ItemResolver
+   TaxResolver         CostCenterResolver
+   DuplicateInvoiceResolver
+       |
+   +---+---+
+   |   |   |
+CACHE API  DB Fallback
+           |
+     +-----+-----+
+     |           |
+  MIRROR_DB  DB_FALLBACK
+(documents.*) (posting_core.ERP*Reference)
+```
+
+### Source Type Priority (highest to lowest freshness guarantee)
+
+| ERPSourceType | Source | Used for |
+|---|---|---|
+| `API` | Live ERP system call | When connector available and capable |
+| `CACHE` | TTL DB cache (`ERPReferenceCacheRecord`) | Repeated lookups within cache TTL |
+| `MIRROR_DB` | `documents.PurchaseOrder`, `documents.GoodsReceiptNote` | Transactional PO/GRN data (default) |
+| `DB_FALLBACK` | `posting_core.ERP*Reference` (Excel/CSV imports) | Master data (vendor/item/tax/cost center) and PO snapshot fallback |
+| `MANUAL_OVERRIDE` | Human-corrected value | Field corrections from review queue |
+| `NONE` | Not resolved | Resolution failed |
+
+---
+
+## Data Domain Freshness
+
+The service applies different freshness thresholds based on data domain:
+
+| Domain | Config Setting | Default | Data types |
+|---|---|---|---|
+| `TRANSACTIONAL` | `ERP_TRANSACTIONAL_FRESHNESS_HOURS` | 24 h | PO, GRN |
+| `MASTER` | `ERP_MASTER_FRESHNESS_HOURS` | 168 h (7 d) | Vendor, Item, Tax, Cost Center |
+
+Results returned as `is_stale=True` when `synced_at` exceeds the threshold.
+Staleness is a **warning, not a hard failure** -- stale results are still
+returned so matching can proceed.
+
+Live refresh on stale data is controlled by `ERP_ENABLE_LIVE_REFRESH_ON_STALE`
+(default `false` -- async refresh must be scheduled separately).
+
+---
+
+## Provenance Tracking
+
+Every `ERPResolutionResult` now carries full provenance metadata:
+
+```python
+@dataclass
+class ERPResolutionResult:
+    resolved: bool
+    value: Optional[Dict]
+    source_type: str          # ERPSourceType value
+    fallback_used: bool
+    confidence: float
+    source_as_of: Optional[datetime]   # when upstream ERP data was valid
+    synced_at: Optional[datetime]      # when record was written to our DB
+    is_stale: bool
+    stale_reason: str
+    warnings: List[str]
+    source_keys: Dict[str, str]        # raw ERP identifiers
+    connector_name: str
+    reason: str
+
+    def to_provenance_dict(self) -> Dict:
+        """Serialise for storage in JSON fields."""
+```
+
+### Where provenance is persisted
+
+| Model field | Content |
+|---|---|
+| `ReconciliationResult.po_erp_source_type` | `ERPSourceType` value for the PO used |
+| `ReconciliationResult.grn_erp_source_type` | `ERPSourceType` value for the GRN(s) used |
+| `ReconciliationResult.data_is_stale` | `True` if PO or GRN was beyond freshness threshold |
+| `ReconciliationResult.erp_source_metadata_json` | Full `to_provenance_dict()` for both PO and GRN |
+| `PostingRun.erp_source_metadata_json` | Per-field provenance (vendor, items, tax, cost center) |
+
+---
+
+## Key File Changes
+
+### `apps/erp_integration/enums.py`
+- Added `MIRROR_DB` and `MANUAL_OVERRIDE` to `ERPSourceType`
+- Added new `ERPDataDomain` enum (`TRANSACTIONAL`, `MASTER`)
+
+### `apps/erp_integration/services/connectors/base.py`
+- Extended `ERPResolutionResult` with 6 new provenance fields
+- Added `to_provenance_dict()` method
+
+### `apps/erp_integration/services/resolution_service.py` (new)
+- Centralised ERP facade used by all consumers
+- Methods: `resolve_po`, `resolve_grn`, `resolve_vendor`, `resolve_item`,
+  `resolve_tax_code`, `resolve_cost_center`, `check_invoice_duplicate`,
+  `refresh_po`, `refresh_grn`
+- `_apply_freshness()` static method checks `synced_at` vs domain threshold
+
+### `apps/erp_integration/services/db_fallback/po_fallback.py`
+- Tier 1 now uses `ERPSourceType.MIRROR_DB` (was `DB_FALLBACK`)
+- Populates `synced_at` from `po.updated_at`
+- Includes `po_id` in value dict for ORM hydration
+- Tier 2 (ERPPOReference) still uses `DB_FALLBACK`; populates `source_as_of`
+  from import batch metadata
+
+### `apps/erp_integration/services/db_fallback/grn_fallback.py`
+- Uses `ERPSourceType.MIRROR_DB`
+- Includes `grn_ids: List[int]` in value dict so callers can hydrate ORM objects
+- Populates `synced_at` from latest `grn.updated_at`
+
+### `apps/reconciliation/services/po_lookup_service.py`
+- Rewritten as thin wrapper over `ERPResolutionService.resolve_po()`
+- `POLookupResult` carries `erp_source_type`, `erp_confidence`, `is_stale`,
+  `warnings`, `erp_provenance`
+- Vendor+amount discovery still exists as a pure-ORM fallback when invoice
+  carries no PO number reference
+
+### `apps/reconciliation/services/grn_lookup_service.py`
+- Rewritten to call `ERPResolutionService.resolve_grn()` then hydrate
+  `GoodsReceiptNote` ORM objects from `result.value["grn_ids"]`
+- `GRNSummary` now carries ERP provenance fields
+
+### `apps/reconciliation/services/grn_match_service.py`
+- `GRNMatchResult` has new fields: `erp_source_type`, `erp_provenance`, `is_stale`
+
+### `apps/reconciliation/services/three_way_match_service.py`
+- Copies GRN provenance from `GRNSummary` into `GRNMatchResult` so it flows
+  to `ReconciliationResultService`
+
+### `apps/reconciliation/models.py`
+- `ReconciliationResult` has 4 new fields: `po_erp_source_type`,
+  `grn_erp_source_type`, `data_is_stale`, `erp_source_metadata_json`
+- Migration: `0005_erp_source_provenance`
+
+### `apps/reconciliation/services/result_service.py`
+- `save()` now persists ERP provenance from `po_result` and `grn_result`
+  into the new `ReconciliationResult` fields
+
+### `apps/posting_core/services/posting_mapping_engine.py`
+- Added `_POLineData` dataclass (lightweight PO line data)
+- `_load_po_refs()` now tries `ERPResolutionService.resolve_po()` first
+  and builds `_POLineData` from the resolved line items; falls back to
+  direct `ERPPOReference` query if resolution fails
+- `_match_po_line()` works with `List[_POLineData]` (not `ERPPOReference`)
+- `_try_vendor_via_resolver()`, `_try_item_via_resolver()`,
+  `_try_tax_via_resolver()`, `_try_cost_center_via_resolver()` all call
+  `ERPResolutionService` instead of instantiating individual resolvers
+- `erp_source_metadata["vendor"]` now uses `result.to_provenance_dict()`
+
+### `apps/tools/registry/tools.py`
+- `POLookupTool._resolve_via_erp()` uses `ERPResolutionService.with_default_connector()`
+- `GRNLookupTool._resolve_via_erp()` uses `ERPResolutionService.with_default_connector()`
+- Tool results now include `_erp_is_stale` field
+
+---
+
+## New Settings
+
+```python
+# config/settings.py
+
+# Freshness thresholds (hours)
+ERP_TRANSACTIONAL_FRESHNESS_HOURS = int(os.getenv("ERP_TRANSACTIONAL_FRESHNESS_HOURS", "24"))
+ERP_MASTER_FRESHNESS_HOURS = int(os.getenv("ERP_MASTER_FRESHNESS_HOURS", "168"))
+
+# Live refresh behaviour
+ERP_ENABLE_LIVE_REFRESH_ON_MISS = os.getenv("ERP_ENABLE_LIVE_REFRESH_ON_MISS", "false").lower() == "true"
+ERP_ENABLE_LIVE_REFRESH_ON_STALE = os.getenv("ERP_ENABLE_LIVE_REFRESH_ON_STALE", "false").lower() == "true"
+
+# Source priority (mirror = documents.* tables; non-mirror = try API first)
+ERP_RECON_USE_MIRROR_AS_PRIMARY = os.getenv("ERP_RECON_USE_MIRROR_AS_PRIMARY", "true").lower() == "true"
+ERP_POSTING_USE_MIRROR_AS_PRIMARY = os.getenv("ERP_POSTING_USE_MIRROR_AS_PRIMARY", "true").lower() == "true"
+```
+
+---
+
+## Usage Patterns
+
+### Reconciliation
+
+```python
+# In runner_service.py (via POLookupService)
+from apps.reconciliation.services.po_lookup_service import POLookupService
+
+svc = POLookupService()                          # binds default connector
+po_result = svc.lookup(invoice)
+# po_result.erp_source_type, po_result.is_stale, po_result.erp_provenance
+```
+
+### Posting
+
+```python
+# In PostingMappingEngine.__init__
+from apps.erp_integration.services.resolution_service import ERPResolutionService
+
+svc = ERPResolutionService(self._connector)
+result = svc.resolve_vendor(vendor_code="V001", vendor_name="Acme Ltd")
+# result.to_provenance_dict() stored in erp_source_metadata_json
+```
+
+### Direct resolution (agent tools, API endpoints)
+
+```python
+from apps.erp_integration.services.resolution_service import ERPResolutionService
+
+svc = ERPResolutionService.with_default_connector()
+po_result = svc.resolve_po("PO-12345")
+grn_result = svc.resolve_grn(po_number="PO-12345")
+```
+
+---
+
+## What is NOT changed
+
+- Reconciliation matching logic (`ThreeWayMatchService`, `TwoWayMatchService`,
+  `ToleranceEngine`) -- unchanged
+- Posting pipeline stages (eligibility, validation, confidence, review routing,
+  payload build, finalization) -- unchanged
+- ERP resolver internals (`POResolver`, `GRNResolver`, etc.) -- unchanged
+- ERP DB fallback adapters (except `po_fallback.py` and `grn_fallback.py`
+  source type labelling and `grn_ids` addition) -- unchanged
+- Posting import pipeline (`ExcelImportOrchestrator`) -- unchanged
+- Everything in `apps/agents/` (except `tools.py`) -- unchanged
+
+---
+
+## Next Steps
+
+1. **Real-time staleness alerts** -- Surface `data_is_stale=True` in the
+   reconciliation case console and posting workbench UIs as a warning banner.
+2. **Async live refresh** -- Implement a Celery task triggered when
+   `ERP_ENABLE_LIVE_REFRESH_ON_STALE=True` and a stale record is encountered.
+3. **Provenance API** -- Expose `/api/v1/reconciliation/{id}/erp-provenance/`
+   to allow AP teams to inspect the data lineage for any match decision.
+4. **`data_is_stale` filter** -- Add to reconciliation result list view and API
+   filter backends so ops can quickly find results with potentially outdated data.
+
+---
+
+## Langfuse Observability
+
+All `resolve_*()` methods on `ERPResolutionService` accept an optional
+`lf_parent_span` kwarg. When provided, the resolution chain creates nested
+Langfuse child spans (`erp_resolution` -> `erp_cache_lookup` / `erp_live_lookup` /
+`erp_db_fallback`) with evaluation-ready observation scores.
+
+Helpers live in `apps/erp_integration/services/langfuse_helpers.py` -- see
+[LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11 for the full
+span hierarchy, scores reference, metadata sanitisation rules, and caller
+threading patterns.
+
+---
+
+## Appendix: ERP Imports & Export Mapping — Functional Document
+
+> Functional behavior for ERP connectivity, direct and batch reference imports, and purchase-invoice export mapping. v1.1 — 2026-04-24.
+
+# ERP Integration + ERP Imports + Export Mapping Functional Document
+
+Version: 1.1
+Last Updated: 2026-04-24
+Scope: Functional behavior for ERP connectivity, direct and batch reference imports, and purchase-invoice export mapping.
+
+---
+
+## 1. Purpose
+
+This document defines how ERP data is connected, imported, and consumed for export mapping in the AP platform.
+
+It is intended for:
+- Product owners
+- AP operations
+- Implementation engineers
+- QA and UAT teams
+- Support and incident response teams
+
+It includes:
+- End-to-end functional flows
+- Data ownership and precedence rules
+- Failure handling and fallback behavior
+- Configuration controls
+- Runbook steps for safe operations
+- Acceptance criteria for release and UAT
+
+It excludes:
+- Procurement-specific flows
+- Frontend visual design details
+- ERP connector implementation internals beyond functional behavior
+
+---
+
+## 2. Functional Scope
+
+### 2.1 In scope
+
+1. ERP integration layer as shared platform capability.
+2. ERP reference data imports:
+- Vendor
+- Item
+- Tax code
+- Cost center
+- Open PO
+3. Direct ERP imports through configured connectors.
+4. ERP import flush operations (global and tenant-specific).
+5. Export field mapping for purchase invoice workbook (single and bulk export).
+6. Deterministic-first mapping with optional AI fallback for unresolved fields only.
+7. First-class platform system-agent registration for export mapping governance.
+
+### 2.2 Out of scope
+
+1. Final ERP posting submission lifecycle details (covered by posting docs).
+2. Full reconciliation business rules (covered by reconciliation docs).
+3. Non-invoice export templates.
+
+---
+
+## 3. Business Objectives
+
+1. Ensure export templates are populated from ERP-authoritative data whenever available.
+2. Reduce blank fields in export outputs without sacrificing determinism.
+3. Keep mapping auditable, repeatable, and safe for finance workflows.
+4. Allow phased AI usage only where deterministic mapping cannot resolve fields.
+5. Support tenant-safe operations across import, lookup, and export.
+
+---
+
+## 4. High-Level Architecture
+
+Primary modules:
+
+1. ERP Integration Layer
+- Path: apps/erp_integration/
+- Responsibility: connectors, resolution chain, caching, fallback, audit.
+
+2. Reference Import Pipeline
+- Path: apps/posting_core/services/direct_erp_importer.py
+- Responsibility: source extraction and normalization into ERP reference tables.
+
+3. Export Resolution and Mapping
+- Paths:
+  - apps/extraction/template_views.py
+  - apps/extraction/services/export_mapping_agent.py
+- Responsibility: map invoice export fields from imported ERP references.
+
+4. Reference Storage
+- Path: apps/posting_core/models.py
+- Responsibility: ERP reference snapshots and import batch records.
+
+---
+
+## 5. Primary Users and Roles
+
+1. AP Processor
+- Uses extraction workbench exports.
+- Relies on mapped fields in output workbook.
+
+2. Finance Manager
+- Reviews exported accounting fields for posting workflows.
+
+3. Admin / Platform Ops
+- Configures ERP connectors.
+- Runs imports and flush commands.
+- Handles outage recovery and re-import cycles.
+
+4. Auditor
+- Verifies repeatability and source provenance in operational process.
+
+---
+
+## 6. End-to-End Functional Flow
+
+### 6.1 ERP connection and data availability
+
+1. Admin configures an active default ERP connection.
+2. Connector validates connectivity.
+3. Import process reads ERP data and writes normalized reference snapshots.
+4. Export routines consume latest completed snapshots per tenant scope.
+
+### 6.2 Reference import flow
+
+1. Import is triggered for one batch type.
+2. System validates batch type and connector.
+3. Connectivity is tested with transient retry behavior.
+4. Rows are queried from ERP and normalized.
+5. Validation and importer pipeline persists rows in reference tables.
+6. Import batch is marked completed with row statistics.
+
+### 6.3 Export mapping flow
+
+1. User triggers single or bulk purchase invoice export.
+2. Export initializes reference resolver using latest completed batches.
+3. Mapping agent resolves header and line fields using deterministic rules first.
+4. Optional AI fallback runs only for unresolved fields when enabled.
+5. Workbook sheets are generated with mapped values and defaults.
+6. File is returned as xlsx response.
+
+---
+
+## 7. ERP Imports Functional Details
+
+## 7.1 Import types
+
+Supported batch types:
+1. VENDOR
+2. ITEM
+3. TAX
+4. COST_CENTER
+5. OPEN_PO
+
+## 7.2 Source and target behavior
+
+1. Source rows are connector-specific raw payloads.
+2. Import layer normalizes into platform schema.
+3. Original source details are retained in raw_json for downstream mapping.
+4. Latest completed batch per type is used by export resolver.
+
+## 7.3 Connectivity resilience
+
+1. Import orchestration retries transient connectivity errors.
+2. SQL transient unavailability errors (for example 40613) are treated as retryable.
+3. If retries fail, import is marked failed and no partial silent success is reported as complete.
+
+## 7.4 Tenant behavior
+
+1. Import batches are tenant-scoped when tenant is provided.
+2. Export resolver reads latest completed batch within tenant scope.
+3. Tenant-specific flush can remove imports for one tenant without affecting others.
+
+---
+
+## 8. ERP Import Flush Functional Behavior
+
+Command:
+- apps/posting_core/management/commands/flush_erp_imports.py
+
+Modes:
+1. Global flush (all tenants)
+2. Tenant flush (--tenant-id)
+
+Deleted artifacts:
+1. ERPReferenceImportBatch (and cascaded reference rows)
+2. VendorAliasMapping linked to imported vendor references
+3. ItemAliasMapping linked to imported item references
+4. Related AuditEvent rows for ERPReferenceImportBatch entities
+
+Safety controls:
+1. Interactive confirmation by default
+2. Non-interactive mode with --confirm
+
+Operational impact:
+1. Export mapping quality drops immediately after flush until re-import completes.
+2. Any resolver that depends on reference snapshots can return blanks/defaults until repopulation.
+
+---
+
+## 9. Export Mapping Functional Design
+
+## 9.1 Export surfaces
+
+1. Single invoice workbook export
+- Function: extraction_export_purchase_invoice_excel
+
+2. Bulk workbook export
+- Function: extraction_export_purchase_invoice_excel_bulk
+
+Both use same resolver and mapping agent behavior for consistency.
+
+## 9.2 Deterministic reference resolver
+
+Resolver class:
+- _ExportReferenceResolver in apps/extraction/template_views.py
+
+Responsibilities:
+1. Load latest completed ERP snapshot batches per type.
+2. Build lookup indexes for vendor, item, PO, cost center references.
+3. Resolve fields using deterministic priority and canonical alias matching.
+4. Normalize raw_json key variants (case, spacing, underscore variations).
+
+## 9.3 Mapping agent (new)
+
+Class:
+- ExportFieldMappingAgent
+- Path: apps/extraction/services/export_mapping_agent.py
+
+Behavior:
+1. Always call deterministic resolver first.
+2. Identify unresolved fields only.
+3. If AI fallback is disabled, return deterministic result as final.
+4. If AI fallback is enabled, call LLM for unresolved fields only.
+5. Apply AI suggestions only when confidence threshold is met.
+6. Never override already-resolved deterministic fields.
+
+## 9.3.1 First-class platform agent type
+
+The export mapping capability is now a first-class system agent type in the central platform agent stack.
+
+Agent type:
+1. SYSTEM_EXPORT_FIELD_MAPPING
+
+Core wiring:
+1. Agent enum registration in core enum catalog.
+2. Central agent registry mapping to deterministic system agent class.
+3. Guardrail permission mapping to agents.run_system_export_field_mapping.
+4. Governance screen classification as deterministic (not LLM coverage gap).
+5. Eval adapter mapping for agent-run telemetry compatibility.
+
+## 9.4 Resolved field sets
+
+Header field focus:
+1. party_account
+2. purchase_account
+3. currency
+4. due_days
+5. due_date
+
+Line field focus:
+1. item_code
+2. uom
+3. cost_center
+4. department
+5. purchase_account
+
+## 9.5 Field precedence (functional)
+
+For each field:
+1. Deterministic ERP snapshot resolution
+2. Deterministic fallback (invoice/vendor defaults)
+3. Optional AI unresolved-only suggestion (feature-gated)
+4. Final hard default (empty or configured default where applicable)
+
+Important safety rule:
+- Deterministic value is authoritative and is not replaced by AI.
+
+## 9.6 Governance runtime emission during exports
+
+Export execution now emits a best-effort AgentRun for SYSTEM_EXPORT_FIELD_MAPPING so runtime governance history shows actual export-mapping activity.
+
+Emission characteristics:
+1. One AgentRun per export request (single or bulk), not per invoice line.
+2. Non-blocking: emission failures never fail the export response.
+3. RBAC-aware: emission occurs only when actor is authorized for the system agent permission.
+4. Captured telemetry includes:
+- scope (single or bulk)
+- invoices_count
+- header_unresolved_count
+- line_unresolved_count
+- ai_fallback_enabled
+- ai_fallback_used
+- ai_fields_applied
+
+---
+
+## 10. AI Fallback Controls (Phase 2)
+
+Settings:
+1. EXPORT_MAPPING_AI_FALLBACK_ENABLED (default false)
+2. EXPORT_MAPPING_AI_MIN_CONFIDENCE (default 0.80)
+
+Functional rollout:
+1. Phase 1: deterministic-only in production (recommended baseline).
+2. Phase 2: enable AI fallback in test/UAT.
+3. Promote to production only after measurable quality gain and no regression.
+
+AI guardrails:
+1. AI only sees unresolved fields.
+2. Structured JSON contract only.
+3. Low-confidence outputs are discarded.
+4. Missing or invalid JSON is ignored safely.
+
+---
+
+## 11. Data Quality and Mapping Rules
+
+1. ERP master or transactional snapshot values should be preferred over extracted OCR text for accounting-sensitive columns.
+2. raw_json is treated as source evidence for connector-specific fields.
+3. Alias normalization is required to absorb connector key drift and reduce recurring blank regressions.
+4. Purchase account should derive from PO/vendor ERP data before falling back to party account.
+5. Due Days and Due Date should resolve from explicit invoice dates or payment terms-derived logic.
+
+---
+
+## 12. Failure Modes and Expected Behavior
+
+## 12.1 ERP connector unavailable
+
+Expected:
+1. Import fails with explicit status.
+2. Existing snapshot remains usable.
+3. Export continues using last completed batches.
+
+## 12.2 Imports flushed without re-import
+
+Expected:
+1. Export field population decreases.
+2. Deterministic resolver may return blanks for ERP-dependent fields.
+3. Re-import restores mapping quality.
+
+## 12.3 Missing keys in raw_json
+
+Expected:
+1. Canonical alias resolver attempts normalized key variants.
+2. If still unresolved, deterministic fallback applies.
+3. Optional AI fallback may propose values for unresolved fields only.
+
+## 12.4 AI fallback returns low confidence or invalid response
+
+Expected:
+1. Suggestions are ignored.
+2. Deterministic result remains final.
+3. Export still completes successfully.
+
+---
+
+## 13. Security, Governance, and Audit
+
+1. ERP secrets are resolved via environment variable references, not stored in plaintext.
+2. Tenant scoping is preserved for import and lookup reads.
+3. Import batch status and row counts support operational auditability.
+4. Export mapping remains deterministic by default to support reproducible financial output.
+5. AI fallback is explicitly feature-gated and confidence-gated.
+6. Export mapping governance now records runtime system-agent runs for operational traceability.
+
+### 13.1 Migration-safe rollout items
+
+Recent migration updates introduced as part of this feature set:
+
+1. accounts.0007_add_system_export_field_mapping_permission
+- Adds agents.run_system_export_field_mapping permission.
+- Grants to SUPER_ADMIN, ADMIN, and SYSTEM_AGENT.
+
+2. agents.0018_alter_agentdefinition_agent_type_and_more
+- Adds SYSTEM_EXPORT_FIELD_MAPPING to AgentDefinition and AgentRun choices.
+- Seeds AgentDefinition record for system export field mapping.
+
+3. reconciliation.0019_remove_global_partial_unique_constraint
+- Removes MySQL-unsupported conditional unique constraint on global config names.
+- Warning models.W036 is eliminated.
+- Global-name uniqueness remains enforced at application validation layer.
+
+---
+
+## 14. Operational Runbook
+
+## 14.1 Initial setup
+
+1. Configure active default ERP connection.
+2. Run ERP reference imports for all required batch types.
+3. Validate reference row counts and latest batch statuses.
+4. Execute sample single and bulk exports for sanity check.
+
+## 14.2 Post-flush recovery
+
+1. Run flush_erp_imports (global or tenant-specific as needed).
+2. Immediately re-import all required ERP reference types.
+3. Validate that latest completed batches exist.
+4. Re-run export validation samples.
+
+## 14.3 AI fallback rollout
+
+1. Keep fallback disabled in baseline.
+2. Enable in test environment only.
+3. Compare blank rate, accuracy, and reconciliation with finance users.
+4. Tune confidence threshold if needed.
+5. Enable in production only after sign-off.
+
+---
+
+## 15. UAT Acceptance Criteria
+
+Functional acceptance is met when all criteria below are satisfied:
+
+1. ERP imports complete successfully for all 5 batch types.
+2. Latest completed snapshots are consumed by both single and bulk export.
+3. Header fields (party_account, purchase_account, due_days, due_date, currency) populate as expected from ERP-preferred rules.
+4. Line fields (item_code, uom, cost_center, department, purchase_account) populate consistently between single and bulk exports.
+5. After flush without re-import, reduced population is observable and expected.
+6. After re-import, mapping quality is restored.
+7. With AI fallback disabled, behavior is deterministic and repeatable.
+8. With AI fallback enabled, only unresolved fields are enriched and low-confidence suggestions are rejected.
+
+---
+
+## 16. QA Test Matrix (Minimum)
+
+1. Happy path imports for each batch type.
+2. Transient ERP outage during import (retry behavior).
+3. Tenant-specific import and tenant-specific flush.
+4. Single export mapping verification for one invoice with PO.
+5. Bulk export mapping verification across mixed invoices.
+6. Blank-key regression test with variant raw_json key styles.
+7. AI fallback off vs on comparison.
+8. Confidence threshold rejection test for AI fallback.
+
+---
+
+## 17. Known Constraints
+
+1. Mapping quality is bounded by reference data freshness and connector query coverage.
+2. If fields are absent from both current snapshots and source schema, export cannot fill them without schema/query extension.
+3. AI fallback is advisory for unresolved fields and is intentionally constrained to avoid nondeterministic overrides.
+
+---
+
+## 18. Change Log
+
+1.0 (2026-04-24)
+1. Consolidated functional view across ERP integration, imports, and export mapping.
+2. Added deterministic-first export mapping agent model.
+3. Added phased AI fallback controls and guardrails.
+4. Added operational and UAT acceptance guidance.
+
+1.1 (2026-04-24)
+1. Added first-class system agent type documentation for export mapping.
+2. Documented runtime AgentRun emission in governance history for export requests.
+3. Added migration-safe rollout section with accounts.0007 and agents.0018.
+4. Added reconciliation MySQL warning remediation note for models.W036 removal.
+
+---
+
+## Appendix: Export Excel Gap Report (Phase 2)
+
+> Gap analysis of BLANK_TEMPLATE columns vs. imports_formats/script.sql. Source baseline: docs/export_excel_column_mapping.csv.
+
+# Export Excel Gap Report (Phase 2)
+
+Source schema: imports_formats/script.sql
+
+Input baseline: docs/export_excel_column_mapping.csv (BLANK_TEMPLATE rows only)
+
+## Summary
+- Total BLANK_TEMPLATE columns reviewed: 200\n
+- FILLABLE_FROM_CURRENT_ERP_TABLES: 164\n- FILLABLE_WITH_SCHEMA_EXTENSIONS: 34\n- REQUIRES_NEW_FIELD_OR_TABLE: 2\n
+## By Sheet
+- Item Body: FILLABLE_FROM_CURRENT_ERP_TABLES=48, FILLABLE_WITH_SCHEMA_EXTENSIONS=10\n- Header: FILLABLE_FROM_CURRENT_ERP_TABLES=25, FILLABLE_WITH_SCHEMA_EXTENSIONS=6, REQUIRES_NEW_FIELD_OR_TABLE=1\n- Summary: FILLABLE_FROM_CURRENT_ERP_TABLES=26, FILLABLE_WITH_SCHEMA_EXTENSIONS=6\n- Advance Set Off Body: FILLABLE_FROM_CURRENT_ERP_TABLES=8, REQUIRES_NEW_FIELD_OR_TABLE=1, FILLABLE_WITH_SCHEMA_EXTENSIONS=2\n- Voucher: FILLABLE_FROM_CURRENT_ERP_TABLES=5, FILLABLE_WITH_SCHEMA_EXTENSIONS=2\n- Adjustments Body: FILLABLE_FROM_CURRENT_ERP_TABLES=33, FILLABLE_WITH_SCHEMA_EXTENSIONS=8\n- Payments Body: FILLABLE_FROM_CURRENT_ERP_TABLES=8\n- Reference: FILLABLE_FROM_CURRENT_ERP_TABLES=1\n- Other Info: FILLABLE_FROM_CURRENT_ERP_TABLES=5\n- Transaction Details: FILLABLE_FROM_CURRENT_ERP_TABLES=5\n
+## Notes
+- FILLABLE_FROM_CURRENT_ERP_TABLES means a likely source exists in the currently integrated connector tables.\n- FILLABLE_WITH_SCHEMA_EXTENSIONS means source exists in script.sql but not in currently integrated table/query set.\n- REQUIRES_NEW_FIELD_OR_TABLE means no close match was found in script.sql and likely needs schema/process changes.\n
+---
+
+## Appendix: Export Excel Gap Report Phase 2 (Strict)
+
+> Strict semantic cross-reference of BLANK_TEMPLATE columns against imports_formats/script.sql using exact/alias matching.
+
+# Export Excel Gap Report Phase 2 (Strict)
+
+Cross-reference baseline BLANK_TEMPLATE columns against imports_formats/script.sql using exact/alias semantic matching.
+
+- Total BLANK_TEMPLATE columns reviewed: 200\n- FILLABLE_FROM_CURRENT_ERP_TABLES: 119\n- REQUIRES_NEW_FIELD_OR_TABLE: 35\n- FILLABLE_WITH_SCHEMA_EXTENSIONS: 46\n
+## By Sheet
+- Adjustments Body: FILLABLE_FROM_CURRENT_ERP_TABLES=19, REQUIRES_NEW_FIELD_OR_TABLE=1, FILLABLE_WITH_SCHEMA_EXTENSIONS=21\n- Advance Set Off Body: FILLABLE_FROM_CURRENT_ERP_TABLES=6, REQUIRES_NEW_FIELD_OR_TABLE=2, FILLABLE_WITH_SCHEMA_EXTENSIONS=3\n- Header: FILLABLE_FROM_CURRENT_ERP_TABLES=16, REQUIRES_NEW_FIELD_OR_TABLE=13, FILLABLE_WITH_SCHEMA_EXTENSIONS=3\n- Item Body: FILLABLE_FROM_CURRENT_ERP_TABLES=37, REQUIRES_NEW_FIELD_OR_TABLE=7, FILLABLE_WITH_SCHEMA_EXTENSIONS=14\n- Other Info: FILLABLE_FROM_CURRENT_ERP_TABLES=5\n- Payments Body: FILLABLE_FROM_CURRENT_ERP_TABLES=8\n- Reference: FILLABLE_FROM_CURRENT_ERP_TABLES=1\n- Summary: FILLABLE_FROM_CURRENT_ERP_TABLES=19, REQUIRES_NEW_FIELD_OR_TABLE=9, FILLABLE_WITH_SCHEMA_EXTENSIONS=4\n- Transaction Details: FILLABLE_FROM_CURRENT_ERP_TABLES=5\n- Voucher: REQUIRES_NEW_FIELD_OR_TABLE=3, FILLABLE_FROM_CURRENT_ERP_TABLES=3, FILLABLE_WITH_SCHEMA_EXTENSIONS=1\n

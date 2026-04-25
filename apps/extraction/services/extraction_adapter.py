@@ -73,10 +73,26 @@ class InvoiceExtractionAdapter:
         try:
             # Check runtime setting for OCR mode
             ocr_enabled = self._is_ocr_enabled()
+            used_native_fallback = False
 
             if ocr_enabled:
-                # Step 1a: OCR via Azure Document Intelligence (also returns raw QR strings)
-                ocr_text, ocr_page_count, ocr_duration_ms, qr_texts = self._ocr_document(file_path)
+                try:
+                    # Step 1a: OCR via Azure Document Intelligence (also returns raw QR strings)
+                    ocr_text, ocr_page_count, ocr_duration_ms, qr_texts = self._ocr_document(file_path)
+                except TimeoutError as exc:
+                    logger.warning(
+                        "Azure OCR timed out for %s; falling back to native PDF text extraction: %s",
+                        file_path,
+                        exc,
+                    )
+                    if document_upload_id:
+                        self._update_progress(
+                            document_upload_id,
+                            "Cloud OCR timed out. Falling back to native PDF text extraction...",
+                        )
+                    ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
+                    qr_texts = []
+                    used_native_fallback = True
             else:
                 # Step 1b: Native PDF text extraction (no Azure DI cost)
                 logger.info("OCR disabled -- using native PDF text extraction for %s", file_path)
@@ -165,7 +181,11 @@ class InvoiceExtractionAdapter:
                 success=True,
                 raw_json=raw_json,
                 confidence=float(raw_json.get("confidence", 0.0)),
-                engine_name="azure_di_gpt4o_agent" if ocr_enabled else "native_pdf_gpt4o_agent",
+                engine_name=(
+                    "native_pdf_gpt4o_agent"
+                    if (not ocr_enabled or used_native_fallback)
+                    else "azure_di_gpt4o_agent"
+                ),
                 engine_version="2.0",
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
@@ -252,6 +272,10 @@ class InvoiceExtractionAdapter:
             endpoint=endpoint,
             credential=AzureKeyCredential(key),
         )
+        ocr_timeout_seconds = max(
+            1,
+            int(getattr(settings, "AZURE_DI_OCR_TIMEOUT_SECONDS", 90)),
+        )
 
         ocr_start = time.time()
         with open(file_path, "rb") as f:
@@ -266,6 +290,16 @@ class InvoiceExtractionAdapter:
                 # and pyzbar strategies automatically.
                 features=[AnalysisFeature.BARCODES],
             )
+
+        deadline = time.monotonic() + ocr_timeout_seconds
+        while not poller.done():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Azure Document Intelligence OCR timed out after "
+                    f"{ocr_timeout_seconds}s for {file_path}"
+                )
+            poller.wait(timeout=min(5, remaining))
 
         result = poller.result()
         ocr_duration_ms = int((time.time() - ocr_start) * 1000)
@@ -318,18 +352,21 @@ class InvoiceExtractionAdapter:
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_text_native(file_path: str) -> tuple:
-        """Extract text from a PDF using PyPDF2 (native text layer).
+        """Extract text from a PDF using pypdf/PyPDF2 (native text layer).
 
         Returns:
             (text, page_count, duration_ms) — same shape as _ocr_document.
         """
-        import PyPDF2
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
 
         native_start = time.time()
         lines = []
         page_count = 0
         with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = PdfReader(f)
             page_count = len(reader.pages)
             for page in reader.pages:
                 text = page.extract_text()
