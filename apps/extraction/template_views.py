@@ -166,10 +166,54 @@ def extraction_workbench(request):
 
     # Pre-load case data for invoices that have cases
     case_map = {}
+    exception_map = {}  # invoice_id -> count of exceptions
+    exception_details_map = {}  # invoice_id -> tooltip text of unresolved exceptions
+    recon_path_map = {}  # invoice_id -> processing_path
     if invoice_ids:
         from apps.cases.models import APCase
+        from apps.reconciliation.models import ReconciliationException
+        
         for c in APCase.objects.filter(invoice_id__in=invoice_ids, is_active=True).select_related("reconciliation_result"):
             case_map[c.invoice_id] = c
+            recon_path_map[c.invoice_id] = c.processing_path or ""
+        
+        # Pre-load exception counts per case
+        from django.db.models import Count
+        exception_counts = ReconciliationException.objects.filter(
+            result__invoice_id__in=invoice_ids,
+            resolved=False
+        ).values('result__invoice_id').annotate(count=Count('id'))
+        for exc_count in exception_counts:
+            exception_map[exc_count['result__invoice_id']] = exc_count['count']
+
+        # Pre-load unresolved exception details for hover tooltip
+        exception_rows = ReconciliationException.objects.filter(
+            result__invoice_id__in=invoice_ids,
+            resolved=False,
+        ).order_by("result__invoice_id", "-created_at").values(
+            "result__invoice_id", "exception_type", "message"
+        )
+        _detail_lists = {}
+        for row in exception_rows:
+            inv_id = row["result__invoice_id"]
+            if not inv_id:
+                continue
+            msg = (row.get("message") or "").replace("\n", " ").strip()
+            exc_type = row.get("exception_type") or "EXCEPTION"
+            if msg:
+                item = f"{exc_type}: {msg}"
+            else:
+                item = str(exc_type)
+            _detail_lists.setdefault(inv_id, [])
+            if len(_detail_lists[inv_id]) < 3:
+                _detail_lists[inv_id].append(item)
+
+        for inv_id, items in _detail_lists.items():
+            total = exception_map.get(inv_id, len(items))
+            suffix = ""
+            if total > len(items):
+                suffix = f" | +{total - len(items)} more"
+            exception_details_map[inv_id] = " | ".join(items) + suffix
 
     # Pre-load execution context (governed pipeline or legacy fallback)
     from apps.extraction.services.execution_context import get_execution_context
@@ -270,6 +314,9 @@ def extraction_workbench(request):
         "stats_cached_at": stats_cached_at,
         "approval_map": approval_map,
         "case_map": case_map,
+        "exception_map": exception_map,
+        "exception_details_map": exception_details_map,
+        "recon_path_map": recon_path_map,
         "approvals": approval_page,
         "approval_page_obj": approval_page,
         "approval_status_filter": approval_status_filter,
@@ -881,7 +928,7 @@ def extraction_ajax_filter(request):
     qs = (
         ExtractionResult.objects
         .select_related(
-            "document_upload", "invoice", "invoice__vendor",
+            "document_upload",
             "extraction_run",
         )
         .order_by("-created_at")
@@ -893,8 +940,8 @@ def extraction_ajax_filter(request):
     if q:
         from django.db.models import Q
         qs = qs.filter(
-            Q(invoice__invoice_number__icontains=q)
-            | Q(invoice__raw_vendor_name__icontains=q)
+            Q(document_upload__invoices__invoice_number__icontains=q)
+            | Q(document_upload__invoices__raw_vendor_name__icontains=q)
             | Q(document_upload__original_filename__icontains=q)
         )
 
@@ -905,26 +952,32 @@ def extraction_ajax_filter(request):
     elif status_filter == "failed":
         qs = qs.filter(success=False)
 
-    # Confidence filters
+    # Confidence filters (stored on extraction_run)
     confidence_filter = request.GET.get("confidence")
     if confidence_filter == "high":
-        qs = qs.filter(confidence__gte=0.8)
+        qs = qs.filter(extraction_run__overall_confidence__gte=0.8)
     elif confidence_filter == "medium":
-        qs = qs.filter(confidence__gte=0.5, confidence__lt=0.8)
+        qs = qs.filter(
+            extraction_run__overall_confidence__gte=0.5,
+            extraction_run__overall_confidence__lt=0.8,
+        )
     elif confidence_filter == "low":
-        qs = qs.filter(confidence__lt=0.5, confidence__isnull=False)
+        qs = qs.filter(
+            extraction_run__overall_confidence__lt=0.5,
+            extraction_run__overall_confidence__isnull=False,
+        )
 
     # Custom confidence threshold (slider value 0-100)
     min_conf = request.GET.get("min_confidence")
     max_conf = request.GET.get("max_confidence")
     if min_conf:
         try:
-            qs = qs.filter(confidence__gte=int(min_conf) / 100.0)
+            qs = qs.filter(extraction_run__overall_confidence__gte=int(min_conf) / 100.0)
         except (ValueError, TypeError):
             pass
     if max_conf:
         try:
-            qs = qs.filter(confidence__lte=int(max_conf) / 100.0)
+            qs = qs.filter(extraction_run__overall_confidence__lte=int(max_conf) / 100.0)
         except (ValueError, TypeError):
             pass
 
@@ -942,11 +995,101 @@ def extraction_ajax_filter(request):
         except ValueError:
             pass
 
+    # Advanced filters
+    source_filter = request.GET.get("source", "").strip().upper()
+    if source_filter == "EMAIL":
+        qs = qs.filter(document_upload__source_message_id__isnull=False).exclude(document_upload__source_message_id="")
+    elif source_filter == "MANUAL":
+        qs = qs.filter(document_upload__source_message_id__isnull=True)
+
+    invoice_status = request.GET.get("invoice_status", "").strip()
+    if invoice_status:
+        qs = qs.filter(invoice__status=invoice_status)
+
+    approval_status = request.GET.get("approval_status", "").strip()
+    if approval_status:
+        qs = qs.filter(invoice__extraction_approval__status=approval_status)
+
     # Build JSON response
+    result_rows = list(qs[:200])
+    invoice_ids = [r.invoice_id for r in result_rows if r.invoice_id]
+
+    case_map = {}
+    if invoice_ids:
+        from apps.cases.models import APCase
+        for c in APCase.objects.filter(invoice_id__in=invoice_ids, is_active=True).order_by("-created_at"):
+            case_map.setdefault(c.invoice_id, c)
+
+    exc_count_map = {}
+    exc_detail_map = {}
+    if invoice_ids:
+        from apps.reconciliation.models import ReconciliationException
+        from django.db.models import Count
+
+        exc_counts = ReconciliationException.objects.filter(
+            result__invoice_id__in=invoice_ids,
+            resolved=False,
+        ).values("result__invoice_id").annotate(count=Count("id"))
+        for row in exc_counts:
+            exc_count_map[row["result__invoice_id"]] = row["count"]
+
+        exc_rows = ReconciliationException.objects.filter(
+            result__invoice_id__in=invoice_ids,
+            resolved=False,
+        ).order_by("result__invoice_id", "-created_at").values(
+            "result__invoice_id", "exception_type", "message"
+        )
+        _detail_lists = {}
+        for row in exc_rows:
+            inv_id = row.get("result__invoice_id")
+            if not inv_id:
+                continue
+            msg = (row.get("message") or "").replace("\n", " ").strip()
+            exc_type = row.get("exception_type") or "EXCEPTION"
+            item = f"{exc_type}: {msg}" if msg else str(exc_type)
+            _detail_lists.setdefault(inv_id, [])
+            if len(_detail_lists[inv_id]) < 3:
+                _detail_lists[inv_id].append(item)
+
+        for inv_id, items in _detail_lists.items():
+            total = exc_count_map.get(inv_id, len(items))
+            suffix = f" | +{total - len(items)} more" if total > len(items) else ""
+            exc_detail_map[inv_id] = " | ".join(items) + suffix
+
+    has_case = request.GET.get("has_case", "").strip().lower()
+    if has_case in {"yes", "no"}:
+        allowed_invoice_ids = {inv_id for inv_id in invoice_ids if inv_id in case_map}
+        if has_case == "yes":
+            result_rows = [r for r in result_rows if r.invoice_id in allowed_invoice_ids]
+        else:
+            result_rows = [r for r in result_rows if r.invoice_id not in allowed_invoice_ids]
+
+    has_exceptions = request.GET.get("has_exceptions", "").strip().lower()
+    if has_exceptions in {"yes", "no"}:
+        if has_exceptions == "yes":
+            result_rows = [r for r in result_rows if exc_count_map.get(r.invoice_id, 0) > 0]
+        else:
+            result_rows = [r for r in result_rows if exc_count_map.get(r.invoice_id, 0) == 0]
+
+    recon_path = request.GET.get("recon_path", "").strip()
+    if recon_path:
+        result_rows = [
+            r for r in result_rows
+            if (case_map.get(r.invoice_id).processing_path if case_map.get(r.invoice_id) else "") == recon_path
+        ]
+
     rows = []
-    for r in qs[:200]:
+    for r in result_rows:
         inv = r.invoice
         source_is_email = bool(r.document_upload and r.document_upload.source_message_id)
+        case = case_map.get(r.invoice_id)
+        approval = getattr(inv, "extraction_approval", None) if inv else None
+        confidence_value = None
+        if inv and inv.extraction_confidence is not None:
+            confidence_value = inv.extraction_confidence
+        elif r.extraction_run and r.extraction_run.overall_confidence is not None:
+            confidence_value = r.extraction_run.overall_confidence
+
         rows.append({
             "pk": r.pk,
             "filename": r.document_upload.original_filename if r.document_upload else "—",
@@ -957,11 +1100,18 @@ def extraction_ajax_filter(request):
             "source_is_email": source_is_email,
             "currency": inv.currency if inv else "",
             "total_amount": str(inv.total_amount) if inv and inv.total_amount else "",
-            "confidence": round(r.confidence * 100) if r.confidence is not None else None,
+            "confidence": round(confidence_value * 100) if confidence_value is not None else None,
             "success": r.success,
             "duration_ms": r.duration_ms,
             "engine_name": r.engine_name or "azure_di_gpt4o",
             "invoice_status": inv.status if inv else "",
+            "approval_status": approval.status if approval else "",
+            "case_id": case.pk if case else None,
+            "case_number": case.case_number if case else "",
+            "case_status": case.status if case else "",
+            "recon_path": case.processing_path if case else "",
+            "exception_count": exc_count_map.get(r.invoice_id, 0),
+            "exception_details": exc_detail_map.get(r.invoice_id, ""),
             "created_at": r.created_at.strftime("%d %b %Y %H:%M") if r.created_at else "",
         })
 

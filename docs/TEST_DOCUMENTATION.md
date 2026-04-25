@@ -1,9 +1,9 @@
 # Test Documentation -- 3-Way PO Reconciliation Platform
 
-> **Generated**: 2026-04-01
+> **Generated**: 2026-04-25
 > **Test Framework**: pytest 8.x + pytest-django 4.12 + factory-boy 3.3
-> **Total Tests**: ~513 test methods across 37 test files
-> **Coverage Domains**: 7 of 17 Django apps have test suites
+> **Total Tests**: ~788 tests across 55 test files (651 automated + 137 eval/learning; manual functional test cases in §10)
+> **Coverage Domains**: 9 of 21 Django apps have automated test suites
 
 ---
 
@@ -20,11 +20,16 @@
    - 4.5 [Extraction (`apps/extraction/`)](#45-extraction-appsextraction)
    - 4.6 [Cases (`apps/cases/`)](#46-cases-appscases)
    - 4.7 [Reviews (`apps/cases/` -- merged from `apps/reviews`)](#47-reviews-appscases----merged-from-appsreviews)
+   - 4.8 [Posting (`apps/posting/`)](#48-posting-appsposting)
+   - 4.9 [Posting Core (`apps/posting_core/`)](#49-posting-core-appsposting_core)
+   - 4.10 [ERP Integration (`apps/erp_integration/`)](#410-erp-integration-appserp_integration)
+   - 4.11 [Eval & Learning (`apps/core_eval/`)](#411-eval--learning-appscore_eval)
 5. [Factory & Fixture Catalog](#5-factory--fixture-catalog)
 6. [Mocking Strategy Reference](#6-mocking-strategy-reference)
 7. [Test Categorisation Matrix](#7-test-categorisation-matrix)
 8. [Scenario Coverage Map](#8-scenario-coverage-map)
 9. [Gaps & Recommendations](#9-gaps--recommendations)
+10. [AP Finance Agents — Manual Functional Test Guide](#10-ap-finance-agents--manual-functional-test-guide)
 
 ---
 
@@ -527,7 +532,7 @@ Tests that the `ReconciliationRunnerService` works correctly with Langfuse both 
 
 ### 4.4 Agents (`apps/agents/`)
 
-**6 test files, ~63 tests. Mix of pure unit and DB-backed.**
+**7 test files, ~80 tests. Mix of pure unit and DB-backed.**
 
 #### 4.4.1 `test_policy_engine.py` -- Agent Planning Rules (19 tests, mostly DB-backed)
 
@@ -617,6 +622,21 @@ Tests the core `BaseAgent.run()` ReAct loop, composite confidence calculation, a
 | `TestSanitiseText` | 3 | ASCII passthrough (ST-01), Unicode arrows replaced (ST-02), fancy quotes stripped (ST-03) |
 
 **Composite confidence formula validated**: `composite = llm*0.6 + tool*0.25 + evidence*0.15`, where `tool_score = (total - failed) / total` (1.0 if no tools), `evidence_score = 0.5` if empty/only `_provenance`, else `1.0`.
+
+---
+
+#### 4.4.7 `test_reasoning_planner.py` -- LLM-Enhanced Agent Planner (17 tests, mixed)
+
+Tests the `ReasoningPlanner` class that uses LLM reasoning to produce agent execution plans, with deterministic fallback when the LLM is unavailable or the reasoning engine is disabled.
+
+| Coverage Area | Tests | Scenarios |
+|---|---|---|
+| LLM plan generation | ~6 | Valid LLM plan returned, plan includes correct agent sequence, plan metadata captured |
+| Fallback behaviour | ~5 | LLM unavailable falls back to `PolicyEngine`, reasoning engine disabled flag bypasses LLM, LLM returns invalid plan falls back |
+| Plan validation | ~3 | Plan schema validation, unknown agent types rejected, empty plan handled |
+| Orchestrator flag wiring | ~3 | `AGENT_REASONING_ENGINE_ENABLED` setting respected, planner selection logged, eval adapter captures plan source comparison |
+
+**Key setting tested**: `AGENT_REASONING_ENGINE_ENABLED` in `config/settings.py` — when `False`, `PolicyEngine` is used directly without any LLM call.
 
 ---
 
@@ -996,6 +1016,107 @@ Tests the `ERPCacheService` TTL-based database cache for ERP resolution results.
 
 ---
 
+### 4.11 Eval & Learning (`apps/core_eval/`)
+
+**6 test files, ~120 tests. Mix of pure unit, integration, and DB-backed.**
+
+Tests the evaluation pipeline and learning engine that track extraction/reconciliation quality signals, propose learning actions, and provide RBAC-gated views.
+
+> Note: `apps/core/tests/test_evaluation_constants.py` (29 tests) is documented under §4.1.3.
+
+#### 4.11.1 `test_learning_engine.py` -- Learning Engine Rules (22 tests, pure unit)
+
+Tests the `LearningEngine` deterministic rule engine that aggregates `LearningSignal` records and proposes `LearningAction` items.
+
+| Coverage Area | Tests | Scenarios |
+|---|---|---|
+| Signal aggregation | ~6 | Signals grouped by module + field, threshold detection, time-window filtering |
+| Rule 1 — field normalisation | ~3 | Enough field-correction signals trigger `field_normalization_candidate` action |
+| Rule 2 — prompt review | ~3 | Pattern of low-confidence signals triggers `prompt_review` action |
+| Rule 3 — threshold tuning | ~3 | Accuracy-band signals trigger `threshold_tune` proposal |
+| Safety controls | ~4 | Deduplication prevents re-proposing same action, cooldown period enforced |
+| Management command | ~3 | `run_learning_engine` runs full cycle, reports proposed/skipped counts |
+
+---
+
+#### 4.11.2 `test_eval_adapter.py` -- Extraction Eval Adapter (10 tests, pure unit)
+
+Tests `ExtractionEvalAdapter.sync_for_extraction_result()` — the bridge that converts extraction outcomes into `EvalRun`, `EvalMetric`, and `EvalFieldOutcome` records.
+
+| Coverage Area | Tests | Scenarios |
+|---|---|---|
+| `sync_for_extraction_result` | 10 | EvalRun created with correct module/entity, metrics populated, field outcomes written, idempotency (re-sync is no-op), fail-silent on error |
+
+---
+
+#### 4.11.3 `test_approval_integration.py` -- Approval → Learning Signal (25 tests, integration)
+
+Integration tests for the approval workflow creating `LearningSignal` records when invoices are approved, rejected, or auto-approved.
+
+| Coverage Area | Tests | Scenarios |
+|---|---|---|
+| Approve path | ~6 | Approval creates signal with correct signal_type and field metadata |
+| Reject path | ~5 | Rejection creates signal; rejection reason captured in signal payload |
+| Auto-approve path | ~4 | Auto-close creates signal with auto-approve signal_type |
+| Field corrections | ~6 | Reviewer field edits emit per-field correction signals with old/new values |
+| Review overrides | ~4 | Reviewer overriding agent recommendation creates override signal |
+
+---
+
+#### 4.11.4 `test_end_to_end.py` -- Full Eval → Learning Cycle (13 tests, integration)
+
+End-to-end integration tests covering the full path: `ExtractionEvalAdapter` creates signals → `LearningEngine` detects patterns → `LearningAction` records proposed.
+
+| Coverage Area | Tests | Scenarios |
+|---|---|---|
+| Full cycle | ~8 | Actions proposed after enough signals, correct action types match signal patterns |
+| Deduplication | ~3 | Engine run twice does not double-propose same action |
+| Empty state | ~2 | Engine with no signals produces no actions |
+
+---
+
+#### 4.11.5 `test_views.py` -- Eval & Learning RBAC Views (29 tests, DB-backed)
+
+Tests the five template views at `/eval/` with RBAC permission enforcement.
+
+| Test Class | Tests | Scenarios |
+|---|---|---|
+| Anonymous redirect | ~5 | All 5 views redirect to login when unauthenticated |
+| Permission denied | ~5 | User without `eval.view` gets 403 for all 5 views |
+| Authorized access | ~5 | User with `eval.view` gets 200 for all 5 views |
+| Filter parameters | ~9 | List views accept and apply filters (module, status, entity_type, signal_type, field_name) |
+| 404 handling | ~5 | Detail views return 404 for non-existent PKs |
+
+---
+
+#### 4.11.6 `test_recon_eval_adapter.py` -- Reconciliation Eval Adapter (21 tests, DB-backed)
+
+Tests `ReconciliationEvalAdapter` methods that bridge reconciliation outcomes into the eval/learning pipeline.
+
+| Coverage Area | Tests | Scenarios |
+|---|---|---|
+| `sync_for_result` | ~8 | EvalRun and metrics created on reconciliation completion, correct module/entity, idempotency |
+| `sync_for_review_outcome` | ~6 | Review decision (approve/reject/escalate) creates EvalMetric and LearningSignal |
+| Idempotency | ~4 | Syncing same result twice does not duplicate records |
+| Fail-safety | ~2 | Adapter exceptions do not propagate to caller (fail-silent) |
+| Review assignment | ~1 | Reviewer user captured in eval metadata |
+
+```bash
+# Run all eval/learning tests (120 total)
+python -m pytest apps/core_eval/ apps/extraction/tests/test_eval_adapter.py apps/extraction/tests/test_approval_integration.py apps/reconciliation/tests/test_recon_eval_adapter.py -v
+
+# Just the engine
+python -m pytest apps/core_eval/tests/test_learning_engine.py -v
+
+# Just end-to-end
+python -m pytest apps/core_eval/tests/test_end_to_end.py -v
+
+# Just reconciliation eval adapter
+python -m pytest apps/reconciliation/tests/test_recon_eval_adapter.py -v
+```
+
+---
+
 ## 5. Factory & Fixture Catalog
 
 ### 5.1 Model Factories
@@ -1276,4 +1397,340 @@ The following apps have **zero test files**:
 | 46 | `apps/erp_integration/tests/test_connector_factory.py` | 10 |
 | 47 | `apps/erp_integration/tests/test_base_resolver.py` | 10 |
 | 48 | `apps/erp_integration/tests/test_cache_service.py` | 13 |
-| | **TOTAL** | **~651** |
+| 49 | `apps/agents/tests/test_reasoning_planner.py` | 17 |
+| 50 | `apps/core_eval/tests/test_learning_engine.py` | 22 |
+| 51 | `apps/core_eval/tests/test_end_to_end.py` | 13 |
+| 52 | `apps/core_eval/tests/test_views.py` | 29 |
+| 53 | `apps/extraction/tests/test_eval_adapter.py` | 10 |
+| 54 | `apps/extraction/tests/test_approval_integration.py` | 25 |
+| 55 | `apps/reconciliation/tests/test_recon_eval_adapter.py` | 21 |
+| | **TOTAL** | **~788** |
+
+---
+
+## 10. AP Finance Agents — Manual Functional Test Guide
+
+> Tester-ready functional guide for AP finance agent flows (reconciliation + agent pipeline). Excludes procurement and posting module deep tests.
+
+**Version**: 1.0 · Last Updated: 2026-04-21
+**Scope**: AP finance agent flows only (reconciliation + agent pipeline)
+
+---
+
+### 10.1 Purpose
+
+This section is a tester-ready functional guide for validating AP finance agent behaviour in the 3-way PO reconciliation platform.
+
+It includes:
+- End-to-end functional scenarios
+- Agent-specific test cases
+- Sample test data (without PDF file creation)
+- Exact match, fuzzy match, and LLM-assisted behaviour expectations
+
+It excludes:
+- Procurement module scenarios
+- Posting module deep tests
+- UI pixel-level testing
+
+---
+
+### 10.2 In-Scope Components
+
+Primary apps/services covered:
+- `apps/reconciliation/` (deterministic matching engine)
+- `apps/agents/` (LLM + deterministic system agents)
+- `apps/tools/registry/tools.py` (PO/GRN/vendor/invoice tools)
+- `apps/cases/` and review routing touchpoints
+
+Primary AP agent types covered:
+- `INVOICE_UNDERSTANDING`
+- `PO_RETRIEVAL`
+- `GRN_RETRIEVAL`
+- `RECONCILIATION_ASSIST`
+- `EXCEPTION_ANALYSIS`
+- `COMPLIANCE_AGENT`
+- `REVIEW_ROUTING`
+- `CASE_SUMMARY`
+- System tail agents where applicable (`SYSTEM_REVIEW_ROUTING`, `SYSTEM_CASE_SUMMARY`)
+
+---
+
+### 10.3 Test Preconditions
+
+1. At least one tenant exists.
+2. Test users exist for these roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`.
+3. Core master data is loaded for vendors, POs, and GRNs.
+4. Reconciliation config exists with default tolerances:
+   - Quantity tolerance: 2%
+   - Price tolerance: 1%
+   - Amount tolerance: 1%
+   - Auto-close quantity tolerance: 5%
+   - Auto-close price tolerance: 3%
+   - Auto-close amount tolerance: 3%
+5. Agent definitions and tool definitions are seeded.
+6. For async validation, Celery worker is running. For local deterministic validation, eager mode is acceptable.
+
+Optional precondition for LLM-assisted line matching test:
+- A custom `LineMatchLLMFallbackService` implementation is plugged in. By default, fallback returns `None` and no LLM line-resolution occurs.
+
+---
+
+### 10.4 Sample Master Test Data
+
+Use this as a reusable test pack. You can load via admin/API/fixtures.
+
+#### 10.4.1 Vendors
+
+| Vendor ID | Code | Name | Alias |
+|---|---|---|---|
+| 101 | VEND-ALPHA | Alpha Cooling Solutions Pvt Ltd | Alpha Cooling |
+| 102 | VEND-BETA | Beta Facility Services LLP | Beta Services |
+| 103 | VEND-GAMMA | Gamma Logistics and Supply | Gamma Supply |
+
+#### 10.4.2 Purchase Orders
+
+| PO Number | Vendor ID | Currency | PO Date | Total Amount | Notes |
+|---|---|---|---|---:|---|
+| PO-1001 | 101 | INR | 2026-04-10 | 500000.00 | Stock/goods style PO, should route 3-way by policy/heuristic |
+| PO-1002 | 102 | INR | 2026-04-11 | 120000.00 | Service style PO, should route 2-way by policy/heuristic |
+| PO-1003 | 103 | INR | 2026-04-12 | 250000.00 | Used for mismatch and unresolved cases |
+
+#### 10.4.3 PO Line Items
+
+| PO Number | Line | Item Code | Description | Qty | UOM | Unit Price | Line Amount |
+|---|---:|---|---|---:|---|---:|---:|
+| PO-1001 | 1 | AC-ODU-01 | VRF Outdoor Unit 10HP | 2 | NOS | 120000.00 | 240000.00 |
+| PO-1001 | 2 | AC-IDU-01 | VRF Indoor Cassette Unit 2TR | 6 | NOS | 30000.00 | 180000.00 |
+| PO-1001 | 3 | AC-INST-01 | Installation and Commissioning | 1 | LOT | 80000.00 | 80000.00 |
+| PO-1002 | 1 | SV-MAINT-01 | Quarterly HVAC Preventive Maintenance | 4 | QTR | 30000.00 | 120000.00 |
+| PO-1003 | 1 | LOG-COLD-01 | Cold Chain Logistics Service | 10 | TRIP | 25000.00 | 250000.00 |
+
+#### 10.4.4 GRNs (for 3-way tests)
+
+| GRN Number | PO Number | Receipt Date | Status |
+|---|---|---|---|
+| GRN-1001-A | PO-1001 | 2026-04-14 | RECEIVED |
+
+#### 10.4.5 GRN Line Items
+
+| GRN Number | Line | Item Code | Qty Received | Qty Accepted | Qty Rejected |
+|---|---:|---|---:|---:|---:|
+| GRN-1001-A | 1 | AC-ODU-01 | 2 | 2 | 0 |
+| GRN-1001-A | 2 | AC-IDU-01 | 6 | 6 | 0 |
+| GRN-1001-A | 3 | AC-INST-01 | 1 | 1 | 0 |
+
+---
+
+### 10.5 Sample Invoice Payloads (No PDF Required)
+
+You can create invoice records directly via API/admin with these fields.
+
+#### INV-EXACT-001 (Exact Match Candidate)
+
+Header: `invoice_number=INV-EXACT-001`, vendor=Alpha Cooling Solutions Pvt Ltd (101), `po_number=PO-1001`, currency=INR, subtotal=500000.00, tax_amount=90000.00, total_amount=590000.00, extraction_confidence=0.95
+
+Lines: (1) AC-ODU-01, VRF Outdoor Unit 10HP, qty 2, price 120000.00 · (2) AC-IDU-01, VRF Indoor Cassette Unit 2TR, qty 6, price 30000.00 · (3) AC-INST-01, Installation and Commissioning, qty 1, price 80000.00
+
+#### INV-FUZZY-001 (Deterministic Fuzzy Match Candidate)
+
+Header: `invoice_number=INV-FUZZY-001`, vendor=`Alpha Cooling` (alias of 101), `po_number=PO-1001`, currency=INR, subtotal=500500.00, tax_amount=90090.00, total_amount=590590.00, extraction_confidence=0.93
+
+Lines (intentional text variation): (1) item_code blank, description `VRF Outdor Unit 10 HP` (typo), qty 2, price 120100.00 · (2) item_code blank, `VRF Indoor Casette Unit 2TR` (typo), qty 6, price 29980.00 · (3) item_code blank, `Install & Commissioning`, qty 1, price 80400.00
+
+#### INV-LOWCONF-001 (Low Extraction Confidence)
+
+Header: vendor=Beta Facility Services LLP, `po_number=PO-1002`, total_amount=120000.00, extraction_confidence=**0.55**
+
+#### INV-PO-MISSING-001 (PO Not Found)
+
+Header: vendor=Gamma Logistics and Supply, `po_number=PO-9999` (does not exist), total_amount=250000.00
+
+#### INV-GRN-MISSING-001 (3-way GRN Missing)
+
+Same lines as INV-EXACT-001 but precondition: remove/disable GRN-1001-A before running.
+
+#### INV-UNRESOLVED-LINE-001 (Ambiguous Lines)
+
+Lines: (1) description `Cooling Unit Package` (generic), qty 2, price 120000.00 · (2) description `Cooling Unit Package` (same generic), qty 6, price 30000.00 — creates deterministic line scoring ambiguity.
+
+---
+
+### 10.6 Functional Test Cases
+
+**Legend**: Match Status values: `MATCHED`, `PARTIAL_MATCH`, `UNMATCHED`, `REQUIRES_REVIEW`. Agent pipeline triggers only when deterministic outcome is not cleanly MATCHED/auto-closed.
+
+#### TC-AP-001 Exact Header + Line Match (Deterministic Exact)
+
+**Objective**: Validate exact deterministic match without agent intervention.
+**Input**: INV-EXACT-001. Trigger reconciliation from `READY_FOR_RECON` state.
+**Expected**: PO-1001 found, mode=THREE_WAY, all lines MATCHED at high confidence, GRN checks pass, final status=`MATCHED`, no agent run created.
+
+---
+
+#### TC-AP-002 Deterministic Fuzzy Line Match
+
+**Objective**: Validate typo/variant descriptions still match via deterministic scoring.
+**Input**: INV-FUZZY-001.
+**Expected**: Vendor alias `Alpha Cooling` → Vendor 101 resolved. Deterministic line matching selects correct PO lines. Result: `MATCHED` (strict tolerance) or `PARTIAL_MATCH` (minor deltas within auto-close band). Not an LLM line match — uses `LineMatchService` weighted scoring.
+
+---
+
+#### TC-AP-003 Auto-Close for Partial Within Wider Band
+
+**Objective**: Validate policy auto-close for partial discrepancies within wider thresholds.
+**Input**: INV-FUZZY-001 with deltas within 5% qty / 3% price / 3% amount.
+**Expected**: Deterministic status initially `PARTIAL_MATCH` → policy engine flags auto-close → agent plan sets `skip_agents=True`, `auto_close=True` → no manual review.
+
+---
+
+#### TC-AP-004 Partial Outside Auto-Close → Agent Pipeline
+
+**Objective**: Validate escalation from deterministic to agentic flow.
+**Input**: Copy of INV-FUZZY-001 with one line price increased by +7%.
+**Expected**: `PARTIAL_MATCH` outside auto-close band → agent pipeline executes with `RECONCILIATION_ASSIST`, `EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, `CASE_SUMMARY` → recommendation created for AP review.
+
+---
+
+#### TC-AP-005 PO Not Found → PO Retrieval Agent
+
+**Objective**: Validate PO missing path and PO retrieval attempt.
+**Input**: INV-PO-MISSING-001.
+**Expected**: Deterministic: `UNMATCHED` with `PO_NOT_FOUND` exception. Agent plan includes `PO_RETRIEVAL`. `po_lookup` tool call appears in `ToolCall` records. If no PO recovered: routed to AP review with recommendation.
+
+---
+
+#### TC-AP-006 3-Way GRN Missing → GRN Retrieval Agent
+
+**Objective**: Validate GRN retrieval in 3-way mode.
+**Input**: INV-GRN-MISSING-001 with missing GRN precondition.
+**Expected**: Agent plan includes `GRN_RETRIEVAL` (3-way mode only). `grn_lookup` tool call appears. If GRN still missing: recommendation routes to AP review or escalation.
+
+---
+
+#### TC-AP-007 Two-Way Mode Must Ignore GRN
+
+**Objective**: Validate mode-aware suppression of GRN checks.
+**Input**: Service PO PO-1002 and matching service invoice.
+**Expected**: Mode=`TWO_WAY`. No GRN exceptions. `GRN_RETRIEVAL` not planned. Reconciliation depends only on invoice vs PO fields.
+
+---
+
+#### TC-AP-008 Low Extraction Confidence → Invoice Understanding Agent
+
+**Objective**: Validate low-confidence routing behaviour.
+**Input**: INV-LOWCONF-001 (extraction_confidence=0.55).
+**Expected**: Deterministic: `REQUIRES_REVIEW`. Agent plan includes `INVOICE_UNDERSTANDING` before analysis/routing tail. Reviewer summary generated from `EXCEPTION_ANALYSIS` path.
+
+---
+
+#### TC-AP-009 Duplicate Invoice Handling
+
+**Objective**: Validate duplicate invoice protection.
+**Steps**: (1) Create and reconcile INV-EXACT-001. (2) Create second invoice with same invoice_number, vendor, and amount.
+**Expected**: Duplicate flag set. Classification routes to `REQUIRES_REVIEW`. Agent recommendation should not auto-close duplicate-risk cases.
+
+---
+
+#### TC-AP-010 Currency Mismatch Exception
+
+**Objective**: Validate currency mismatch exception creation.
+**Input**: Invoice against PO-1001 but with `currency=USD` instead of INR.
+**Expected**: `CURRENCY_MISMATCH` exception generated. Final status not clean `MATCHED`. Agent analysis includes exception rationale and reviewer action.
+
+---
+
+#### TC-AP-011 Tax Mismatch Exception
+
+**Objective**: Validate tax variance exception path.
+**Input**: INV-EXACT-001 baseline but with materially different tax_amount.
+**Expected**: `TAX_MISMATCH` exception generated. Agent plan may include `COMPLIANCE_AGENT` depending on policy/exception set.
+
+---
+
+#### TC-AP-012 LLM-Assisted Line Match (Optional Feature Test)
+
+**Objective**: Validate optional LLM fallback for ambiguous line matching.
+**Input**: INV-UNRESOLVED-LINE-001.
+**Default system**: Deterministic scorer marks line as `AMBIGUOUS`/`UNRESOLVED`. No LLM resolution. Exception path proceeds to review/agents.
+**With custom fallback enabled only**: LLM fallback returns selected PO line. Match method includes `LLM_FALLBACK` in line metadata. Confidence and rationale captured.
+**Tester note**: Record whether fallback service is enabled before executing. Pass/fail depends on environment configuration.
+
+---
+
+#### TC-AP-013 Tool Authorization Guardrail
+
+**Objective**: Validate RBAC enforcement for agent tool calls.
+**Input**: Trigger agent flow using a user lacking `purchase_orders.view` or `grns.view`.
+**Expected**: Tool authorization denied by guardrail. Denial captured in audit events. Agent should not fabricate evidence; returns uncertainty/routing recommendation.
+
+---
+
+#### TC-AP-014 Recommendation Routing Quality
+
+**Objective**: Validate recommendation types map correctly to outcomes.
+**Input**: Run scenarios from TC-AP-004, 005, 006, 008.
+**Expected recommendation types**: `AUTO_CLOSE`, `SEND_TO_AP_REVIEW`, `SEND_TO_VENDOR_CLARIFICATION`, `ESCALATE_TO_MANAGER`, `REPROCESS_EXTRACTION`. `DecisionLog` includes rationale and confidence.
+
+---
+
+#### TC-AP-015 End-to-End Case Timeline Completeness
+
+**Objective**: Validate audit and trace completeness across deterministic + agentic path.
+**Input**: Execute TC-AP-005 or TC-AP-006 end-to-end.
+**Expected**: `AuditEvent` has key events for reconciliation start/end and agent actions. `AgentRun`, `AgentStep`, and `ToolCall` records exist. Governance timeline is chronologically complete and role-aware.
+
+---
+
+### 10.7 Exact vs Fuzzy vs LLM Matching — Tester Cheat Sheet
+
+| Match Type | When It Applies | Output Target |
+|---|---|---|
+| **Exact** | Item code matches exactly; description near-exact; qty/price/amount within strict tolerance | `MATCHED` without agent pipeline |
+| **Fuzzy (Deterministic)** | Item code missing/different; description has typos or synonym-like shifts; token/fuzzy similarity strong enough for deterministic selection | Deterministic line selection succeeds |
+| **LLM Fallback** | Only if custom `LineMatchLLMFallbackService` enabled; deterministic candidate ranking ambiguous; fallback returns candidate with rationale | Line metadata marks method `LLM_FALLBACK` |
+
+Default product note: Base fallback is a no-op — LLM line matching is not active out of the box.
+
+---
+
+### 10.8 Suggested Execution Order for Testers
+
+1. TC-AP-001 (baseline exact)
+2. TC-AP-002 (fuzzy deterministic)
+3. TC-AP-003 (partial auto-close)
+4. TC-AP-004 (partial agentic)
+5. TC-AP-005 (PO missing)
+6. TC-AP-006 (GRN missing in 3-way)
+7. TC-AP-007 (2-way suppression of GRN)
+8. TC-AP-008 (low extraction confidence)
+9. TC-AP-009 to 011 (risk/compliance paths)
+10. TC-AP-012 (optional LLM fallback)
+11. TC-AP-013 to 015 (guardrail + governance completeness)
+
+---
+
+### 10.9 Test Evidence Checklist
+
+For each executed test case, capture:
+- Invoice ID and ReconciliationResult ID
+- Match status and reconciliation mode
+- Exception list with severity
+- Agent plan and actual agents executed
+- Tool calls made (`po_lookup`, `grn_lookup`, etc.)
+- Final recommendation type and confidence
+- Review assignment created (yes/no)
+- Relevant audit events present (yes/no)
+
+---
+
+### 10.10 Exit Criteria for AP Finance Agent Functional Sign-Off
+
+Minimum pass criteria:
+1. Baseline exact and fuzzy deterministic scenarios pass.
+2. PO/GRN missing scenarios trigger expected agent + tool behaviour.
+3. Low-confidence and duplicate/risk scenarios route to review correctly.
+4. RBAC guardrail denial behaviour is fail-closed.
+5. Governance evidence (`AgentRun`/`ToolCall`/`AuditEvent`/`DecisionLog`) is complete for at least one complex case.
+
+Optional criteria:
+- LLM fallback line matching validated only in environments where fallback service is explicitly enabled.

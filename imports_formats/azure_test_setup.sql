@@ -185,23 +185,35 @@ DELETE FROM [dbo].[Master_MasterCodes_Table];
 DELETE FROM [dbo].[Master_Table];
 
 -- ---- Vendors ------------------------------------------------
--- Two vendors: one active supplier, one inactive
+-- Active vendors cover live cases plus documented reconciliation scenarios.
 INSERT INTO [dbo].[Master_Table] (MasterName, MasterType, VoucherSeries, VoucherNo, VoucherLineNo, inactive) VALUES
     ('ACME Supplies Pvt Ltd', 'creditoraccount', 'App PO%', 1, 1, 'False'),
     ('BuildRight Materials', 'creditoraccount',  'App PO%', 2, 1, 'False'),
     ('DHANVEEN PIGMENTS PVT.LTD.', 'creditoraccount', 'App PO%', 616, 1, 'False'),
+    ('Bhabani Pigments Pvt. Ltd.', 'creditoraccount', 'App PO%', 680, 1, 'False'),
+    ('Azelis India Pvt Ltd', 'creditoraccount', 'App PO%', 13, 1, 'False'),
+    ('AARJAVAM TECHFAB PVT LTD_HYD', 'creditoraccount', 'App PO%', 288, 1, 'False'),
+    ('Spectrum Industrial Chemicals Ltd', 'creditoraccount', 'App PO%', 1010, 1, 'False'),
     ('Old Vendor Co',        'creditoraccount',  'App PO%', 3, 1, 'True');
 
 INSERT INTO [dbo].[Master_MasterCodes_Table] (MasterName, MasterCode, mastertype, VoucherSeries, VoucherNo) VALUES
     ('ACME Supplies Pvt Ltd', 'VND001', 'creditoraccount', 'App PO%', 1),
     ('BuildRight Materials',  'VND002', 'creditoraccount', 'App PO%', 2),
     ('DHANVEEN PIGMENTS PVT.LTD.', 'VND616', 'creditoraccount', 'App PO%', 616),
+    ('Bhabani Pigments Pvt. Ltd.', 'VND680', 'creditoraccount', 'App PO%', 680),
+    ('Azelis India Pvt Ltd', 'VND013', 'creditoraccount', 'App PO%', 13),
+    ('AARJAVAM TECHFAB PVT LTD_HYD', 'VND288', 'creditoraccount', 'App PO%', 288),
+    ('Spectrum Industrial Chemicals Ltd', 'VND810', 'creditoraccount', 'App PO%', 1010),
     ('Old Vendor Co',         'VND003', 'creditoraccount', 'App PO%', 3);
 
 INSERT INTO [dbo].[Master_RegistrationDetails_Table] (MasterName, GSTIN, PANo, VoucherSeries, VoucherNo) VALUES
     ('ACME Supplies Pvt Ltd', '27AABCU9603R1ZX', 'AABCU9603R',  'App PO%', 1),
     ('BuildRight Materials',  '29AADCB2230M1Z1', 'AADCB2230M',  'App PO%', 2),
     ('DHANVEEN PIGMENTS PVT.LTD.', '24AABCD0213A1ZT', 'AABCD0213A', 'App PO%', 616),
+    ('Bhabani Pigments Pvt. Ltd.', '19AADCB3680P1Z5', 'AADCB3680P', 'App PO%', 680),
+    ('Azelis India Pvt Ltd', '27AAECA0013R1ZV', 'AAECA0013R', 'App PO%', 13),
+    ('AARJAVAM TECHFAB PVT LTD_HYD', '36AAICA0288H1ZX', 'AAICA0288H', 'App PO%', 288),
+    ('Spectrum Industrial Chemicals Ltd', '24AAICS1010Q1ZT', 'AAICS1010Q', 'App PO%', 1010),
     ('Old Vendor Co',         NULL, NULL,                         'App PO%', 3);
 
 -- ---- Purchase Orders ----------------------------------------
@@ -214,7 +226,15 @@ VALUES
     ('App PO', 1001, '2026-01-10', 'ACME Supplies Pvt Ltd',  'ACME-REF-2026-001', 150000.00, 150000.00, 'INR', 'Office supplies Q1', 'Purchase Order'),
     ('App PO', 1002, '2026-02-05', 'ACME Supplies Pvt Ltd',  'ACME-REF-2026-002', 75000.00,  75000.00,  'INR', 'IT equipment',        'Purchase Order'),
     ('App PO', 616,  '2026-04-05', 'DHANVEEN PIGMENTS PVT.LTD.', '616/2025-26', 1848000.00, 1848000.00, 'INR', 'Pigment Green - 7 for Blend Colours Pvt Ltd', 'Purchase Order'),
-    ('App PO', 1003, '2026-02-20', 'BuildRight Materials',   'BR-PO-2026-01',     220000.00, 220000.00, 'INR', 'Construction raw mat','Purchase Order');
+    ('App PO', 1003, '2026-02-20', 'BuildRight Materials',   'BR-PO-2026-01',     220000.00, 220000.00, 'INR', 'Construction raw mat','Purchase Order'),
+    ('App PO', 680,  '2026-04-15', 'Bhabani Pigments Pvt. Ltd.', 'PO-KTD-680/2025-26', 4090050.00, 4090050.00, 'INR', 'Scenario LIVE-680: BPPL invoice recovery with two pigment lines', 'Purchase Order'),
+    ('App PO', 13,   '2026-04-03', 'Azelis India Pvt Ltd', 'PO-BUR-13/2026-27', 191000.00, 191000.00, 'INR', 'Scenario LIVE-013: Azelis resin purchase order for existing case', 'Purchase Order'),
+    ('App PO', 1004, '2026-03-12', 'BuildRight Materials', 'SCN-GRN-MISSING/2026-01', 96000.00, 96000.00, 'INR', 'Scenario GRN_NOT_FOUND: PO exists without any receipt rows', 'Purchase Order'),
+    ('App PO', 1005, '2026-03-18', 'BuildRight Materials', 'SCN-OVER-RECEIPT/2026-01', 88000.00, 88000.00, 'INR', 'Scenario OVER_RECEIPT: GRN exceeds ordered quantity', 'Purchase Order'),
+    ('App PO', 1006, '2026-03-22', 'Spectrum Industrial Chemicals Ltd', 'SCN-INVOICE-EXCEEDS/2026-01', 150000.00, 150000.00, 'INR', 'Scenario INVOICE_EXCEEDS: invoice quantity higher than received', 'Purchase Order'),
+    ('App PO', 1007, '2026-01-05', 'ACME Supplies Pvt Ltd', 'SCN-DELAYED-RECEIPT/2026-01', 125000.00, 125000.00, 'INR', 'Scenario DELAYED_RECEIPT: late GRN after PO date', 'Purchase Order'),
+    ('App PO', 1008, '2026-02-25', 'ACME Supplies Pvt Ltd', 'SCN-AUTO-CLOSE/2026-01', 100000.00, 100000.00, 'INR', 'Scenario AUTO_CLOSE: minor variance remains within tolerance band', 'Purchase Order'),
+    ('App PO', 1010, '2026-03-28', 'Spectrum Industrial Chemicals Ltd', 'SCN-LLM-FUZZY/2026-01', 240000.00, 240000.00, 'INR', 'Scenario LLM_FUZZY: description-driven and ambiguous line matching', 'Purchase Order');
 
 -- PO line items
 INSERT INTO [dbo].[Transaction_ItemBody_Table]
@@ -229,7 +249,25 @@ VALUES
     ('App PO', 616, 1, 'DVN-11062', 'Pigment Green - 7', 'Kg', 4000, 462.00, 1848000.00, 1848000.00, 'Pigment Green - 7, PRODUCT CODE : DVN-11062'),
     -- PO 1003 -- two lines
     ('App PO', 1003, 1, 'ITM-004', 'Cement OPC 53 Grade',  'Bag', 1000,   110.00, 110000.00,110000.00, 'OPC 53 grade 50kg bag'),
-    ('App PO', 1003, 2, 'ITM-005', 'TMT Steel Bar 12mm',   'Kg',   500,   220.00, 110000.00,110000.00, 'Fe500 TMT bar');
+    ('App PO', 1003, 2, 'ITM-005', 'TMT Steel Bar 12mm',   'Kg',   500,   220.00, 110000.00,110000.00, 'Fe500 TMT bar'),
+    -- PO 680 -- mirrors live case BPPL/2026-27/033
+    ('App PO', 680, 1, 'BP-151', 'Alpha Blue (Pigment Blue 15.1)', 'Kg', 3000, 621.50, 1864500.00, 1864500.00, 'Alpha Blue (Pigment Blue 15.1), HSN 32041751'),
+    ('App PO', 680, 2, 'BP-150', 'Alpha Blue (Pigment Blue 15.0)', 'Kg', 3700, 601.50, 2225550.00, 2225550.00, 'Alpha Blue (Pigment Blue 15.0), HSN 32041751'),
+    -- PO 13 -- mirrors live case SI994099283
+    ('App PO', 13, 1, 'RES-006', 'Resicor 006 Liquid GEN', 'Drum', 100, 1910.00, 191000.00, 191000.00, 'Resicor 006 Liquid GEN, 20 kg HDPE Drum pack'),
+    -- Scenario GRN_NOT_FOUND
+    ('App PO', 1004, 1, 'CEM-FAST', 'Fast Set Cement Additive', 'Bag', 800, 120.00, 96000.00, 96000.00, 'Fast set cement additive 25kg bag'),
+    -- Scenario OVER_RECEIPT
+    ('App PO', 1005, 1, 'STEEL-08', 'TMT Steel Bar 8mm', 'Kg', 800, 110.00, 88000.00, 88000.00, 'Fe500 TMT bar 8mm'),
+    -- Scenario INVOICE_EXCEEDS
+    ('App PO', 1006, 1, 'SOL-210', 'Industrial Solvent 210', 'Drum', 100, 1500.00, 150000.00, 150000.00, 'Industrial Solvent 210, 50L drum'),
+    -- Scenario DELAYED_RECEIPT
+    ('App PO', 1007, 1, 'PACK-001', 'Laminated Packing Roll', 'Roll', 500, 250.00, 125000.00, 125000.00, 'Laminated packing roll 24 inch'),
+    -- Scenario AUTO_CLOSE
+    ('App PO', 1008, 1, 'AUTO-001', 'Auto Close Test Chemical', 'Kg', 1000, 100.00, 100000.00, 100000.00, 'Auto close tolerance test chemical'),
+    -- Scenario LLM_FUZZY / ambiguous descriptions
+    ('App PO', 1010, 1, 'RB-21A', 'Reactive Blue 21 Industrial Dye', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 industrial dye 25kg drum'),
+    ('App PO', 1010, 2, 'RB-21B', 'Reactive Blue 21 GP Grade', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 GP grade, 25 kilogram container');
 
 UPDATE [dbo].[Transaction_ItemBody_Table]
 SET CostCentre = 'RM-COL-01',
@@ -270,7 +308,51 @@ VALUES
     ('MAIN', '2026-03-05', 'ABSR0002', 1003, 2,
      'INR', 'ITM-005', 'Fe500 TMT bar', 500, 500,
      220.00, 110000.00, 'Kg',
-     'VND002', 'BuildRight Materials', 'WH02', 1.0, 220.00, 110000.00, '2026-02-20');
+        'VND002', 'BuildRight Materials', 'WH02', 1.0, 220.00, 110000.00, '2026-02-20'),
+        -- GRN for PO 680, lines 1-2 (full) -- resolves live case PO lookup
+        ('MAIN', '2026-04-18', 'ABSR0680', 680, 1,
+        'INR', 'BP-151', 'Alpha Blue (Pigment Blue 15.1)', 3000, 3000,
+        621.50, 1864500.00, 'Kg',
+        'VND680', 'Bhabani Pigments Pvt. Ltd.', 'WH04', 1.0, 621.50, 1864500.00, '2026-04-15'),
+        ('MAIN', '2026-04-18', 'ABSR0680', 680, 2,
+        'INR', 'BP-150', 'Alpha Blue (Pigment Blue 15.0)', 3700, 3700,
+        601.50, 2225550.00, 'Kg',
+        'VND680', 'Bhabani Pigments Pvt. Ltd.', 'WH04', 1.0, 601.50, 2225550.00, '2026-04-15'),
+        -- GRN for PO 13, line 1 (full) -- resolves live case PO lookup
+        ('MAIN', '2026-04-07', 'ABSR0013', 13, 1,
+        'INR', 'RES-006', 'Resicor 006 Liquid GEN, 20 kg HDPE Drum pack', 100, 100,
+        1910.00, 191000.00, 'Drum',
+        'VND013', 'Azelis India Pvt Ltd', 'WH05', 1.0, 1910.00, 191000.00, '2026-04-03'),
+        -- No GRN rows for PO 1004 on purpose: GRN_NOT_FOUND scenario
+        -- GRN for PO 1005 exceeds ordered quantity: OVER_RECEIPT
+        ('MAIN', '2026-03-21', 'ABSR1005', 1005, 1,
+        'INR', 'STEEL-08', 'Fe500 TMT bar 8mm', 800, 850,
+        110.00, 93500.00, 'Kg',
+        'VND002', 'BuildRight Materials', 'WH02', 1.0, 110.00, 93500.00, '2026-03-18'),
+        -- GRN for PO 1006 under-received: INVOICE_EXCEEDS
+        ('MAIN', '2026-03-25', 'ABSR1006', 1006, 1,
+        'INR', 'SOL-210', 'Industrial Solvent 210, 50L drum', 100, 70,
+        1500.00, 105000.00, 'Drum',
+        'VND810', 'Spectrum Industrial Chemicals Ltd', 'WH06', 1.0, 1500.00, 105000.00, '2026-03-22'),
+        -- GRN for PO 1007 arrives late: DELAYED_RECEIPT
+        ('MAIN', '2026-02-28', 'ABSR1007', 1007, 1,
+        'INR', 'PACK-001', 'Laminated packing roll 24 inch', 500, 500,
+        250.00, 125000.00, 'Roll',
+        'VND001', 'ACME Supplies Pvt Ltd', 'WH01', 1.0, 250.00, 125000.00, '2026-01-05'),
+        -- GRN for PO 1008 exact receipt, invoice will carry only minor variance: AUTO_CLOSE
+        ('MAIN', '2026-02-27', 'ABSR1008', 1008, 1,
+        'INR', 'AUTO-001', 'Auto close tolerance test chemical', 1000, 1000,
+        100.00, 100000.00, 'Kg',
+        'VND001', 'ACME Supplies Pvt Ltd', 'WH01', 1.0, 100.00, 100000.00, '2026-02-25'),
+        -- GRN for PO 1010 full receipt with near-identical descriptions: LLM_FUZZY
+        ('MAIN', '2026-04-01', 'ABSR1010', 1010, 1,
+        'INR', 'RB-21A', 'Reactive Blue 21 industrial dye 25kg drum', 60, 60,
+        2000.00, 120000.00, 'Drum',
+        'VND810', 'Spectrum Industrial Chemicals Ltd', 'WH06', 1.0, 2000.00, 120000.00, '2026-03-28'),
+        ('MAIN', '2026-04-01', 'ABSR1010', 1010, 2,
+        'INR', 'RB-21B', 'Reactive Blue 21 GP grade, 25 kilogram container', 60, 60,
+        2000.00, 120000.00, 'Drum',
+        'VND810', 'Spectrum Industrial Chemicals Ltd', 'WH06', 1.0, 2000.00, 120000.00, '2026-03-28');
 
 -- ---- Purchase Invoices (as vouchers, series 'App PI') --------
 -- Invoice from ACME against PO 1001 (for the items received)
@@ -279,7 +361,15 @@ INSERT INTO [dbo].[Transaction_Header_Table]
 VALUES
     ('App PI', 2001, '2026-01-25', 'ACME Supplies Pvt Ltd', 'INV-ACME-2026-0045', 144000.00, 144000.00, 'INR', 'Invoice against PO 1001', 'Purchase Invoice', '27AABCU9603R1ZX'),
     ('App PI', 2616, '2026-04-11', 'DHANVEEN PIGMENTS PVT.LTD.', '90/26-27', 2180640.00, 1848000.00, 'INR', 'Invoice against PO 616/2025-26', 'Purchase Invoice', '24AABCD0213A1ZT'),
-    ('App PI', 2002, '2026-03-10', 'BuildRight Materials',  'INV-BR-2026-0088',   220000.00, 220000.00, 'INR', 'Invoice against PO 1003', 'Purchase Invoice', '29AADCB2230M1Z1');
+    ('App PI', 2002, '2026-03-10', 'BuildRight Materials',  'INV-BR-2026-0088',   220000.00, 220000.00, 'INR', 'Invoice against PO 1003', 'Purchase Invoice', '29AADCB2230M1Z1'),
+    ('App PI', 2680, '2026-04-20', 'Bhabani Pigments Pvt. Ltd.', 'BPPL/2026-27/033', 4826259.00, 4090050.00, 'INR', 'Invoice against PO-KTD-680/2025-26', 'Purchase Invoice', '19AADCB3680P1Z5'),
+    ('App PI', 2013, '2026-04-08', 'Azelis India Pvt Ltd', 'SI994099283', 225380.00, 191000.00, 'INR', 'Invoice against PO-BUR-13/2026-27', 'Purchase Invoice', '27AAECA0013R1ZV'),
+    ('App PI', 2104, '2026-03-14', 'BuildRight Materials', 'INV-GRN-MISS-2104', 96000.00, 96000.00, 'INR', 'Invoice for GRN missing scenario', 'Purchase Invoice', '29AADCB2230M1Z1'),
+    ('App PI', 2105, '2026-03-22', 'BuildRight Materials', 'INV-OVER-2105', 93500.00, 93500.00, 'INR', 'Invoice for over receipt scenario', 'Purchase Invoice', '29AADCB2230M1Z1'),
+    ('App PI', 2106, '2026-03-26', 'Spectrum Industrial Chemicals Ltd', 'INV-EXCEEDS-2106', 150000.00, 150000.00, 'INR', 'Invoice exceeds received quantity scenario', 'Purchase Invoice', '24AAICS1010Q1ZT'),
+    ('App PI', 2107, '2026-02-28', 'ACME Supplies Pvt Ltd', 'INV-DELAY-2107', 125000.00, 125000.00, 'INR', 'Invoice for delayed receipt scenario', 'Purchase Invoice', '27AABCU9603R1ZX'),
+    ('App PI', 2108, '2026-02-28', 'ACME Supplies Pvt Ltd', 'INV-AUTO-2108', 100200.00, 100200.00, 'INR', 'Invoice within auto-close band', 'Purchase Invoice', '27AABCU9603R1ZX'),
+    ('App PI', 2110, '2026-04-02', 'Spectrum Industrial Chemicals Ltd', 'INV-LLM-2110', 240000.00, 240000.00, 'INR', 'Invoice for fuzzy line matching scenario', 'Purchase Invoice', '24AAICS1010Q1ZT');
 
 -- Invoice line items
 INSERT INTO [dbo].[Transaction_ItemBody_Table]
@@ -292,7 +382,25 @@ VALUES
     ('App PI', 2616, 1, 'DVN-11062', 'Pigment Green - 7', 'Kg', 4000, 462.00, 1848000.00, 1848000.00, 'Pigment Green - 7, PRODUCT CODE : DVN-11062'),
     -- Invoice 2002 lines
     ('App PI', 2002, 1, 'ITM-004', 'Cement OPC 53 Grade', 'Bag',  1000,   110.00,110000.00,110000.00, 'OPC 53 grade 50kg bag'),
-    ('App PI', 2002, 2, 'ITM-005', 'TMT Steel Bar 12mm',  'Kg',    500,   220.00,110000.00,110000.00, 'Fe500 TMT bar');
+    ('App PI', 2002, 2, 'ITM-005', 'TMT Steel Bar 12mm',  'Kg',    500,   220.00,110000.00,110000.00, 'Fe500 TMT bar'),
+    -- Invoice 2680 mirrors live BPPL extraction
+    ('App PI', 2680, 1, 'BP-151', 'Alpha Blue (Pigment Blue 15.1)', 'Kg', 3000, 621.50, 1864500.00, 1864500.00, 'Alpha Blue (Pigment Blue 15.1), HSN: 32041751'),
+    ('App PI', 2680, 2, 'BP-150', 'Alpha Blue (Pigment Blue 15.0)', 'Kg', 3700, 601.50, 2225550.00, 2225550.00, 'Alpha Blue (Pigment Blue 15.0), HSN: 32041751'),
+    -- Invoice 2013 mirrors live Azelis extraction
+    ('App PI', 2013, 1, 'RES-006', 'Resicor 006 Liquid GEN', 'Drum', 100, 1910.00, 191000.00, 191000.00, 'Resicor 006 Liquid GEN, 20 kg HDPE Drum (5)'),
+    -- Scenario GRN_NOT_FOUND
+    ('App PI', 2104, 1, 'CEM-FAST', 'Fast Set Cement Additive', 'Bag', 800, 120.00, 96000.00, 96000.00, 'Fast set cement additive 25kg bag'),
+    -- Scenario OVER_RECEIPT
+    ('App PI', 2105, 1, 'STEEL-08', 'TMT Steel Bar 8mm', 'Kg', 850, 110.00, 93500.00, 93500.00, 'Fe500 TMT bar 8mm'),
+    -- Scenario INVOICE_EXCEEDS
+    ('App PI', 2106, 1, 'SOL-210', 'Industrial Solvent 210', 'Drum', 100, 1500.00, 150000.00, 150000.00, 'Industrial Solvent 210, 50L drum'),
+    -- Scenario DELAYED_RECEIPT
+    ('App PI', 2107, 1, 'PACK-001', 'Laminated Packing Roll', 'Roll', 500, 250.00, 125000.00, 125000.00, 'Laminated packing roll 24 inch'),
+    -- Scenario AUTO_CLOSE: 0.2 percent quantity delta, still within tolerance band
+    ('App PI', 2108, 1, 'AUTO-001', 'Auto Close Test Chemical', 'Kg', 1002, 100.00, 100200.00, 100200.00, 'Auto close tolerance test chemical'),
+    -- Scenario LLM_FUZZY: descriptions are close to both PO lines
+    ('App PI', 2110, 1, 'RB-21X', 'Reactive Blue 21 Dye', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 industrial dye 25 kg drum'),
+    ('App PI', 2110, 2, 'RB-21Y', 'Reactive Blue 21 GP', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 GP grade 25kg container');
 
 UPDATE [dbo].[Transaction_ItemBody_Table]
 SET CostCentre = 'RM-COL-01',
@@ -310,6 +418,14 @@ VALUES
     ('App PI', 2616, 1, 'Credit', 'DHANVEEN PIGMENTS PVT.LTD.', 2180640.00, 2180640.00, '90/26-27', '2026-04-11', 'App PI', 2616),
     -- Payment entry for invoice 2002
     ('App PI', 2002, 1, 'Credit', 'BuildRight Materials',  220000.00, 220000.00, 'INV-BR-2026-0088',   '2026-03-10', 'App PI', 2002),
+    ('App PI', 2680, 1, 'Credit', 'Bhabani Pigments Pvt. Ltd.', 4826259.00, 4826259.00, 'BPPL/2026-27/033', '2026-04-20', 'App PI', 2680),
+    ('App PI', 2013, 1, 'Credit', 'Azelis India Pvt Ltd', 225380.00, 225380.00, 'SI994099283', '2026-04-08', 'App PI', 2013),
+    ('App PI', 2104, 1, 'Credit', 'BuildRight Materials', 96000.00, 96000.00, 'INV-GRN-MISS-2104', '2026-03-14', 'App PI', 2104),
+    ('App PI', 2105, 1, 'Credit', 'BuildRight Materials', 93500.00, 93500.00, 'INV-OVER-2105', '2026-03-22', 'App PI', 2105),
+    ('App PI', 2106, 1, 'Credit', 'Spectrum Industrial Chemicals Ltd', 150000.00, 150000.00, 'INV-EXCEEDS-2106', '2026-03-26', 'App PI', 2106),
+    ('App PI', 2107, 1, 'Credit', 'ACME Supplies Pvt Ltd', 125000.00, 125000.00, 'INV-DELAY-2107', '2026-02-28', 'App PI', 2107),
+    ('App PI', 2108, 1, 'Credit', 'ACME Supplies Pvt Ltd', 100200.00, 100200.00, 'INV-AUTO-2108', '2026-02-28', 'App PI', 2108),
+    ('App PI', 2110, 1, 'Credit', 'Spectrum Industrial Chemicals Ltd', 240000.00, 240000.00, 'INV-LLM-2110', '2026-04-02', 'App PI', 2110),
     -- A duplicate invoice (same supplier inv number, different voucher) -- tests the duplicate_check query
     ('App PI', 2003, 1, 'Credit', 'ACME Supplies Pvt Ltd', 144000.00, 144000.00, 'INV-ACME-2026-0045', '2026-01-25', 'App PI', 2003);
 
@@ -352,3 +468,33 @@ HAVING COUNT(*) > 1;
 SELECT VoucherSeries, VoucherNo, PartyAccount, SupplierInvNo, SupplierInvDate, Amount
 FROM Transaction_Payments_Table
 WHERE SupplierInvNo = '90/26-27';
+
+-- Should return all scenario-tagged POs added for live and LLM-driven matching coverage
+SELECT VoucherNo, PartyRefDoc, Account, Remarks
+FROM Transaction_Header_Table
+WHERE VoucherSeries = 'App PO'
+    AND (
+            VoucherNo IN (13, 680, 1004, 1005, 1006, 1007, 1008, 1010)
+            OR PartyRefDoc IN (
+                    'PO-KTD-680/2025-26',
+                    'PO-BUR-13/2026-27',
+                    'SCN-GRN-MISSING/2026-01',
+                    'SCN-OVER-RECEIPT/2026-01',
+                    'SCN-INVOICE-EXCEEDS/2026-01',
+                    'SCN-DELAYED-RECEIPT/2026-01',
+                    'SCN-AUTO-CLOSE/2026-01',
+                    'SCN-LLM-FUZZY/2026-01'
+            )
+    )
+ORDER BY VoucherNo;
+
+-- Should confirm the intentional GRN gap for the GRN_NOT_FOUND scenario
+SELECT COUNT(*) AS grn_rows_for_1004
+FROM EFIMRDetailsTable
+WHERE POrderNum = 1004;
+
+-- Should show over-receipt and under-receipt conditions for scenario validation
+SELECT POrderNum, POrderLineNum, ORDERQTY, GRNQTY, ItemCode
+FROM EFIMRDetailsTable
+WHERE POrderNum IN (1005, 1006)
+ORDER BY POrderNum, POrderLineNum;

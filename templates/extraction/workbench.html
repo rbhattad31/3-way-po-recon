@@ -76,130 +76,64 @@
 {# ══════════ TAB 1 — Agent Runs ══════════ #}
 <div class="tab-pane fade {% if active_tab != 'approvals' and active_tab != 'rejected' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
 
-{# ── Credit Usage Strip ── #}
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
-    <i class="bi bi-coin me-1"></i>Credit Usage
-  </span>
-  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
-    1 invoice upload = 1 credit
-  </span>
-</div>
+{# ── Credit + Performance Snapshot (single row) ── #}
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg col-xl">
+  <div class="col-12 col-xl-6">
     <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;{% if credit_summary.available_credits <= 5 %}color:var(--ap-danger){% elif credit_summary.available_credits <= 20 %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ credit_summary.available_credits }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Available Credits</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ credit_summary.reserved_credits }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Reserved</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-info)">{{ credit_summary.monthly_used }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Used</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">
-          {% if credit_summary.monthly_limit > 0 %}{{ credit_summary.monthly_limit }}{% else %}∞{% endif %}
+      <div class="ap-card-body py-3 px-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            <i class="bi bi-coin me-1"></i>Credit Usage
+          </span>
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">1 invoice upload = 1 credit</span>
         </div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Limit</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">
-          {% if credit_summary.monthly_remaining < 0 %}∞{% else %}{{ credit_summary.monthly_remaining }}{% endif %}
+        <div class="d-flex flex-wrap align-items-end gap-3">
+          <div>
+            <div style="font-size:1.45rem;font-weight:700;line-height:1;{% if credit_summary.available_credits <= 5 %}color:var(--ap-danger){% elif credit_summary.available_credits <= 20 %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ credit_summary.available_credits }}</div>
+            <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Available</div>
+          </div>
+          <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            <div><strong>Used:</strong> {{ credit_summary.monthly_used }}</div>
+            <div><strong>Reserved:</strong> {{ credit_summary.reserved_credits }}</div>
+            <div><strong>Remaining:</strong> {% if credit_summary.monthly_remaining < 0 %}∞{% else %}{{ credit_summary.monthly_remaining }}{% endif %}</div>
+          </div>
         </div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Remaining</div>
+        {% if credit_summary.monthly_limit > 0 and credit_summary.usage_percent > 0 %}
+        <div class="mt-2">
+          <div class="progress" style="height:6px">
+            <div class="progress-bar {% if credit_summary.usage_percent >= 90 %}bg-danger{% elif credit_summary.usage_percent >= 70 %}bg-warning{% else %}bg-primary{% endif %}"
+                 role="progressbar" style="width:{{ credit_summary.usage_percent }}%" aria-valuenow="{{ credit_summary.usage_percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+          </div>
+          <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" class="mt-1">
+            {{ credit_summary.usage_percent }}% of monthly limit used
+          </div>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
-</div>
-{% if credit_summary.monthly_limit > 0 and credit_summary.usage_percent > 0 %}
-<div class="mb-4">
-  <div class="progress" style="height:6px">
-    <div class="progress-bar {% if credit_summary.usage_percent >= 90 %}bg-danger{% elif credit_summary.usage_percent >= 70 %}bg-warning{% else %}bg-primary{% endif %}"
-         role="progressbar" style="width:{{ credit_summary.usage_percent }}%" aria-valuenow="{{ credit_summary.usage_percent }}" aria-valuemin="0" aria-valuemax="100"></div>
-  </div>
-  <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" class="mt-1">
-    {{ credit_summary.usage_percent }}% of monthly limit used
-  </div>
-</div>
-{% endif %}
-
-{# ── KPI Strip ── #}
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
-    <i class="bi bi-bar-chart me-1"></i>Performance Counters
-  </span>
-  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" title="Stats cached for 60s to reduce DB load. Cached at {{ stats_cached_at|date:'H:i:s' }}">
-    <i class="bi bi-lightning-charge me-1"></i>Cached · {{ stats_cached_at|timesince }} ago
-  </span>
-</div>
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg col-xl">
+  <div class="col-12 col-xl-6">
     <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{{ stats.total }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Agent Runs</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.success_rate }}%</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Success Rate</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ stats.success }} of {{ stats.total }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-danger)">{{ stats.failed }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Failed</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{% widthratio stats.avg_confidence 1 100 %}%</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Avg Confidence</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;{% if stats.low_confidence %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ stats.low_confidence }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Low Confidence</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">&lt; 50%</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg col-xl">
-    <div class="ap-card h-100">
-      <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">{{ stats.avg_duration|floatformat:0 }}<span style="font-size:.75rem">ms</span></div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Avg Duration</div>
+      <div class="ap-card-body py-3 px-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            <i class="bi bi-bar-chart me-1"></i>Performance Counters
+          </span>
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" title="Stats cached for 60s to reduce DB load. Cached at {{ stats_cached_at|date:'H:i:s' }}">
+            <i class="bi bi-lightning-charge me-1"></i>Cached · {{ stats_cached_at|timesince }} ago
+          </span>
+        </div>
+        <div class="d-flex flex-wrap gap-3">
+          <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            <div><strong>Runs:</strong> {{ stats.total }}</div>
+            <div><strong>Success:</strong> {{ stats.success_rate }}% ({{ stats.success }}/{{ stats.total }})</div>
+          </div>
+          <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            <div><strong>Avg Confidence:</strong> {% widthratio stats.avg_confidence 1 100 %}%</div>
+            <div><strong>Avg Duration:</strong> {{ stats.avg_duration|floatformat:0 }} ms</div>
+            <div><strong>Low Confidence:</strong> {{ stats.low_confidence }}</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -208,46 +142,139 @@
 {# ── Filters ── #}
 <div class="ap-card mb-3">
   <div class="ap-card-body py-2 px-3">
-    <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size:var(--ap-font-size-sm)">
-      {# Search #}
-      <div class="input-group input-group-sm" style="max-width:240px">
-        <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search"></i></span>
-        <input type="text" id="filterSearch" class="form-control border-start-0" placeholder="Search filename, invoice, vendor…" value="{{ request.GET.q|default:'' }}">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+        <i class="bi bi-funnel me-1"></i>Basic Filters
       </div>
-      {# Status #}
-      <select id="filterStatus" class="form-select form-select-sm" style="max-width:130px">
-        <option value="">All Status</option>
-        <option value="success">Success</option>
-        <option value="failed">Failed</option>
-      </select>
-      {# Quick confidence buttons #}
-      <div class="btn-group btn-group-sm" role="group" aria-label="Confidence filter">
-        <button type="button" class="btn btn-outline-secondary conf-btn active" data-conf="">All</button>
-        <button type="button" class="btn btn-outline-success conf-btn" data-conf="high">High ≥80%</button>
-        <button type="button" class="btn btn-outline-warning conf-btn" data-conf="medium">Mid 50-80%</button>
-        <button type="button" class="btn btn-outline-danger conf-btn" data-conf="low">Low &lt;50%</button>
+      <button type="button" id="toggleAdvancedFilters" class="btn btn-sm btn-outline-secondary py-0">
+        <i class="bi bi-sliders me-1"></i>Advanced Filters
+      </button>
+    </div>
+
+    <div class="row g-2 align-items-end mb-2">
+      <div class="col-12 col-lg-4">
+        <label for="filterSearch" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Search</label>
+        <div class="input-group input-group-sm">
+          <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search"></i></span>
+          <input type="text" id="filterSearch" class="form-control border-start-0" placeholder="Filename, invoice, vendor..." value="{{ request.GET.q|default:'' }}">
+        </div>
       </div>
-      {# Confidence range slider #}
-      <div class="d-flex align-items-center gap-1" style="min-width:200px">
-        <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);white-space:nowrap">Conf:</span>
-        <input type="range" class="form-range form-range-sm" id="confSlider" min="0" max="100" value="0" style="width:120px">
-        <span id="confSliderVal" style="font-size:var(--ap-font-size-xs);font-weight:600;min-width:32px">0%</span>
+      <div class="col-6 col-lg-2">
+        <label for="filterStatus" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Run Status</label>
+        <select id="filterStatus" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="success">Success</option>
+          <option value="failed">Failed</option>
+        </select>
       </div>
-      {# Date range #}
-      <input type="date" id="filterDateFrom" class="form-control form-control-sm" style="max-width:140px" title="From date">
-      <input type="date" id="filterDateTo" class="form-control form-control-sm" style="max-width:140px" title="To date">
-      {# Spacer + Export #}
-      <div class="ms-auto d-flex gap-2">
-        <button type="button" id="clearFiltersBtn" class="btn btn-sm btn-outline-secondary" style="display:none">
-          <i class="bi bi-x-circle me-1"></i>Clear
-        </button>
-        <a href="{% url 'extraction:export_csv' %}" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary">
-          <i class="bi bi-download me-1"></i>Export CSV
-        </a>
-        <a href="{% url 'extraction:export_purchase_invoice_excel_bulk' %}" id="exportXlsxBtn" class="btn btn-sm btn-outline-success">
-          <i class="bi bi-download me-1"></i>Export XLSX
-        </a>
+      <div class="col-6 col-lg-2">
+        <label for="filterDateFrom" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Processed Date From</label>
+        <input type="date" id="filterDateFrom" class="form-control form-control-sm">
       </div>
+      <div class="col-6 col-lg-2">
+        <label for="filterDateTo" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Processed Date To</label>
+        <input type="date" id="filterDateTo" class="form-control form-control-sm">
+      </div>
+      <div class="col-6 col-lg-2">
+        <div class="d-flex gap-2 justify-content-end">
+          <button type="button" id="clearFiltersBtn" class="btn btn-sm btn-outline-secondary" style="display:none">
+            <i class="bi bi-x-circle me-1"></i>Clear
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-2" id="quickFilterChips">
+      <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Quick Views:</span>
+      <button type="button" class="btn btn-sm btn-outline-primary quick-chip" data-view="needs_review">Needs Review</button>
+      <button type="button" class="btn btn-sm btn-outline-primary quick-chip" data-view="has_exceptions">Has Exceptions</button>
+      <button type="button" class="btn btn-sm btn-outline-primary quick-chip" data-view="ready_for_recon">Ready For Recon</button>
+    </div>
+
+    <div id="advancedFiltersPane" class="border rounded p-2" style="display:none;background:rgba(0,0,0,.01)">
+      <div class="mb-2" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+        Source: email vs manual uploads. Invoice Status: lifecycle state. Approval: extraction approval outcome. Case: whether linked AP case exists. Exceptions: unresolved reconciliation issues. Recon Path: routing path used (2-way/3-way/non-PO).
+      </div>
+      <div class="row g-2 align-items-end">
+        <div class="col-6 col-lg-2">
+          <label for="filterSource" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Source</label>
+          <select id="filterSource" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="EMAIL">Email</option>
+            <option value="MANUAL">Manual</option>
+          </select>
+        </div>
+        <div class="col-6 col-lg-2">
+          <label for="filterInvoiceStatus" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Invoice Status</label>
+          <select id="filterInvoiceStatus" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="PENDING_APPROVAL">PENDING_APPROVAL</option>
+            <option value="READY_FOR_RECON">READY_FOR_RECON</option>
+            <option value="RECONCILED">RECONCILED</option>
+            <option value="FAILED">FAILED</option>
+            <option value="INVALID">INVALID</option>
+          </select>
+        </div>
+        <div class="col-6 col-lg-2">
+          <label for="filterApprovalStatus" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Approval</label>
+          <select id="filterApprovalStatus" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="PENDING">PENDING</option>
+            <option value="APPROVED">APPROVED</option>
+            <option value="AUTO_APPROVED">AUTO_APPROVED</option>
+            <option value="REJECTED">REJECTED</option>
+          </select>
+        </div>
+        <div class="col-6 col-lg-2">
+          <label for="filterHasCase" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Case</label>
+          <select id="filterHasCase" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="yes">Has Case</option>
+            <option value="no">No Case</option>
+          </select>
+        </div>
+        <div class="col-6 col-lg-2">
+          <label for="filterHasExceptions" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Exceptions</label>
+          <select id="filterHasExceptions" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="yes">Has Exceptions</option>
+            <option value="no">No Exceptions</option>
+          </select>
+        </div>
+        <div class="col-6 col-lg-2">
+          <label for="filterReconPath" class="form-label mb-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Recon Path</label>
+          <select id="filterReconPath" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="TWO_WAY">TWO_WAY</option>
+            <option value="THREE_WAY">THREE_WAY</option>
+            <option value="NON_PO">NON_PO</option>
+            <option value="UNRESOLVED">UNRESOLVED</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="d-flex align-items-center gap-2 flex-wrap mt-2" style="font-size:var(--ap-font-size-sm)">
+        <div class="btn-group btn-group-sm" role="group" aria-label="Confidence filter">
+          <button type="button" class="btn btn-outline-secondary conf-btn active" data-conf="">All Confidence</button>
+          <button type="button" class="btn btn-outline-success conf-btn" data-conf="high">High ≥80%</button>
+          <button type="button" class="btn btn-outline-warning conf-btn" data-conf="medium">Mid 50-80%</button>
+          <button type="button" class="btn btn-outline-danger conf-btn" data-conf="low">Low &lt;50%</button>
+        </div>
+        <div class="d-flex align-items-center gap-1" style="min-width:220px">
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);white-space:nowrap">Min Confidence:</span>
+          <input type="range" class="form-range form-range-sm" id="confSlider" min="0" max="100" value="0" style="width:130px">
+          <span id="confSliderVal" style="font-size:var(--ap-font-size-xs);font-weight:600;min-width:32px">0%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2 justify-content-end mt-2">
+      <a href="{% url 'extraction:export_csv' %}" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-download me-1"></i>Export CSV
+      </a>
+      <a href="{% url 'extraction:export_purchase_invoice_excel_bulk' %}" id="exportXlsxBtn" class="btn btn-sm btn-outline-success">
+        <i class="bi bi-download me-1"></i>Export XLSX
+      </a>
     </div>
   </div>
 </div>
@@ -321,24 +348,39 @@
     </span>
   </div>
   <div class="ap-card-body p-0" style="overflow-x:auto">
-    <table class="ap-table w-100" style="min-width:920px" id="resultsTable">
+     <table class="ap-table w-100" style="min-width:1100px" id="resultsTable">
       <thead>
         <tr>
+          <th style="width:100px">Case</th>
           <th>Invoice #</th>
           <th>Vendor</th>
           <th style="width:110px">Source</th>
           <th style="text-align:right">Amount</th>
-          <th style="width:110px">Confidence</th>
+          <th style="width:150px">Confidence / Approval</th>
           <th style="width:80px">Status</th>
-          <th style="width:100px">Approval</th>
-          <th style="width:100px">Case</th>
+          <th style="width:100px">Exceptions</th>
+          <th style="width:110px">Recon Path</th>
           <th style="width:130px">Processed</th>
-          <th style="width:60px"></th>
+          <th style="width:170px">Actions</th>
         </tr>
       </thead>
       <tbody id="resultsTableBody">
         {% for r in results %}
         <tr{% if r.invoice and r.invoice.status == 'EXTRACTION_IN_PROGRESS' or r.invoice and r.invoice.status == 'UPLOADED' %} data-processing="true"{% endif %}>
+          <td>
+            {% if r.invoice_id %}
+              {% get_case case_map r.invoice_id as inv_case %}
+              {% if inv_case %}
+              <a href="{% url 'cases:case_agent_view' inv_case.pk %}" class="text-decoration-none" style="font-size:.7rem">
+                <span class="ap-badge {% if inv_case.status == 'CLOSED' %}ap-badge-success{% elif inv_case.status == 'FAILED' %}ap-badge-danger{% elif inv_case.status == 'ESCALATED' %}ap-badge-warning{% else %}ap-badge-info{% endif %}">{{ inv_case.case_number }}</span>
+              </a>
+              {% else %}
+              <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
+              {% endif %}
+            {% else %}
+            <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
+            {% endif %}
+          </td>
           <td>
             {% if r.invoice %}
             <a href="{% url 'extraction:console' r.pk %}" class="text-decoration-none fw-medium">
@@ -389,6 +431,28 @@
               <span>{% widthratio r.confidence 1 100 %}%</span>
             </div>
             {% else %}—{% endif %}
+            {% if r.success and r.invoice_id %}
+              {% get_approval approval_map r.invoice_id as appr %}
+              {% if appr %}
+                <div class="mt-1">
+                {% if appr.status == 'PENDING' %}
+                <a href="{% url 'extraction:console' appr.extraction_result_id %}" class="ap-badge ap-badge-warning text-decoration-none" title="Review & Approve">
+                  <i class="bi bi-clock me-1"></i>PENDING
+                </a>
+                {% elif appr.status == 'APPROVED' %}
+                <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle me-1"></i>APPROVED</span>
+                {% elif appr.status == 'AUTO_APPROVED' %}
+                <span class="ap-badge ap-badge-info"><i class="bi bi-lightning me-1"></i>AUTO</span>
+                {% elif appr.status == 'REJECTED' %}
+                <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle me-1"></i>REJECTED</span>
+                {% endif %}
+                </div>
+              {% else %}
+                <div class="mt-1"><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></div>
+              {% endif %}
+            {% else %}
+              <div class="mt-1"><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></div>
+            {% endif %}
           </td>
           <td>
             {% if r.invoice %}
@@ -411,34 +475,27 @@
             {% endif %}
           </td>
           <td>
-            {% if r.success and r.invoice_id %}
-              {% get_approval approval_map r.invoice_id as appr %}
-              {% if appr %}
-                {% if appr.status == 'PENDING' %}
-                <a href="{% url 'extraction:console' appr.extraction_result_id %}" class="ap-badge ap-badge-warning text-decoration-none" title="Review & Approve">
-                  <i class="bi bi-clock me-1"></i>PENDING
-                </a>
-                {% elif appr.status == 'APPROVED' %}
-                <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle me-1"></i>APPROVED</span>
-                {% elif appr.status == 'AUTO_APPROVED' %}
-                <span class="ap-badge ap-badge-info"><i class="bi bi-lightning me-1"></i>AUTO</span>
-                {% elif appr.status == 'REJECTED' %}
-                <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle me-1"></i>REJECTED</span>
-                {% endif %}
+            {% if r.invoice_id %}
+              {% get_value exception_map r.invoice_id as exc_count %}
+              {% get_value exception_details_map r.invoice_id as exc_details %}
+              {% if exc_count %}
+              <span class="ap-badge ap-badge-danger" title="{{ exc_details|default:'Unresolved exceptions' }}">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ exc_count }}
+              </span>
               {% else %}
-                <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
+              <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
               {% endif %}
             {% else %}
-              <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
+            <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
             {% endif %}
           </td>
           <td>
             {% if r.invoice_id %}
-              {% get_case case_map r.invoice_id as inv_case %}
-              {% if inv_case %}
-              <a href="{% url 'cases:case_agent_view' inv_case.pk %}" class="text-decoration-none" style="font-size:.7rem">
-                <span class="ap-badge {% if inv_case.status == 'CLOSED' %}ap-badge-success{% elif inv_case.status == 'FAILED' %}ap-badge-danger{% elif inv_case.status == 'ESCALATED' %}ap-badge-warning{% else %}ap-badge-info{% endif %}">{{ inv_case.case_number }}</span>
-              </a>
+              {% get_value recon_path_map r.invoice_id as path %}
+              {% if path %}
+              <span class="ap-badge ap-badge-info" style="font-size:.65rem" title="Reconciliation processing path">
+                {{ path|pretty_enum }}
+              </span>
               {% else %}
               <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
               {% endif %}
@@ -450,8 +507,19 @@
             {{ r.created_at|date:"d M Y H:i" }}
           </td>
           <td>
-            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
-              View
+            <a href="{% url 'extraction:console' r.pk %}"
+               class="btn btn-sm btn-outline-primary py-0"
+               style="font-size:.7rem"
+               title="View details"
+               aria-label="View details">
+              <i class="bi bi-eye"></i>
+            </a>
+            <a href="{% url 'extraction:export_purchase_invoice_excel' r.pk %}"
+               class="btn btn-sm btn-outline-success py-0 ms-1"
+               style="font-size:.7rem"
+               title="Export invoice as XLSX"
+               aria-label="Export invoice as XLSX">
+              <i class="bi bi-file-earmark-excel"></i>
             </a>
             {% if is_admin_user %}
             <button type="button"
@@ -466,7 +534,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="10" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="11" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>
@@ -858,6 +926,8 @@
   // ── Globals ──────────────────────────────────────────────
   const FILTER_URL  = "{% url 'extraction:ajax_filter' %}";
   const DETAIL_URL  = "{% url 'extraction:console' pk=0 %}".replace('/0/', '/{pk}/');
+  const CASE_URL = "{% url 'cases:case_agent_view' pk=0 %}".replace('/0/', '/{pk}/');
+  const EXPORT_SINGLE_XLSX_URL = "{% url 'extraction:export_purchase_invoice_excel' pk=0 %}".replace('/0/', '/{pk}/');
   const EXPORT_XLSX_URL  = "{% url 'extraction:export_purchase_invoice_excel_bulk' %}";
   const EXPORT_CSV_URL  = "{% url 'extraction:export_csv' %}";
   const IS_ADMIN_USER = {% if is_admin_user %}true{% else %}false{% endif %};
@@ -870,6 +940,17 @@
 
   let debounceTimer = null;
   let activeConfPreset = '';
+  let activeQuickView = '';
+
+  function setQuickChipActive(view) {
+    activeQuickView = view || '';
+    document.querySelectorAll('.quick-chip').forEach(function(chip) {
+      chip.classList.remove('active');
+      if ((chip.dataset.view || '') === activeQuickView) {
+        chip.classList.add('active');
+      }
+    });
+  }
 
   // ── Build query string from current filters ──────────────
   function buildParams() {
@@ -878,21 +959,105 @@
     const status = document.getElementById('filterStatus').value;
     const dateFrom = document.getElementById('filterDateFrom').value;
     const dateTo = document.getElementById('filterDateTo').value;
+    const source = document.getElementById('filterSource').value;
+    const invoiceStatus = document.getElementById('filterInvoiceStatus').value;
+    const approvalStatus = document.getElementById('filterApprovalStatus').value;
+    const hasCase = document.getElementById('filterHasCase').value;
+    const hasExceptions = document.getElementById('filterHasExceptions').value;
+    const reconPath = document.getElementById('filterReconPath').value;
     const sliderVal = parseInt(document.getElementById('confSlider').value, 10);
 
     if (q) p.set('q', q);
     if (status) p.set('status', status);
+    if (source) p.set('source', source);
+    if (invoiceStatus) p.set('invoice_status', invoiceStatus);
+    if (approvalStatus) p.set('approval_status', approvalStatus);
+    if (hasCase) p.set('has_case', hasCase);
+    if (hasExceptions) p.set('has_exceptions', hasExceptions);
+    if (reconPath) p.set('recon_path', reconPath);
     if (activeConfPreset) p.set('confidence', activeConfPreset);
     if (sliderVal > 0) p.set('min_confidence', sliderVal);
     if (dateFrom) p.set('date_from', dateFrom);
     if (dateTo) p.set('date_to', dateTo);
+    if (document.getElementById('advancedFiltersPane').style.display !== 'none') p.set('adv', '1');
+    if (activeQuickView) p.set('quick_view', activeQuickView);
     return p;
+  }
+
+  function applyQuickView(view) {
+    // Reset advanced dimensions first
+    document.getElementById('filterHasExceptions').value = '';
+    document.getElementById('filterInvoiceStatus').value = '';
+    document.getElementById('filterHasCase').value = '';
+
+    if (view === 'needs_review') {
+      document.getElementById('filterHasExceptions').value = 'yes';
+      document.getElementById('filterInvoiceStatus').value = 'READY_FOR_RECON';
+      document.getElementById('filterHasCase').value = 'yes';
+    } else if (view === 'has_exceptions') {
+      document.getElementById('filterHasExceptions').value = 'yes';
+    } else if (view === 'ready_for_recon') {
+      document.getElementById('filterInvoiceStatus').value = 'READY_FOR_RECON';
+    }
+
+    // Make advanced controls visible when quick views rely on them.
+    if (view) {
+      var pane = document.getElementById('advancedFiltersPane');
+      pane.style.display = '';
+      var advBtn = document.getElementById('toggleAdvancedFilters');
+      advBtn.innerHTML = '<i class="bi bi-sliders me-1"></i>Hide Advanced';
+    }
+
+    setQuickChipActive(view);
+    fetchFiltered();
+  }
+
+  function prettyEnum(s) {
+    if (!s) return '';
+    return String(s).replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, function(m) { return m.toUpperCase(); });
+  }
+
+  function approvalBadge(status, rowPk) {
+    if (!status) {
+      return '<span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>';
+    }
+    if (status === 'PENDING') {
+      return `<a href="${DETAIL_URL.replace('{pk}', rowPk)}" class="ap-badge ap-badge-warning text-decoration-none" title="Review & Approve"><i class="bi bi-clock me-1"></i>PENDING</a>`;
+    }
+    if (status === 'APPROVED') {
+      return '<span class="ap-badge ap-badge-success"><i class="bi bi-check-circle me-1"></i>APPROVED</span>';
+    }
+    if (status === 'AUTO_APPROVED') {
+      return '<span class="ap-badge ap-badge-info"><i class="bi bi-lightning me-1"></i>AUTO</span>';
+    }
+    if (status === 'REJECTED') {
+      return '<span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle me-1"></i>REJECTED</span>';
+    }
+    return `<span class="ap-badge ap-badge-muted">${escHtml(status)}</span>`;
+  }
+
+  function invoiceStatusBadge(status, success) {
+    if (status === 'EXTRACTION_IN_PROGRESS' || status === 'UPLOADED') {
+      const lbl = status === 'EXTRACTION_IN_PROGRESS' ? 'Processing' : 'Queued';
+      return `<span class="ap-badge ap-badge-muted" style="font-size:.65rem"><span class="spinner-border spinner-border-sm me-1" style="width:.65rem;height:.65rem;border-width:2px" role="status" aria-hidden="true"></span>${lbl}</span>`;
+    }
+    if (status) {
+      let cls = 'ap-badge-muted';
+      if (status === 'RECONCILED' || status === 'READY_FOR_RECON') cls = 'ap-badge-success';
+      else if (status === 'PENDING_APPROVAL') cls = 'ap-badge-warning';
+      else if (status === 'FAILED' || status === 'INVALID') cls = 'ap-badge-danger';
+      else if (status === 'VALIDATED' || status === 'EXTRACTED') cls = 'ap-badge-info';
+      return `<span class="ap-badge ${cls}" style="font-size:.65rem">${escHtml(status)}</span>`;
+    }
+    return success
+      ? '<span class="ap-badge ap-badge-success">OK</span>'
+      : '<span class="ap-badge ap-badge-danger">FAIL</span>';
   }
 
   // ── Render table rows from JSON ──────────────────────────
   function renderRows(rows) {
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5" style="color:var(--ap-text-muted)">
+      tbody.innerHTML = `<tr><td colspan="11" class="text-center py-5" style="color:var(--ap-text-muted)">
         <i class="bi bi-funnel d-block mb-2" style="font-size:2rem"></i>No results match your filters.</td></tr>`;
       return;
     }
@@ -903,15 +1068,7 @@
         ? `<div class="ap-confidence"><div class="ap-confidence-bar"><div class="ap-confidence-fill ${confClass}" style="width:${confPct}%"></div></div><span>${confPct}%</span></div>`
         : '—';
       const isProc = r.invoice_status === 'EXTRACTION_IN_PROGRESS' || r.invoice_status === 'UPLOADED';
-      let statusBadge;
-      if (isProc) {
-        const lbl = r.invoice_status === 'EXTRACTION_IN_PROGRESS' ? 'Processing' : 'Queued';
-        statusBadge = `<span class="ap-badge ap-badge-muted" style="font-size:.65rem"><span class="spinner-border spinner-border-sm me-1" style="width:.65rem;height:.65rem;border-width:2px" role="status" aria-hidden="true"></span>${lbl}</span>`;
-      } else if (r.success) {
-        statusBadge = '<span class="ap-badge ap-badge-success">OK</span>';
-      } else {
-        statusBadge = '<span class="ap-badge ap-badge-danger">FAIL</span>';
-      }
+      const statusBadge = invoiceStatusBadge(r.invoice_status, r.success);
       const invLink = r.invoice_number
         ? `<a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="text-decoration-none fw-medium">${escHtml(r.invoice_number)}</a>`
         : '<span style="color:var(--ap-text-muted)">—</span>';
@@ -936,21 +1093,35 @@
               <path d="M9.293 0H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5.707L9.293 0zM9 1.5 13.5 6H10a1 1 0 0 1-1-1V1.5z"></path>
             </svg>Manual
           </span>`;
+      const caseBadge = r.case_number && r.case_id
+        ? `<a href="${CASE_URL.replace('{pk}', parseInt(r.case_id, 10))}" class="text-decoration-none" style="font-size:.7rem"><span class="ap-badge ${r.case_status === 'CLOSED' ? 'ap-badge-success' : (r.case_status === 'FAILED' ? 'ap-badge-danger' : (r.case_status === 'ESCALATED' ? 'ap-badge-warning' : 'ap-badge-info'))}">${escHtml(r.case_number)}</span></a>`
+        : '<span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>';
+      const approval = approvalBadge(r.approval_status, r.pk);
+      const excCount = parseInt(r.exception_count || 0, 10);
+      const exceptionCell = excCount > 0
+        ? `<span class="ap-badge ap-badge-danger" title="${escAttr(r.exception_details || 'Unresolved exceptions')}"><i class="bi bi-exclamation-triangle-fill me-1"></i>${excCount}</span>`
+        : '<span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>';
+      const reconPathCell = r.recon_path
+        ? `<span class="ap-badge ap-badge-info" style="font-size:.65rem" title="Reconciliation processing path">${escHtml(prettyEnum(r.recon_path))}</span>`
+        : '<span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>';
+      const viewBtn = `<a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem" title="View details" aria-label="View details"><i class="bi bi-eye"></i></a>`;
+      const xlsxBtn = `<a href="${EXPORT_SINGLE_XLSX_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-success py-0 ms-1" style="font-size:.7rem" title="Export invoice as XLSX" aria-label="Export invoice as XLSX"><i class="bi bi-file-earmark-excel"></i></a>`;
       const deleteBtn = IS_ADMIN_USER
         ? `<button type="button" class="btn btn-sm btn-outline-danger py-0 ms-1" style="font-size:.7rem" title="Admin: Hard-delete this invoice and all associated data" onclick="openAdminDeleteModal(${parseInt(r.pk, 10)}, '${escJsSingle(r.invoice_number || 'N/A')}')"><i class="bi bi-trash3"></i></button>`
         : '';
 
       return `<tr${isProc ? ' data-processing="true"' : ''}>
+        <td>${caseBadge}</td>
         <td>${invLink}</td>
         <td style="font-size:var(--ap-font-size-sm)">${vendorIcon}${escHtml(vendorName)}</td>
         <td>${sourceBadge}</td>
         <td style="text-align:right">${amount}</td>
-        <td>${confBar}</td>
+        <td>${confBar}<div class="mt-1">${approval}</div></td>
         <td>${statusBadge}</td>
-        <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
-        <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
+        <td>${exceptionCell}</td>
+        <td>${reconPathCell}</td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
-        <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a>${deleteBtn}</td>
+        <td>${viewBtn}${xlsxBtn}${deleteBtn}</td>
       </tr>`;
     }).join('');
   }
@@ -965,6 +1136,9 @@
     // Update export links with current filters
     exportXlsxBtn.href = EXPORT_XLSX_URL + (hasFilters ? '?' + params.toString() : '');
     exportCsvBtn.href = EXPORT_CSV_URL + (hasFilters ? '?' + params.toString() : '');
+
+    const newUrl = window.location.pathname + (hasFilters ? '?' + params.toString() : '');
+    window.history.replaceState({}, '', newUrl);
 
     fetch(FILTER_URL + '?' + params.toString(), {
       headers: { 'X-Requested-With': 'XMLHttpRequest' }
@@ -992,17 +1166,39 @@
     return d.innerHTML;
   }
   function escAttr(s) {
-    return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, ' ');
   }
   function escJsSingle(s) {
     return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   }
 
   // ── Event bindings ───────────────────────────────────────
+  document.querySelectorAll('.quick-chip').forEach(function(chip) {
+    chip.addEventListener('click', function() {
+      applyQuickView(this.dataset.view || '');
+    });
+  });
+
   document.getElementById('filterSearch').addEventListener('input', debouncedFetch);
   document.getElementById('filterStatus').addEventListener('change', fetchFiltered);
   document.getElementById('filterDateFrom').addEventListener('change', fetchFiltered);
   document.getElementById('filterDateTo').addEventListener('change', fetchFiltered);
+  document.getElementById('filterSource').addEventListener('change', fetchFiltered);
+  document.getElementById('filterInvoiceStatus').addEventListener('change', fetchFiltered);
+  document.getElementById('filterApprovalStatus').addEventListener('change', fetchFiltered);
+  document.getElementById('filterHasCase').addEventListener('change', fetchFiltered);
+  document.getElementById('filterHasExceptions').addEventListener('change', fetchFiltered);
+  document.getElementById('filterReconPath').addEventListener('change', fetchFiltered);
+
+  document.getElementById('toggleAdvancedFilters').addEventListener('click', function() {
+    var pane = document.getElementById('advancedFiltersPane');
+    var isHidden = pane.style.display === 'none';
+    pane.style.display = isHidden ? '' : 'none';
+    this.innerHTML = isHidden
+      ? '<i class="bi bi-sliders me-1"></i>Hide Advanced'
+      : '<i class="bi bi-sliders me-1"></i>Advanced Filters';
+    fetchFiltered();
+  });
 
   // Confidence slider
   var slider = document.getElementById('confSlider');
@@ -1036,13 +1232,76 @@
     document.getElementById('filterStatus').value = '';
     document.getElementById('filterDateFrom').value = '';
     document.getElementById('filterDateTo').value = '';
+    document.getElementById('filterSource').value = '';
+    document.getElementById('filterInvoiceStatus').value = '';
+    document.getElementById('filterApprovalStatus').value = '';
+    document.getElementById('filterHasCase').value = '';
+    document.getElementById('filterHasExceptions').value = '';
+    document.getElementById('filterReconPath').value = '';
     slider.value = 0;
     sliderLabel.textContent = '0%';
     activeConfPreset = '';
+    setQuickChipActive('');
     document.querySelectorAll('.conf-btn').forEach(function(b) { b.classList.remove('active'); });
     document.querySelector('.conf-btn[data-conf=""]').classList.add('active');
     fetchFiltered();
   });
+
+  // Restore filter state from query params so refresh keeps the same view.
+  (function restoreFromQuery() {
+    const sp = new URLSearchParams(window.location.search);
+
+    function setIf(id, key) {
+      var val = sp.get(key);
+      if (val !== null) {
+        document.getElementById(id).value = val;
+      }
+    }
+
+    setIf('filterSearch', 'q');
+    setIf('filterStatus', 'status');
+    setIf('filterDateFrom', 'date_from');
+    setIf('filterDateTo', 'date_to');
+    setIf('filterSource', 'source');
+    setIf('filterInvoiceStatus', 'invoice_status');
+    setIf('filterApprovalStatus', 'approval_status');
+    setIf('filterHasCase', 'has_case');
+    setIf('filterHasExceptions', 'has_exceptions');
+    setIf('filterReconPath', 'recon_path');
+
+    var adv = sp.get('adv');
+    if (adv === '1') {
+      var pane = document.getElementById('advancedFiltersPane');
+      pane.style.display = '';
+      document.getElementById('toggleAdvancedFilters').innerHTML = '<i class="bi bi-sliders me-1"></i>Hide Advanced';
+    }
+
+    var conf = sp.get('confidence') || '';
+    var minConf = sp.get('min_confidence');
+    if (conf) {
+      activeConfPreset = conf;
+      document.querySelectorAll('.conf-btn').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.conf === conf);
+      });
+    }
+    if (minConf !== null && minConf !== '') {
+      var n = parseInt(minConf, 10);
+      if (!isNaN(n)) {
+        slider.value = n;
+        sliderLabel.textContent = n + '%';
+        if (n > 0) {
+          activeConfPreset = '';
+          document.querySelectorAll('.conf-btn').forEach(function(b) { b.classList.remove('active'); });
+        }
+      }
+    }
+
+    setQuickChipActive(sp.get('quick_view') || '');
+
+    if (sp.toString()) {
+      fetchFiltered();
+    }
+  })();
 
   // Upload form
   document.getElementById('extractionForm').addEventListener('submit', function() {

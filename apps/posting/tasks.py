@@ -165,6 +165,10 @@ def import_reference_direct_task(
             "valid_row_count": batch.valid_row_count,
             "invalid_row_count": batch.invalid_row_count,
         }
+    except ValueError as exc:
+        # Known failure (connectivity, bad config) — log as WARNING, no retry.
+        logger.warning("import_reference_direct_task failed for %s (%s): %s", connector_name, batch_type, exc)
+        raise
     except Exception as exc:
-        logger.exception("import_reference_direct_task failed for %s (%s)", connector_name, batch_type)
+        logger.exception("import_reference_direct_task failed unexpectedly for %s (%s)", connector_name, batch_type)
         raise self.retry(exc=exc)

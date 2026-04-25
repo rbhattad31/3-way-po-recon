@@ -367,9 +367,19 @@ def trigger_direct_erp_import(request):
                                 user=_user,
                                 existing_batch_id=_batch_id,
                             )
+                        except ValueError as exc:
+                            # ValueError is raised for known failure modes such as
+                            # connector not found or transient connectivity failure.
+                            # Log as WARNING without traceback to avoid noise.
+                            logger.warning(
+                                "Background direct ERP import failed for %s (%s): %s",
+                                connector_name,
+                                _batch_type,
+                                exc,
+                            )
                         except Exception:
                             logger.exception(
-                                "Background direct ERP import failed for %s (%s)",
+                                "Background direct ERP import failed unexpectedly for %s (%s)",
                                 connector_name,
                                 _batch_type,
                             )

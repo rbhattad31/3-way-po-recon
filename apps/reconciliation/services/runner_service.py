@@ -653,7 +653,22 @@ class ReconciliationRunnerService:
     # ------------------------------------------------------------------
     @staticmethod
     def _transition_invoice(invoice: Invoice, status: MatchStatus) -> None:
-        invoice.status = InvoiceStatus.RECONCILED
+        # Keep invoice in READY_FOR_RECON until case closure.
+        # CLOSED case transitions (RECONCILED) are handled in the case workflow.
+        target_status = InvoiceStatus.READY_FOR_RECON
+        try:
+            from apps.cases.models import APCase
+            from apps.core.enums import CaseStatus
+
+            case = APCase.objects.filter(invoice=invoice, is_active=True).order_by("-created_at").first()
+            if case and case.status == CaseStatus.CLOSED:
+                target_status = InvoiceStatus.RECONCILED
+        except Exception:
+            # Fail-safe: never promote to RECONCILED from reconciliation runner
+            # if case state cannot be determined.
+            target_status = InvoiceStatus.READY_FOR_RECON
+
+        invoice.status = target_status
         invoice.save(update_fields=["status", "updated_at"])
 
     @staticmethod

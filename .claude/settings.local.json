@@ -46,7 +46,14 @@
       "Bash(python manage.py showmigrations documents)",
       "Bash(find /c/3-way-po-recon/apps -name migrations -type d -exec ls -la {}/0001_initial.py)",
       "Bash(2)",
-      "Bash(wc -l /c/3-way-po-recon/docs/current_system_review/*.md)"
+      "Bash(wc -l /c/3-way-po-recon/docs/current_system_review/*.md)",
+      "Bash(python -c ' *)",
+      "Bash(py -c ' *)",
+      "Bash(python3)",
+      "Bash(awk -F' = ' '{print $1}')",
+      "Bash(awk -F'_' '{print $1\"_\"}')",
+      "Bash(cat)",
+      "Bash(bash /tmp/search_langfuse.sh)"
     ]
   }
 }
