@@ -23,6 +23,7 @@ class InboundIngestionService:
 
     @classmethod
     def _json_safe_payload(cls, value):
+        import datetime as _dt
         if isinstance(value, dict):
             safe_obj = {}
             for key, item in value.items():
@@ -32,6 +33,8 @@ class InboundIngestionService:
             return [cls._json_safe_payload(item) for item in value]
         if isinstance(value, bytes):
             return f"<bytes:{len(value)}>"
+        if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+            return value.isoformat()
         return value
 
     @classmethod
@@ -78,7 +81,7 @@ class InboundIngestionService:
                     "has_attachments": bool(payload.get("attachments")),
                     "provider_payload_json": payload_json_safe,
                     "raw_headers_json": payload.get("headers") or {},
-                    "trace_id": payload.get("trace_id") or "",
+                    "trace_id": (payload.get("trace_id") or "")[:64],
                     "processing_status": EmailProcessingStatus.NORMALIZED,
                 },
             )
@@ -91,18 +94,22 @@ class InboundIngestionService:
                 return message
 
             attachments = payload.get("attachments") or []
+            stored = []
             if attachments:
                 stored = AttachmentService.store_attachments(
                     message,
                     attachments,
                     tenant=tenant,
                     uploaded_by=actor_user,
-                    trigger_extraction=True,
+                    trigger_extraction=False,
                 )
                 if stored and not message.linked_document_upload_id:
                     linked = next((a.linked_document_upload for a in stored if a.linked_document_upload_id), None)
                     if linked is not None:
                         message.linked_document_upload = linked
+                if message.linked_document_upload_id and getattr(message.linked_document_upload, "source_message_id", None) is None:
+                    message.linked_document_upload.source_message = message
+                    message.linked_document_upload.save(update_fields=["source_message", "updated_at"])
                 message.processing_status = EmailProcessingStatus.ATTACHMENTS_STORED
                 message.save(update_fields=["linked_document_upload", "processing_status", "updated_at"])
 
@@ -126,6 +133,21 @@ class InboundIngestionService:
             )
 
             RoutingService.apply_routing(message, triage_result)
+
+            if not triage_result.get("requires_human_decision"):
+                uploads = []
+                if message.linked_document_upload_id and message.linked_document_upload is not None:
+                    uploads.append(message.linked_document_upload)
+                for attachment_obj in stored:
+                    linked_upload = getattr(attachment_obj, "linked_document_upload", None)
+                    if linked_upload is None:
+                        continue
+                    if any(existing.pk == linked_upload.pk for existing in uploads if getattr(existing, "pk", None)):
+                        continue
+                    uploads.append(linked_upload)
+
+                for linked_upload in uploads:
+                    AttachmentService._trigger_extraction(linked_upload, tenant=tenant)
 
             thread.last_message_at = message.received_at or timezone.now()
             thread.message_count = (thread.message_count or 0) + 1

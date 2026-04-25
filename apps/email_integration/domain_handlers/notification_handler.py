@@ -13,7 +13,8 @@ class NotificationEmailHandler(BaseEmailDomainHandler):
     handler_name = "notification_handler"
 
     def can_handle(self, email_message, routing_decision) -> bool:
-        return routing_decision.target_domain in [TargetDomain.TRIAGE, TargetDomain.NOTIFICATION_ONLY]
+        target_domain = str(routing_decision.target_domain or "").strip()
+        return target_domain in {TargetDomain.TRIAGE, "NOTIFICATION_ONLY"}
 
     def handle(self, email_message, routing_decision, *, actor_user=None):
         is_triage = routing_decision.target_domain == TargetDomain.TRIAGE

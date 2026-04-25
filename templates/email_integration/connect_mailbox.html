@@ -15,7 +15,12 @@
 <div class="row justify-content-center g-3">
   <div class="col-12 col-lg-7 col-xl-6">
     <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Connect Mailbox</div>
+      <div class="card-header bg-white d-flex align-items-center gap-2">
+        <a href="{% url 'email_integration:dashboard' %}" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Go back" aria-label="Go back">
+          <i class="bi bi-arrow-left"></i>
+        </a>
+        <span class="fw-semibold">Connect Mailbox</span>
+      </div>
       <div class="card-body p-4">
         <div class="mb-3">
           <h5 class="mb-1" style="font-weight:700;color:#111827;">Tenant Mailbox Setup</h5>
@@ -33,10 +38,15 @@
         {% if can_manage %}
         <form method="post" class="row g-3">
           {% csrf_token %}
+          <input type="hidden" name="config_mode" value="1">
           <input type="hidden" name="action" value="{% if editing_mailbox %}update_mailbox{% else %}connect_mailbox{% endif %}">
           {% if editing_mailbox %}
           <input type="hidden" name="mailbox_id" value="{{ editing_mailbox.pk }}">
           {% endif %}
+          <div class="col-12">
+            <label class="form-label mb-1" style="font-size:.78rem;">Tenant</label>
+            <input type="text" class="form-control" value="{{ tenant_display_name }}" readonly>
+          </div>
           <div class="col-12">
             <label class="form-label mb-1" style="font-size:.78rem;">Mail ID</label>
             <input type="email" name="mailbox_address" class="form-control" placeholder="ap@clientdomain.com" value="{% if editing_mailbox %}{{ editing_mailbox.mailbox_address }}{% endif %}" required>
@@ -48,48 +58,207 @@
           <div class="col-12 col-md-6">
             <label class="form-label mb-1" style="font-size:.78rem;">Provider</label>
             <select name="provider" id="provider_select" class="form-select" required>
-              <option value="MICROSOFT_365" {% if not editing_mailbox or editing_mailbox.provider == 'MICROSOFT_365' %}selected{% endif %}>Microsoft 365</option>
-              <option value="GMAIL" {% if editing_mailbox and editing_mailbox.provider == 'GMAIL' %}selected{% endif %}>Gmail</option>
+              {% for value, label in provider_choices %}
+              <option value="{{ value }}" {% if editing_mailbox %}{% if editing_mailbox.provider == value %}selected{% endif %}{% elif value == 'MICROSOFT_365' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
             </select>
           </div>
-          <div class="col-12 col-md-6 provider-microsoft">
+          <div class="col-12 col-md-6">
+            <label class="form-label mb-1" style="font-size:.78rem;">Mailbox Type</label>
+            <select name="mailbox_type" id="mailbox_type_select" class="form-select">
+              {% for value, label in mailbox_type_choices %}
+              <option value="{{ value }}" {% if editing_mailbox %}{% if editing_mailbox.mailbox_type == value %}selected{% endif %}{% elif value == 'SHARED' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label mb-1" style="font-size:.78rem;">Authentication Mode</label>
+            <select name="auth_mode" id="auth_mode_select" class="form-select">
+              {% for value, label in auth_mode_choices %}
+              <option value="{{ value }}" {% if editing_mailbox %}{% if editing_mailbox.auth_mode == value %}selected{% endif %}{% elif value == 'OAUTH' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label mb-1" style="font-size:.78rem;">Default Domain Route</label>
+            <select name="default_domain_route" class="form-select">
+              {% for value, label in default_route_choices %}
+              <option value="{{ value }}" {% if editing_mailbox %}{% if editing_mailbox.default_domain_route == value %}selected{% endif %}{% elif value == 'TRIAGE' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-6 provider-microsoft auth-app-registration d-none">
             <label class="form-label mb-1" style="font-size:.78rem;">Microsoft Tenant ID</label>
-            <input type="text" name="graph_tenant_id" id="graph_tenant_id" class="form-control" placeholder="Azure Entra tenant id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.tenant_id|default:'' }}{% endif %}" required>
+            <input type="text" name="graph_tenant_id" id="graph_tenant_id" class="form-control" placeholder="Azure Entra tenant id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.tenant_id|default:'' }}{% endif %}">
           </div>
-          <div class="col-12 col-md-6 provider-microsoft">
+          <div class="col-12 col-md-6 provider-microsoft auth-app-registration d-none">
             <label class="form-label mb-1" style="font-size:.78rem;">Microsoft Client ID</label>
-            <input type="text" name="graph_client_id" id="graph_client_id" class="form-control" placeholder="App registration client id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.client_id|default:'' }}{% endif %}" required>
+            <input type="text" name="graph_client_id" id="graph_client_id" class="form-control" placeholder="App registration client id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.client_id|default:'' }}{% endif %}">
           </div>
-          <div class="col-12 col-md-6 provider-microsoft">
+          <div class="col-12 col-md-6 provider-microsoft auth-app-registration d-none">
             <label class="form-label mb-1" style="font-size:.78rem;">Microsoft Client Secret</label>
-            <input type="password" name="graph_client_secret" id="graph_client_secret" class="form-control" placeholder="{% if editing_mailbox %}Leave blank to keep existing secret{% else %}Client secret{% endif %}" {% if not editing_mailbox %}required{% endif %}>
+            <input type="password" name="graph_client_secret" id="graph_client_secret" class="form-control" placeholder="{% if editing_mailbox %}Leave blank to keep existing secret{% else %}Client secret{% endif %}">
           </div>
+          <div class="col-12 col-md-6 provider-microsoft auth-app-registration d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">Microsoft User ID</label>
+            <input type="text" name="graph_user_id" id="graph_user_id" class="form-control" placeholder="Mailbox address or user id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.user_id|default:editing_mailbox.mailbox_address }}{% endif %}">
+          </div>
+          <div class="col-12 col-md-6 provider-microsoft auth-app-registration d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">Certificate (optional alternative to Client Secret)</label>
+            <textarea name="graph_certificate" id="graph_certificate" class="form-control" rows="2" placeholder="Certificate content or reference">{% if editing_mailbox %}{{ editing_mailbox.config_json.certificate|default:'' }}{% endif %}</textarea>
+          </div>
+          <div class="col-12 provider-microsoft auth-app-registration d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">Graph Scope</label>
+            <input type="text" name="graph_scope" id="graph_scope" class="form-control" placeholder="https://graph.microsoft.com/.default" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.scope|default:'https://graph.microsoft.com/.default' }}{% else %}https://graph.microsoft.com/.default{% endif %}">
+          </div>
+          <div class="col-12 provider-oauth auth-oauth d-none">
+            <div class="border rounded p-3">
+              <div class="fw-semibold mb-2" style="font-size:.82rem;">OAuth Credentials</div>
+              <div class="row g-2">
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">OAuth Client ID</label>
+                  <input type="text" name="oauth_client_id" id="oauth_client_id" class="form-control" placeholder="OAuth app client id" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.client_id|default:'' }}{% endif %}">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">OAuth Client Secret</label>
+                  <input type="password" name="oauth_client_secret" id="oauth_client_secret" class="form-control" placeholder="OAuth app client secret">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">Redirect URI</label>
+                  <input type="url" name="oauth_redirect_uri" id="oauth_redirect_uri" class="form-control" placeholder="https://yourapp/callback" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.redirect_uri|default:'' }}{% endif %}">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">Scopes</label>
+                  <input type="text" name="oauth_scopes" id="oauth_scopes" class="form-control" placeholder="mail.read,mail.send" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.scopes|join:', ' }}{% endif %}">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">Access Token</label>
+                  <textarea name="oauth_access_token" id="oauth_access_token" class="form-control" rows="2" placeholder="Access token">{% if editing_mailbox %}{{ editing_mailbox.config_json.access_token|default:'' }}{% endif %}</textarea>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">Refresh Token</label>
+                  <textarea name="oauth_refresh_token" id="oauth_refresh_token" class="form-control" rows="2" placeholder="Refresh token">{% if editing_mailbox %}{{ editing_mailbox.config_json.refresh_token|default:'' }}{% endif %}</textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 provider-gmail auth-service-account d-none">
+            <div class="border rounded p-3">
+              <div class="fw-semibold mb-2" style="font-size:.82rem;">Service Account Configuration</div>
+              <div class="row g-2">
+                <div class="col-12">
+                  <label class="form-label mb-1" style="font-size:.78rem;">service_account_key.json</label>
+                  <textarea name="service_account_key_json" id="service_account_key_json" class="form-control" rows="3" placeholder="Service account key JSON">{% if editing_mailbox %}{{ editing_mailbox.config_json.service_account_key_json|default:'' }}{% endif %}</textarea>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">client_email</label>
+                  <input type="email" name="service_account_client_email" id="service_account_client_email" class="form-control" placeholder="service-account@project.iam.gserviceaccount.com" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.client_email|default:'' }}{% endif %}">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1" style="font-size:.78rem;">delegated_user_email</label>
+                  <input type="email" name="service_account_delegated_user_email" id="service_account_delegated_user_email" class="form-control" placeholder="user@company.com" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.delegated_user_email|default:'' }}{% endif %}">
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          
 
           
-          <div class="col-12 col-md-6 provider-gmail d-none">
-            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Server</label>
-            <input type="text" name="smtp_host" id="smtp_host" class="form-control" placeholder="smtp.gmail.com" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.smtp_host|default:'' }}{% endif %}">
+          <div class="col-12 col-md-4">
+            <label class="form-label mb-1" style="font-size:.78rem;">Poll Interval Minutes</label>
+            <input type="number" min="1" id="poll_interval_minutes" name="poll_interval_minutes" class="form-control" value="{% if editing_mailbox %}{{ editing_mailbox.poll_interval_minutes }}{% else %}5{% endif %}">
           </div>
-          <div class="col-12 col-md-6 provider-gmail d-none">
-            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Port</label>
-            <input type="number" name="smtp_port" id="smtp_port" class="form-control" placeholder="587" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.smtp_port|default:'' }}{% endif %}">
+          <div class="col-12 provider-microsoft webhook-microsoft d-none">
+            <label class="form-label mb-1" style="font-size:.78rem;">Webhook URL (Microsoft Graph Subscription)</label>
+            <input type="url" id="webhook_url" name="webhook_url" class="form-control" placeholder="https://your-backend/email/webhook/{mailbox_id}/" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.webhook_url|default:'' }}{% endif %}">
           </div>
-          <div class="col-12 col-md-6 provider-gmail d-none">
-            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Security</label>
-            <select name="smtp_security" id="smtp_security" class="form-select">
-              <option value="" {% if not editing_mailbox or not editing_mailbox.config_json.smtp_security %}selected{% endif %}>Select Security</option>
-              <option value="TLS" {% if editing_mailbox and editing_mailbox.config_json.smtp_security == 'TLS' %}selected{% endif %}>TLS</option>
-              <option value="SSL" {% if editing_mailbox and editing_mailbox.config_json.smtp_security == 'SSL' %}selected{% endif %}>SSL</option>
-            </select>
+          <div class="col-12 provider-gmail webhook-gmail d-none">
+            <div class="border rounded p-3">
+              <div class="fw-semibold mb-2" style="font-size:.82rem;">Google Pub/Sub Webhook Settings</div>
+              <div class="row g-2">
+                <div class="col-12 col-md-4">
+                  <label class="form-label mb-1" style="font-size:.78rem;">project_id</label>
+                  <input type="text" id="pubsub_project_id" name="pubsub_project_id" class="form-control" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.project_id|default:'' }}{% endif %}">
+                </div>
+                <div class="col-12 col-md-4">
+                  <label class="form-label mb-1" style="font-size:.78rem;">topic_name</label>
+                  <input type="text" id="pubsub_topic_name" name="pubsub_topic_name" class="form-control" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.topic_name|default:'' }}{% endif %}">
+                </div>
+                <div class="col-12 col-md-4">
+                  <label class="form-label mb-1" style="font-size:.78rem;">subscription</label>
+                  <input type="text" id="pubsub_subscription" name="pubsub_subscription" class="form-control" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.subscription|default:'' }}{% endif %}">
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="col-12 col-md-6 provider-gmail d-none">
-            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Username</label>
-            <input type="text" name="smtp_username" id="smtp_username" class="form-control" placeholder="youremail@gmail.com" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.smtp_username|default:'' }}{% endif %}">
+          
+          
+          <div class="col-12">
+            <label class="form-label mb-1" style="font-size:.78rem;">Allowed Sender Domains</label>
+            <textarea name="allowed_sender_domains" class="form-control" rows="3" placeholder="clientdomain.com&#10;supplier.com">{% if editing_mailbox %}{% for domain in editing_mailbox.allowed_sender_domains_json %}{{ domain }}{% if not forloop.last %}
+{% endif %}{% endfor %}{% endif %}</textarea>
+            <div class="form-text">One domain per line. Leave blank to allow any sender domain.</div>
           </div>
-          <div class="col-12 col-md-6 provider-gmail d-none">
-            <label class="form-label mb-1" style="font-size:.78rem;">SMTP Password (App Password)</label>
-            <input type="password" name="smtp_password" id="smtp_password" class="form-control" placeholder="{% if editing_mailbox %}Leave blank to keep existing app password{% else %}App password{% endif %}">
+          <div class="col-12 col-md-6 provider-microsoft">
+            <label class="form-label mb-1" style="font-size:.78rem;">Webhook Token</label>
+            <input type="text" name="webhook_token" class="form-control" placeholder="Shared secret for webhook calls" value="{% if editing_mailbox %}{{ editing_mailbox.config_json.webhook_token|default:'' }}{% endif %}">
           </div>
+          
+          
+          
+          <div class="col-12">
+            <div class="row g-2">
+              <div class="col-12 col-md-4">
+                <div class="form-check border rounded p-3 h-100">
+                  <input class="form-check-input" type="checkbox" value="1" id="is_active" name="is_active" {% if editing_mailbox %}{% if editing_mailbox.is_active %}checked{% endif %}{% else %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="is_active">Active</label>
+                  <div class="text-muted" style="font-size:.76rem;">Mailbox is available for platform operations.</div>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="form-check border rounded p-3 h-100">
+                  <input class="form-check-input" type="checkbox" value="1" id="is_inbound_enabled" name="is_inbound_enabled" {% if editing_mailbox %}{% if editing_mailbox.is_inbound_enabled %}checked{% endif %}{% else %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="is_inbound_enabled">Inbound Enabled</label>
+                  <div class="text-muted" style="font-size:.76rem;">Allow the system to read this mailbox.</div>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="form-check border rounded p-3 h-100">
+                  <input class="form-check-input" type="checkbox" value="1" id="is_outbound_enabled" name="is_outbound_enabled" {% if editing_mailbox and editing_mailbox.is_outbound_enabled %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="is_outbound_enabled">Outbound Enabled</label>
+                  <div class="text-muted" style="font-size:.76rem;">Allow the system to send from this mailbox.</div>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="form-check border rounded p-3 h-100">
+                  <input class="form-check-input" type="radio" value="WEBHOOK" id="delivery_mode_webhook" name="delivery_mode" {% if editing_mailbox %}{% if editing_mailbox.webhook_enabled %}checked{% endif %}{% else %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="delivery_mode_webhook">Webhook</label>
+                  <div class="text-muted" style="font-size:.76rem;">Use webhook delivery mode.</div>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="form-check border rounded p-3 h-100">
+                  <input class="form-check-input" type="radio" value="POLL" id="delivery_mode_poll" name="delivery_mode" {% if editing_mailbox and editing_mailbox.polling_enabled %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="delivery_mode_poll">Poll</label>
+                  <div class="text-muted" style="font-size:.76rem;">Use polling delivery mode.</div>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="form-check border rounded p-3 h-100">
+                  <input class="form-check-input" type="checkbox" value="1" id="llm_classification_enabled" name="llm_classification_enabled" {% if editing_mailbox %}{% if editing_mailbox.config_json.llm_classification_enabled|default:True %}checked{% endif %}{% else %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="llm_classification_enabled">LLM Classification</label>
+                  <div class="text-muted" style="font-size:.76rem;">Use LLM-assisted email classification.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12">
+            <div id="dynamic-validation-note" class="alert alert-secondary py-2 mb-0" style="font-size:.78rem;">
+              Select provider, mailbox type, and auth mode. Required fields will update automatically.
+            </div>
+          </div>
+          
           <div class="col-12 d-grid d-md-flex justify-content-md-end gap-2">
             {% if editing_mailbox %}
             <a href="{% url 'email_integration:connect_mailbox' %}?config=1" class="btn btn-outline-secondary">Cancel Edit</a>
@@ -114,17 +283,42 @@
           <div class="fw-semibold">{{ mailbox.name|default:mailbox.mailbox_address }}</div>
           <div class="text-muted" style="font-size:.78rem;">{{ mailbox.mailbox_address }}</div>
           <div class="d-flex gap-1 flex-wrap mt-2">
-            <span class="badge {% if mailbox.last_success_at and not mailbox.last_error_message %}bg-success{% else %}bg-secondary{% endif %}">{% if mailbox.last_success_at and not mailbox.last_error_message %}VERIFIED{% else %}PENDING{% endif %}</span>
+            <span class="badge {% if mailbox.is_active %}{% if mailbox.last_success_at and not mailbox.last_error_message %}bg-success{% else %}bg-secondary{% endif %}{% else %}bg-dark{% endif %}">{% if not mailbox.is_active %}INACTIVE{% elif mailbox.last_success_at and not mailbox.last_error_message %}VERIFIED{% else %}PENDING{% endif %}</span>
             <span class="badge bg-light text-dark">{{ mailbox.provider }}</span>
+            <span class="badge bg-light text-dark">{{ mailbox.mailbox_type }}</span>
+            <span class="badge bg-light text-dark">{{ mailbox.auth_mode }}</span>
           </div>
+          <div class="small text-muted mt-2">
+            Route: {{ mailbox.default_domain_route }}<br>
+            Inbound: {% if mailbox.is_inbound_enabled %}Yes{% else %}No{% endif %} | Outbound: {% if mailbox.is_outbound_enabled %}Yes{% else %}No{% endif %}<br>
+            Webhook: {% if mailbox.webhook_enabled %}Yes{% else %}No{% endif %} | Polling: {% if mailbox.polling_enabled %}Yes{% else %}No{% endif %} ({{ mailbox.poll_interval_minutes }} min)
+          </div>
+          <div class="small text-muted mt-2">
+            Last sync: {% if mailbox.last_sync_at %}{{ mailbox.last_sync_at|date:'Y-m-d H:i' }}{% else %}--{% endif %}<br>
+            Last success: {% if mailbox.last_success_at %}{{ mailbox.last_success_at|date:'Y-m-d H:i' }}{% else %}--{% endif %}
+          </div>
+          {% if mailbox.allowed_sender_domains_json %}
+          <div class="small text-muted mt-2">
+            Allowed domains: {{ mailbox.allowed_sender_domains_json|join:', ' }}
+          </div>
+          {% endif %}
           {% if mailbox.last_error_message %}
           <div class="small text-danger mt-2">{{ mailbox.last_error_message|truncatechars:120 }}</div>
           {% endif %}
           {% if can_manage %}
           <div class="d-flex gap-2 mt-3">
             <a href="{% url 'email_integration:connect_mailbox' %}?config=1&edit={{ mailbox.pk }}" class="btn btn-sm btn-outline-primary">Edit</a>
-            <form method="post" onsubmit="return confirm('Delete this mailbox connection?');">
+            <form method="post" action="{% url 'email_integration:connect_mailbox' %}?config=1" onsubmit="return confirm('{% if mailbox.is_active %}Disable this mailbox?{% else %}Enable this mailbox?{% endif %}');">
               {% csrf_token %}
+              <input type="hidden" name="config_mode" value="1">
+              <input type="hidden" name="action" value="toggle_mailbox_active">
+              <input type="hidden" name="mailbox_id" value="{{ mailbox.pk }}">
+              <input type="hidden" name="desired_state" value="{% if mailbox.is_active %}disable{% else %}enable{% endif %}">
+              <button type="submit" class="btn btn-sm {% if mailbox.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">{% if mailbox.is_active %}disable_mailbox{% else %}enable_mail{% endif %}</button>
+            </form>
+            <form method="post" action="{% url 'email_integration:connect_mailbox' %}?config=1" onsubmit="return confirm('Delete this mailbox connection?');">
+              {% csrf_token %}
+              <input type="hidden" name="config_mode" value="1">
               <input type="hidden" name="action" value="delete_mailbox">
               <input type="hidden" name="mailbox_id" value="{{ mailbox.pk }}">
               <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
@@ -142,43 +336,192 @@
 
 <script>
   (function () {
+    var form = document.querySelector('form[action], form[method="post"]');
     var provider = document.getElementById('provider_select');
-    if (!provider) return;
+    var mailboxType = document.getElementById('mailbox_type_select');
+    var authMode = document.getElementById('auth_mode_select');
+    if (!form || !provider || !mailboxType || !authMode) return;
 
     var msFields = Array.prototype.slice.call(document.querySelectorAll('.provider-microsoft'));
     var gmailFields = Array.prototype.slice.call(document.querySelectorAll('.provider-gmail'));
+    var oauthFields = Array.prototype.slice.call(document.querySelectorAll('.auth-oauth'));
+    var serviceAccountFields = Array.prototype.slice.call(document.querySelectorAll('.auth-service-account'));
+    var appRegistrationFields = Array.prototype.slice.call(document.querySelectorAll('.auth-app-registration'));
+    var webhookMicrosoft = Array.prototype.slice.call(document.querySelectorAll('.webhook-microsoft'));
+    var webhookGmail = Array.prototype.slice.call(document.querySelectorAll('.webhook-gmail'));
+
+    var note = document.getElementById('dynamic-validation-note');
+    var deliveryWebhook = document.getElementById('delivery_mode_webhook');
+    var deliveryPoll = document.getElementById('delivery_mode_poll');
+    var pollInterval = document.getElementById('poll_interval_minutes');
 
     var graphTenant = document.getElementById('graph_tenant_id');
     var graphClient = document.getElementById('graph_client_id');
     var graphSecret = document.getElementById('graph_client_secret');
-    var smtpHost = document.getElementById('smtp_host');
-    var smtpPort = document.getElementById('smtp_port');
-    var smtpUser = document.getElementById('smtp_username');
-    var smtpPass = document.getElementById('smtp_password');
+    var graphCertificate = document.getElementById('graph_certificate');
+    var graphScope = document.getElementById('graph_scope');
+    var oauthClientId = document.getElementById('oauth_client_id');
+    var oauthClientSecret = document.getElementById('oauth_client_secret');
+    var oauthRedirect = document.getElementById('oauth_redirect_uri');
+    var oauthAccess = document.getElementById('oauth_access_token');
+    var oauthRefresh = document.getElementById('oauth_refresh_token');
+    var oauthScopes = document.getElementById('oauth_scopes');
+    var serviceKey = document.getElementById('service_account_key_json');
+    var serviceClientEmail = document.getElementById('service_account_client_email');
+    var serviceDelegated = document.getElementById('service_account_delegated_user_email');
+    var webhookUrl = document.getElementById('webhook_url');
+    var pubsubProject = document.getElementById('pubsub_project_id');
+    var pubsubTopic = document.getElementById('pubsub_topic_name');
+    var pubsubSubscription = document.getElementById('pubsub_subscription');
 
-    function setRequired(input, yes) {
+    function setRequired(input, isRequired) {
       if (!input) return;
-      if (yes) input.setAttribute('required', 'required');
+      if (isRequired) input.setAttribute('required', 'required');
       else input.removeAttribute('required');
     }
 
-    function toggleProviderFields() {
-      var isGmail = provider.value === 'GMAIL';
-      msFields.forEach(function (el) { el.classList.toggle('d-none', isGmail); });
-      gmailFields.forEach(function (el) { el.classList.toggle('d-none', !isGmail); });
-
-      setRequired(graphTenant, !isGmail);
-      setRequired(graphClient, !isGmail);
-      setRequired(graphSecret, !isGmail);
-
-      setRequired(smtpHost, isGmail);
-      setRequired(smtpPort, isGmail);
-      setRequired(smtpUser, isGmail);
-      setRequired(smtpPass, isGmail);
+    function setVisible(elements, visible) {
+      elements.forEach(function (el) { el.classList.toggle('d-none', !visible); });
     }
 
-    provider.addEventListener('change', toggleProviderFields);
-    toggleProviderFields();
+    function allowedModes(providerValue, mailboxTypeValue) {
+      if (providerValue === 'GMAIL') {
+        if (mailboxTypeValue === 'USER') return ['SERVICE_ACCOUNT'];
+        return [];
+      }
+      if (providerValue === 'MICROSOFT_365') {
+        return ['OAUTH', 'APP_REGISTRATION'];
+      }
+      return [];
+    }
+
+    function clearModeErrors() {
+      [graphScope].forEach(function (el) {
+        if (el && typeof el.setCustomValidity === 'function') {
+          el.setCustomValidity('');
+        }
+      });
+    }
+
+    function refreshUI() {
+      clearModeErrors();
+
+      var providerValue = provider.value;
+      var mailboxTypeValue = mailboxType.value;
+
+      Array.prototype.slice.call(mailboxType.options).forEach(function (opt) {
+        if (providerValue === 'GMAIL') {
+          opt.disabled = opt.value !== 'USER';
+        } else {
+          opt.disabled = false;
+        }
+      });
+
+      if (providerValue === 'GMAIL') {
+        mailboxType.value = 'USER';
+        mailboxTypeValue = 'USER';
+      }
+
+      var allowed = allowedModes(providerValue, mailboxTypeValue);
+
+      Array.prototype.slice.call(authMode.options).forEach(function (opt) {
+        opt.disabled = allowed.indexOf(opt.value) < 0;
+      });
+      if (allowed.indexOf(authMode.value) < 0 && allowed.length > 0) {
+        authMode.value = allowed[0];
+      }
+
+      authMode.disabled = providerValue === 'GMAIL';
+
+      var currentAuth = authMode.value;
+      var isMicrosoft = providerValue === 'MICROSOFT_365';
+      var isGmail = providerValue === 'GMAIL';
+      var isOauth = currentAuth === 'OAUTH';
+      var isServiceAccount = currentAuth === 'SERVICE_ACCOUNT';
+      var isAppRegistration = currentAuth === 'APP_REGISTRATION';
+      var webhookOn = !!(deliveryWebhook && deliveryWebhook.checked);
+      var pollingOn = !!(deliveryPoll && deliveryPoll.checked);
+
+      setVisible(msFields, isMicrosoft || isOauth || isAppRegistration);
+      setVisible(gmailFields, false);
+      setVisible(oauthFields, isOauth);
+      setVisible(serviceAccountFields, isServiceAccount && isGmail);
+      setVisible(appRegistrationFields, isAppRegistration);
+
+      setVisible(webhookMicrosoft, webhookOn && isMicrosoft);
+      setVisible(webhookGmail, webhookOn && isGmail);
+
+      setRequired(graphClient, isAppRegistration);
+      setRequired(graphSecret, isAppRegistration);
+      setRequired(graphTenant, isAppRegistration);
+      setRequired(oauthClientId, isOauth);
+      setRequired(oauthClientSecret, isOauth);
+      setRequired(oauthRedirect, isOauth);
+      setRequired(oauthAccess, isOauth);
+      setRequired(oauthRefresh, isOauth);
+      setRequired(oauthScopes, isOauth);
+      setRequired(serviceKey, isServiceAccount && isGmail);
+      setRequired(serviceClientEmail, isServiceAccount && isGmail);
+      setRequired(serviceDelegated, isServiceAccount && isGmail);
+
+      setRequired(webhookUrl, webhookOn && isMicrosoft);
+      setRequired(pubsubProject, webhookOn && isGmail);
+      setRequired(pubsubTopic, webhookOn && isGmail);
+      setRequired(pubsubSubscription, webhookOn && isGmail);
+      setRequired(pollInterval, pollingOn);
+
+      if (note) {
+        var details = 'Allowed auth mode(s): ' + (allowed.length ? allowed.join(', ') : 'none') + '. ';
+        if (webhookOn) {
+          details += 'Webhook enabled (preferred).';
+        } else if (pollingOn) {
+          details += 'Polling enabled.';
+        } else {
+          details += 'Select either webhook or poll.';
+        }
+        note.textContent = details;
+      }
+    }
+
+    form.addEventListener('submit', function (event) {
+      refreshUI();
+
+      var auth = authMode.value;
+      var providerValue = provider.value;
+      var hasSecret = !!(graphSecret && graphSecret.value.trim());
+      var hasCertificate = !!(graphCertificate && graphCertificate.value.trim());
+      if (auth === 'APP_REGISTRATION') {
+        if (!hasSecret && !hasCertificate) {
+          event.preventDefault();
+          if (note) note.textContent = 'App Registration requires client_secret or certificate.';
+          if (graphSecret) graphSecret.focus();
+          return;
+        }
+        if (providerValue === 'MICROSOFT_365') {
+          var scopeValue = (graphScope && graphScope.value ? graphScope.value.trim() : '');
+          if (scopeValue.indexOf('.default') < 0) {
+            event.preventDefault();
+            if (graphScope && typeof graphScope.setCustomValidity === 'function') {
+              graphScope.setCustomValidity('Scope must contain .default for Microsoft App Registration.');
+              graphScope.reportValidity();
+            }
+            if (note) note.textContent = 'Scope must contain .default for Microsoft App Registration.';
+            return;
+          }
+        }
+      }
+      if (!form.checkValidity()) {
+        event.preventDefault();
+        form.reportValidity();
+      }
+    });
+
+    provider.addEventListener('change', refreshUI);
+    mailboxType.addEventListener('change', refreshUI);
+    authMode.addEventListener('change', refreshUI);
+    if (deliveryWebhook) deliveryWebhook.addEventListener('change', refreshUI);
+    if (deliveryPoll) deliveryPoll.addEventListener('change', refreshUI);
+    refreshUI();
   })();
 </script>
 

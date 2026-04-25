@@ -45,8 +45,12 @@ class AttachmentService:
                     content_bytes,
                     tenant=tenant,
                     uploaded_by=uploaded_by,
+                    source_message=email_message,
                 )
                 if linked_upload is not None:
+                    if getattr(linked_upload, "source_message_id", None) is None and getattr(email_message, "pk", None):
+                        linked_upload.source_message = email_message
+                        linked_upload.save(update_fields=["source_message", "updated_at"])
                     email_attachment.linked_document_upload = linked_upload
                     email_attachment.processing_status = EmailAttachmentProcessingStatus.LINKED
                     email_attachment.save(update_fields=["linked_document_upload", "processing_status", "updated_at"])
@@ -56,14 +60,27 @@ class AttachmentService:
         return saved
 
     @staticmethod
-    def _create_document_upload(filename: str, content_type: str, content_bytes: bytes, tenant=None, uploaded_by=None):
+    def _create_document_upload(
+        filename: str,
+        content_type: str,
+        content_bytes: bytes,
+        tenant=None,
+        uploaded_by=None,
+        source_message=None,
+    ):
         try:
             uploaded = SimpleUploadedFile(name=filename, content=content_bytes, content_type=content_type)
             document_type = DocumentType.INVOICE
             filename_lower = (filename or "").lower()
             if "quot" in filename_lower or "rfq" in filename_lower:
                 document_type = DocumentType.PROCUREMENT_QUOTATION
-            return InvoiceUploadService.upload(uploaded, uploaded_by=uploaded_by, tenant=tenant, document_type=document_type)
+            return InvoiceUploadService.upload(
+                uploaded,
+                uploaded_by=uploaded_by,
+                tenant=tenant,
+                document_type=document_type,
+                source_message=source_message,
+            )
         except Exception:
             return None
 

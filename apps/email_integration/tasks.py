@@ -15,6 +15,18 @@ from apps.email_integration.services.processing_service import EmailProcessingSe
 from apps.email_integration.services.routing_service import RoutingService
 
 
+def _mailbox_poll_due(mailbox, now=None) -> bool:
+    now = now or timezone.now()
+    if not getattr(mailbox, "polling_enabled", False):
+        return False
+    interval_minutes = int(getattr(mailbox, "poll_interval_minutes", 5) or 5)
+    last_sync_at = getattr(mailbox, "last_sync_at", None)
+    if last_sync_at is None:
+        return True
+    elapsed_seconds = (now - last_sync_at).total_seconds()
+    return elapsed_seconds >= max(60, interval_minutes * 60)
+
+
 @shared_task(bind=True, max_retries=2, default_retry_delay=60, acks_late=True)
 @observed_task("email.poll_mailboxes")
 def poll_mailboxes_task(self, tenant_id=None):
@@ -22,12 +34,23 @@ def poll_mailboxes_task(self, tenant_id=None):
     if tenant_id:
         mailboxes = mailboxes.filter(tenant_id=tenant_id)
 
+    now = timezone.now()
     processed = 0
+    polled_mailboxes = 0
+    skipped_mailboxes = 0
     for mailbox in mailboxes.iterator():
+        if not _mailbox_poll_due(mailbox, now=now):
+            skipped_mailboxes += 1
+            continue
         result = EmailProcessingService.sync_mailbox_messages(mailbox)
         processed += result.get("processed_messages", 0)
+        polled_mailboxes += 1
 
-    return {"processed_messages": processed}
+    return {
+        "processed_messages": processed,
+        "polled_mailboxes": polled_mailboxes,
+        "skipped_mailboxes": skipped_mailboxes,
+    }
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=60, acks_late=True)

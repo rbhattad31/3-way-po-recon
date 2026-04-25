@@ -94,6 +94,26 @@ class MicrosoftGraphEmailAdapter(BaseEmailProviderAdapter):
             raise ValueError("Graph token response did not include access_token")
         return access_token
 
+    def _request_graph_text(self, mailbox_config, method: str, url: str, *, params=None, extra_headers=None, _token: str | None = None) -> str:
+        cfg = self._mailbox_config(mailbox_config)
+        token = _token or self._get_access_token(mailbox_config)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+        response = requests.request(
+            method,
+            url,
+            headers=headers,
+            params=params,
+            timeout=cfg["timeout_seconds"],
+        )
+        if response.status_code >= 400:
+            raise ValueError(f"Graph request failed method={method} status={response.status_code}: {response.text[:300]}")
+        return response.text or ""
+
     def _request_graph(self, mailbox_config, method: str, url: str, *, params=None, payload=None, _token: str | None = None) -> dict:
         cfg = self._mailbox_config(mailbox_config)
         token = _token or self._get_access_token(mailbox_config)
@@ -168,6 +188,41 @@ class MicrosoftGraphEmailAdapter(BaseEmailProviderAdapter):
             "mailbox_id": mailbox_config.pk,
             "inbox_id": inbox_data.get("id") or "",
             "display_name": inbox_data.get("displayName") or "Inbox",
+        }
+
+    def get_inbox_counts(self, mailbox_config) -> Dict[str, int]:
+        cfg = self._mailbox_config(mailbox_config)
+        user_id = cfg["user_id"]
+        if not user_id:
+            raise ValueError("Graph mailbox user_id could not be resolved")
+
+        token = self._get_access_token(mailbox_config)
+        folder_url = f"{cfg['graph_base_url']}/users/{user_id}/mailFolders/Inbox"
+        folder_data = self._request_graph(
+            mailbox_config,
+            "GET",
+            folder_url,
+            params={"$select": "totalItemCount,unreadItemCount"},
+            _token=token,
+        )
+
+        total_count = int(folder_data.get("totalItemCount") or 0)
+
+        attachment_count_url = f"{cfg['graph_base_url']}/users/{user_id}/mailFolders/Inbox/messages/$count"
+        attachment_count_text = self._request_graph_text(
+            mailbox_config,
+            "GET",
+            attachment_count_url,
+            params={"$filter": "hasAttachments eq true"},
+            extra_headers={"ConsistencyLevel": "eventual"},
+            _token=token,
+        )
+        attachment_count = int((attachment_count_text or "0").strip() or 0)
+
+        return {
+            "total": total_count,
+            "with_attachments": attachment_count,
+            "unread": int(folder_data.get("unreadItemCount") or 0),
         }
 
     def poll_all_messages_metadata(

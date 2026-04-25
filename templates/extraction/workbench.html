@@ -321,11 +321,12 @@
     </span>
   </div>
   <div class="ap-card-body p-0" style="overflow-x:auto">
-    <table class="ap-table w-100" style="min-width:800px" id="resultsTable">
+    <table class="ap-table w-100" style="min-width:920px" id="resultsTable">
       <thead>
         <tr>
           <th>Invoice #</th>
           <th>Vendor</th>
+          <th style="width:110px">Source</th>
           <th style="text-align:right">Amount</th>
           <th style="width:110px">Confidence</th>
           <th style="width:80px">Status</th>
@@ -356,6 +357,22 @@
               {% endif %}
               {{ r.invoice.vendor.name|default:r.invoice.raw_vendor_name|default:"—"|truncatechars:25 }}
             {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if r.document_upload and r.document_upload.source_message_id %}
+            <span class="ap-badge ap-badge-info" style="font-size:.65rem" title="From email inbox">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="me-1" aria-hidden="true">
+                <path d="M0 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v.217L8 8.383.002 4.217A2 2 0 0 1 0 4z"/>
+                <path d="M0 4.697v7.104l5.803-3.558L0 4.697zM6.761 8.83l-6.57 4.027A2 2 0 0 0 2 14h12a2 2 0 0 0 1.808-1.143L9.239 8.83l-1.239.757-1.239-.757zM16 4.697l-5.803 3.546L16 11.801V4.697z"/>
+              </svg>Email
+            </span>
+            {% else %}
+            <span class="ap-badge ap-badge-muted" style="font-size:.65rem" title="Uploaded manually">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="me-1" aria-hidden="true">
+                <path d="M9.293 0H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5.707L9.293 0zM9 1.5 13.5 6H10a1 1 0 0 1-1-1V1.5z"/>
+              </svg>Manual
+            </span>
+            {% endif %}
           </td>
           <td style="text-align:right">
             {% if r.invoice and r.invoice.total_amount %}
@@ -436,11 +453,6 @@
             <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
               View
             </a>
-            {% if r.invoice %}
-            <a href="{% url 'extraction:export_purchase_invoice_excel' r.pk %}" class="btn btn-sm btn-outline-success py-0 ms-1" style="font-size:.7rem" title="Export in purchase invoice Excel format">
-              XLSX
-            </a>
-            {% endif %}
             {% if is_admin_user %}
             <button type="button"
                     class="btn btn-sm btn-outline-danger py-0 ms-1"
@@ -454,7 +466,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="10" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>
@@ -880,7 +892,7 @@
   // ── Render table rows from JSON ──────────────────────────
   function renderRows(rows) {
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5" style="color:var(--ap-text-muted)">
         <i class="bi bi-funnel d-block mb-2" style="font-size:2rem"></i>No results match your filters.</td></tr>`;
       return;
     }
@@ -912,6 +924,18 @@
           ? '<i class="bi bi-check-circle-fill text-success me-1" style="font-size:.7rem" title="Vendor matched in system"></i>'
           : '<i class="bi bi-exclamation-circle-fill text-warning me-1" style="font-size:.7rem" title="Vendor not found in system"></i>')
         : '';
+      const sourceBadge = r.source_is_email
+        ? `<span class="ap-badge ap-badge-info" style="font-size:.65rem" title="From email inbox">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="me-1" aria-hidden="true">
+              <path d="M0 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v.217L8 8.383.002 4.217A2 2 0 0 1 0 4z"></path>
+              <path d="M0 4.697v7.104l5.803-3.558L0 4.697zM6.761 8.83l-6.57 4.027A2 2 0 0 0 2 14h12a2 2 0 0 0 1.808-1.143L9.239 8.83l-1.239.757-1.239-.757zM16 4.697l-5.803 3.546L16 11.801V4.697z"></path>
+            </svg>Email
+          </span>`
+        : `<span class="ap-badge ap-badge-muted" style="font-size:.65rem" title="Uploaded manually">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="me-1" aria-hidden="true">
+              <path d="M9.293 0H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5.707L9.293 0zM9 1.5 13.5 6H10a1 1 0 0 1-1-1V1.5z"></path>
+            </svg>Manual
+          </span>`;
       const deleteBtn = IS_ADMIN_USER
         ? `<button type="button" class="btn btn-sm btn-outline-danger py-0 ms-1" style="font-size:.7rem" title="Admin: Hard-delete this invoice and all associated data" onclick="openAdminDeleteModal(${parseInt(r.pk, 10)}, '${escJsSingle(r.invoice_number || 'N/A')}')"><i class="bi bi-trash3"></i></button>`
         : '';
@@ -919,9 +943,11 @@
       return `<tr${isProc ? ' data-processing="true"' : ''}>
         <td>${invLink}</td>
         <td style="font-size:var(--ap-font-size-sm)">${vendorIcon}${escHtml(vendorName)}</td>
+        <td>${sourceBadge}</td>
         <td style="text-align:right">${amount}</td>
         <td>${confBar}</td>
         <td>${statusBadge}</td>
+        <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
         <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a>${deleteBtn}</td>
