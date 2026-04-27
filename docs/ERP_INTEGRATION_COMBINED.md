@@ -1072,7 +1072,7 @@ and `trace_erp_duplicate_check()`.
 passwords) and truncates string values >2000 chars. `sanitize_erp_error()` maps
 raw error messages to safe categories -- raw stack traces never reach Langfuse.
 
-**Full Langfuse integration reference**: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11.
+**Full Langfuse integration reference**: [LANGFUSE_OBSERVABILITY.md §7.7](LANGFUSE_OBSERVABILITY.md)
 
 ---
 
@@ -1084,7 +1084,7 @@ raw error messages to safe categories -- raw stack traces never reach Langfuse.
 | Invoice posting pipeline | [POSTING_AGENT.md](POSTING_AGENT.md) |
 | Agent architecture and tools | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md) |
 | Platform overview and models | [PROJECT.md](PROJECT.md) |
-| Langfuse observability integration | [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) |
+| Langfuse observability integration | [LANGFUSE_OBSERVABILITY.md](LANGFUSE_OBSERVABILITY.md) |
 
 ---
 
@@ -1392,7 +1392,7 @@ Langfuse child spans (`erp_resolution` -> `erp_cache_lookup` / `erp_live_lookup`
 `erp_db_fallback`) with evaluation-ready observation scores.
 
 Helpers live in `apps/erp_integration/services/langfuse_helpers.py` -- see
-[LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11 for the full
+[LANGFUSE_OBSERVABILITY.md §7.7](LANGFUSE_OBSERVABILITY.md) for the full
 span hierarchy, scores reference, metadata sanitisation rules, and caller
 threading patterns.
 

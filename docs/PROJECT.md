@@ -1485,7 +1485,7 @@ Invoice Governance enhancements:
 
 All callers thread `lf_parent_span` through `ERPResolutionService._trace_resolve()` -> `BaseResolver.resolve()` -> per-stage wrappers. Callers include `PostingMappingEngine`, `POLookupService`, `GRNLookupService`, `POLookupTool`, `GRNLookupTool`, and the ERP Resolution API view.
 
-> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11 -- ERP Integration Layer Tracing
+> Full reference: [LANGFUSE_OBSERVABILITY.md §7.7](LANGFUSE_OBSERVABILITY.md) — ERP Integration Layer Tracing
 - **Trace ID** display per timeline entry
 
 Role-based visibility: ADMIN and AUDITOR see full agent trace data and access history.
@@ -2632,7 +2632,7 @@ Accessed from the **ERP Integration** sidebar section (separate from Posting Age
 - **Error categorisation**: `sanitize_erp_error()` maps raw exceptions to safe categories for observability without leaking stack traces.
 - **3-stage span hierarchy**: `erp_cache_lookup` → `erp_live_lookup` → `erp_db_fallback`.
 
-> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) · [OBSERVABILITY_UPGRADE_SUMMARY.md](OBSERVABILITY_UPGRADE_SUMMARY.md)
+> Full reference: [LANGFUSE_OBSERVABILITY.md](LANGFUSE_OBSERVABILITY.md)
 
 ---
 
@@ -2785,7 +2785,7 @@ python manage.py run_learning_engine [--module extraction] [--days 14] [--dry-ru
 
 ## 27. Observability & Langfuse Integration
 
-> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) · [OBSERVABILITY_UPGRADE_SUMMARY.md](OBSERVABILITY_UPGRADE_SUMMARY.md)
+> Full reference: [LANGFUSE_OBSERVABILITY.md](LANGFUSE_OBSERVABILITY.md)
 
 Langfuse is the LLM observability backend for all AI-driven pipelines. The integration is **fail-silent** — if Langfuse is unreachable the application continues without impact.
 

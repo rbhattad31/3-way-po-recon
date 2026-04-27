@@ -780,7 +780,7 @@ def _resolve_via_erp(self, po_number, **kwargs):
     )
 ```
 
-See [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11.4 for the
+See [LANGFUSE_OBSERVABILITY.md §7.7](LANGFUSE_OBSERVABILITY.md) for the
 full caller threading table.
 
 ---
@@ -1286,7 +1286,7 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_HOST=https://us.cloud.langfuse.com
 ```
 
-**Full integration reference**: `docs/LANGFUSE_INTEGRATION.md`
+**Full integration reference**: [LANGFUSE_OBSERVABILITY.md](LANGFUSE_OBSERVABILITY.md)
 
 #### Agent pipeline tracing
 
@@ -3310,7 +3310,7 @@ ERP resolution spans emit 6 observation scores (success, latency_ok, result_pres
 fresh, authoritative, used_fallback). Per-stage spans (cache, live, fallback) emit
 additional scores. All metadata is sanitised via `langfuse_helpers.sanitize_erp_metadata()`.
 
-**Full ERP tracing reference**: [LANGFUSE_INTEGRATION.md](../docs/LANGFUSE_INTEGRATION.md) Section 11.
+**Full ERP tracing reference**: [LANGFUSE_OBSERVABILITY.md §7.7](LANGFUSE_OBSERVABILITY.md)
 
 ### Score value conventions
 
@@ -3935,7 +3935,7 @@ bulk jobs appear under the correct user in the Langfuse Users tab:
 adapter.extract(file_path, actor_user_id=upload.uploaded_by_id)
 ```
 
-Full Langfuse reference: `docs/LANGFUSE_INTEGRATION.md`
+Full Langfuse reference: [LANGFUSE_OBSERVABILITY.md](LANGFUSE_OBSERVABILITY.md)
 
 ### 5.1 InvoiceExtractionAdapter
 
@@ -6531,7 +6531,7 @@ Sidebar entry: "Bulk Extraction" under AI Agents section, gated by `extraction.b
 
 ## 22. Langfuse Observability
 
-Full reference: `docs/LANGFUSE_INTEGRATION.md`
+Full reference: [LANGFUSE_OBSERVABILITY.md](LANGFUSE_OBSERVABILITY.md)
 
 ### 22.1 Active trace call sites
 
@@ -6586,8 +6586,7 @@ filter traces per reviewer in the Users tab.
 Langfuse SDK v4 removed `user_id`/`session_id` from `start_observation()`.
 Both are set post-creation as OTel span attributes. Do **not** pass them
 directly to `start_observation()` -- this causes a silent `TypeError`
-that returns `None` and breaks all traces. See `docs/LANGFUSE_INTEGRATION.md`
-Issue 1 for the fix pattern.
+that returns `None` and breaks all traces. See [LANGFUSE_OBSERVABILITY.md §11 Issue 1](LANGFUSE_OBSERVABILITY.md) for the fix pattern.
 
 ---
 
@@ -7439,7 +7438,7 @@ sanitised (no API keys, tokens, or passwords) and values >2000 chars are truncat
 `PostingMappingEngine` passes `lf_parent_span=self._lf_mapping_span` to all
 `resolve_*()` calls so ERP spans nest under the `mapping` stage.
 
-**Full reference**: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Sections 6 and 11.
+**Full reference**: [LANGFUSE_OBSERVABILITY.md §§7.4–7.7](LANGFUSE_OBSERVABILITY.md)
 
 ---
 

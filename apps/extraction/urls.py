@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 
 from apps.extraction.template_views import (
     extraction_ajax_filter,
@@ -6,7 +7,6 @@ from apps.extraction.template_views import (
     extraction_approval_analytics,
     extraction_approval_detail,
     extraction_approval_queue,
-    extraction_console,
     extraction_edit_values,
     extraction_export_csv,
     extraction_export_purchase_invoice_excel_bulk,
@@ -52,7 +52,11 @@ urlpatterns = [
     path("result/<int:pk>/rerun/", extraction_rerun, name="rerun"),
     path("result/<int:pk>/edit/", extraction_edit_values, name="edit_values"),
     path("result/<int:pk>/admin-delete/", invoice_admin_delete, name="admin_delete"),
-    path("console/<int:pk>/", extraction_console, name="console"),
+    path(
+        "console/<int:pk>/",
+        RedirectView.as_view(pattern_name="cases:case_agent_view", permanent=True),
+        name="console",
+    ),
     # Extraction approval
     path("approvals/", extraction_approval_queue, name="approval_queue"),
     path("approvals/<int:pk>/", extraction_approval_detail, name="approval_detail"),
