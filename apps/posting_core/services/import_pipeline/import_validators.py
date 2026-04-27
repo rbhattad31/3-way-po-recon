@@ -13,6 +13,7 @@ REQUIRED_COLUMNS: Dict[str, Set[str]] = {
     "TAX": {"tax_code"},
     "COST_CENTER": {"cost_center_code", "cost_center_name"},
     "OPEN_PO": {"po_number"},
+    "GRN": {"grn_number", "po_number"},
 }
 
 

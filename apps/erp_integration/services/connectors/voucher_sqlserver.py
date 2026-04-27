@@ -151,16 +151,17 @@ DEFAULT_VOUCHER_QUERIES: Dict[str, str] = {
         "ORDER BY mt.MasterName"
     ),
     "item_bulk": (
-        "SELECT DISTINCT "
+        "SELECT "
         "  tib.Code AS item_code, "
-        "  tib.Product AS item_name, "
-        "  tib.[Description] AS [description], "
-        "  tib.[Unit] AS unit_of_measure, "
-        "  tib.[Department] AS category, "
+        "  MIN(tib.Product) AS item_name, "
+        "  MIN(tib.[Description]) AS [description], "
+        "  MIN(tib.[Unit]) AS unit_of_measure, "
+        "  MIN(tib.[Department]) AS category, "
         "  1 AS is_active, "
         "  'Item' AS item_group "
         "FROM Transaction_ItemBody_Table tib "
-        "WHERE tib.Code IS NOT NULL "
+        "WHERE tib.Code IS NOT NULL AND tib.Code <> '' "
+        "GROUP BY tib.Code "
         "ORDER BY tib.Code"
     ),
     "tax_bulk": (
@@ -211,6 +212,35 @@ DEFAULT_VOUCHER_QUERIES: Dict[str, str] = {
         "LEFT JOIN Master_MasterCodes_Table mmc ON mmc.MasterName = th.Account "
         "WHERE th.VoucherSeries LIKE 'App PO%' AND th.VoucherNo IS NOT NULL "
         "ORDER BY th.[Date] DESC, th.VoucherNo, tib.VoucherLineNo"
+    ),
+    # Bulk GRN import: all GRN line items from the goods receipt table.
+    # POrderNum is an int (VoucherNo from Transaction_Header_Table).
+    # Joined back to the PO header to get the human-readable PartyRefDoc PO number.
+    "grn_bulk": (
+        "SELECT "
+        "  em.GRNNO AS grn_number, "
+        "  em.GRNDATE AS receipt_date, "
+        "  ISNULL("
+        "    CASE WHEN th.PartyRefDoc LIKE '%/%' THEN th.PartyRefDoc ELSE NULL END, "
+        "    CAST(em.POrderNum AS nvarchar(50))"
+        "  ) AS po_number, "
+        "  CAST(em.POrderNum AS nvarchar(50)) AS po_voucher_no, "
+        "  CAST(em.POrderLineNum AS nvarchar(20)) AS po_line_number, "
+        "  em.Suppcode AS supplier_code, "
+        "  em.SuppName AS supplier_name, "
+        "  ISNULL(em.ItemCode, '') AS item_code, "
+        "  ISNULL(em.ItemDesc, '') AS item_description, "
+        "  ISNULL(em.ORDERQTY, 0) AS order_qty, "
+        "  ISNULL(em.GRNQTY, 0) AS grn_qty, "
+        "  ISNULL(em.GRNPRICE, ISNULL(em.UNITPRICE, 0)) AS grn_price, "
+        "  ISNULL(em.GRNVALUE, ISNULL(em.AMOUNT, 0)) AS grn_value, "
+        "  ISNULL(em.CURRENCYCODE, 'INR') AS currency, "
+        "  em.POrderDate AS po_date "
+        "FROM EFIMRDetailsTable em "
+        "LEFT JOIN Transaction_Header_Table th "
+        "  ON th.VoucherSeries LIKE 'App PO%' AND th.VoucherNo = em.POrderNum "
+        "WHERE em.GRNNO IS NOT NULL AND em.GRNNO <> '' "
+        "ORDER BY em.GRNNO, em.POrderLineNum"
     ),
 }
 

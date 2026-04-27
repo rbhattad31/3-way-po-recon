@@ -212,7 +212,7 @@ INSERT INTO [dbo].[Master_RegistrationDetails_Table] (MasterName, GSTIN, PANo, V
     ('DHANVEEN PIGMENTS PVT.LTD.', '24AABCD0213A1ZT', 'AABCD0213A', 'App PO%', 616),
     ('Bhabani Pigments Pvt. Ltd.', '19AADCB3680P1Z5', 'AADCB3680P', 'App PO%', 680),
     ('Azelis India Pvt Ltd', '27AAECA0013R1ZV', 'AAECA0013R', 'App PO%', 13),
-    ('AARJAVAM TECHFAB PVT LTD_HYD', '36AAICA0288H1ZX', 'AAICA0288H', 'App PO%', 288),
+    ('AARJAVAM TECHFAB PVT LTD_HYD', '36AAUCA1090K1ZA', 'AAUCA1090K', 'App PO%', 288),
     ('Spectrum Industrial Chemicals Ltd', '24AAICS1010Q1ZT', 'AAICS1010Q', 'App PO%', 1010),
     ('Old Vendor Co',         NULL, NULL,                         'App PO%', 3);
 
@@ -235,9 +235,9 @@ VALUES
     ('App PO', 1007, '2026-01-05', 'ACME Supplies Pvt Ltd', 'SCN-DELAYED-RECEIPT/2026-01', 125000.00, 125000.00, 'INR', 'Scenario DELAYED_RECEIPT: late GRN after PO date', 'Purchase Order'),
     ('App PO', 1008, '2026-02-25', 'ACME Supplies Pvt Ltd', 'SCN-AUTO-CLOSE/2026-01', 100000.00, 100000.00, 'INR', 'Scenario AUTO_CLOSE: minor variance remains within tolerance band', 'Purchase Order'),
     ('App PO', 1010, '2026-03-28', 'Spectrum Industrial Chemicals Ltd', 'SCN-LLM-FUZZY/2026-01', 240000.00, 240000.00, 'INR', 'Scenario LLM_FUZZY: two lot-coded lines, identical qty/price -- invoice omits lot codes forcing LLM line disambiguation', 'Purchase Order'),
-    -- PO 288: AARJAVAM TECHFAB -- geotextile fabric supply (case 8: invoice arrived without PO reference;
-    --   agent must do vendor_search -> po_lookup to identify the correct PO)
-    ('App PO', 288,  '2026-04-01', 'AARJAVAM TECHFAB PVT LTD_HYD', 'PO-HYD-288/2026-27', 216000.00, 216000.00, 'INR', 'Geotextile filter fabric supply -- Hyderabad plant Q1', 'Purchase Order');
+    -- PO 288: AARJAVAM TECHFAB -- mirrors the current live ATP/26-27/288 invoice.
+    -- The invoice has no extracted PO number, so this is the vendor_search -> po_lookup recovery case.
+    ('App PO', 288,  '2026-04-10', 'AARJAVAM TECHFAB PVT LTD_HYD', 'PO-HYD-288/2026-27', 156570.00, 156570.00, 'INR', 'Current live ATP/26-27/288 packing-bag invoice recovery scenario', 'Purchase Order');
 
 -- PO line items
 INSERT INTO [dbo].[Transaction_ItemBody_Table]
@@ -276,9 +276,10 @@ VALUES
     -- which classifies each invoice line as AMBIGUOUS and invokes LLM fallback.
     ('App PO', 1010, 1, 'RB-21A', 'Reactive Blue 21 Dye Lot A', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 reactive textile dye Lot A 25 kg drum'),
     ('App PO', 1010, 2, 'RB-21B', 'Reactive Blue 21 Dye Lot B', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 reactive textile dye Lot B 25 kg drum'),
-    -- PO 288 -- AARJAVAM TECHFAB: two fabric lines (case 8 vendor lookup scenario)
-    ('App PO', 288, 1, 'ARJ-GTX-100', 'Geotextile Filter Fabric 100 GSM', 'Mtr', 1000, 120.00, 120000.00, 120000.00, 'Geotextile filter fabric 100 GSM, 4m width roll'),
-    ('App PO', 288, 2, 'ARJ-GTX-200', 'Geotextile Filter Fabric 200 GSM', 'Mtr',  800, 120.00,  96000.00,  96000.00, 'Geotextile filter fabric 200 GSM, 4m width roll');
+    -- PO 288 -- AARJAVAM TECHFAB: current live ATP invoice lines.
+    ('App PO', 288, 1, 'ARJ-BAG-2431', 'PP Bags 24x31 Palin 3+3 Gusset', 'Bag', 2500, 16.08, 113120.00, 113120.00, 'PP Bags 24x31 PALIN 3+3 GUSSET (HSN: 39232990)'),
+    ('App PO', 288, 2, 'ARJ-BAG-2231', 'PP Bags 22x31 Blend 2.5+2.5 Gusset', 'Bag', 7000, 18.16, 42450.00, 42450.00, 'PP Bags 22x31 BLEND 2.5+2.5 GUSSET (HSN: 39232990)'),
+    ('App PO', 288, 3, 'ARJ-FRT-001', 'Freight Outward (Bag)', 'Each', 1, 1000.00, 1000.00, 1000.00, 'FREIGHT OUTWARD(BAG)');
 
 UPDATE [dbo].[Transaction_ItemBody_Table]
 SET CostCentre = 'RM-COL-01',
@@ -370,15 +371,19 @@ VALUES
         'INR', 'RB-21B', 'Reactive Blue 21 reactive textile dye Lot B 25 kg drum', 60, 60,
         2000.00, 120000.00, 'Drum',
         'VND810', 'Spectrum Industrial Chemicals Ltd', 'WH06', 1.0, 2000.00, 120000.00, '2026-03-28'),
-        -- GRN for PO 288, AARJAVAM TECHFAB (full receipt both lines) -- case 8 vendor-lookup scenario
+        -- GRN for PO 288, AARJAVAM TECHFAB (full receipt) -- mirrors the current ATP invoice.
         ('MAIN', '2026-04-10', 'ABSR0288', 288, 1,
-        'INR', 'ARJ-GTX-100', 'Geotextile filter fabric 100 GSM, 4m width roll', 1000, 1000,
-        120.00, 120000.00, 'Mtr',
-        'VND288', 'AARJAVAM TECHFAB PVT LTD_HYD', 'WH07', 1.0, 120.00, 120000.00, '2026-04-01'),
+        'INR', 'ARJ-BAG-2431', 'PP Bags 24x31 PALIN 3+3 GUSSET (HSN: 39232990)', 2500, 2500,
+        16.08, 113120.00, 'Bag',
+        'VND288', 'AARJAVAM TECHFAB PVT LTD_HYD', 'WH07', 1.0, 16.08, 113120.00, '2026-04-10'),
         ('MAIN', '2026-04-10', 'ABSR0288', 288, 2,
-        'INR', 'ARJ-GTX-200', 'Geotextile filter fabric 200 GSM, 4m width roll', 800, 800,
-        120.00, 96000.00, 'Mtr',
-        'VND288', 'AARJAVAM TECHFAB PVT LTD_HYD', 'WH07', 1.0, 120.00, 96000.00, '2026-04-01');
+        'INR', 'ARJ-BAG-2231', 'PP Bags 22x31 BLEND 2.5+2.5 GUSSET (HSN: 39232990)', 7000, 7000,
+        18.16, 42450.00, 'Bag',
+        'VND288', 'AARJAVAM TECHFAB PVT LTD_HYD', 'WH07', 1.0, 18.16, 42450.00, '2026-04-10'),
+        ('MAIN', '2026-04-10', 'ABSR0288', 288, 3,
+        'INR', 'ARJ-FRT-001', 'FREIGHT OUTWARD(BAG)', 1, 1,
+        1000.00, 1000.00, 'Each',
+        'VND288', 'AARJAVAM TECHFAB PVT LTD_HYD', 'WH07', 1.0, 1000.00, 1000.00, '2026-04-10');
 
 -- ---- Purchase Invoices (as vouchers, series 'App PI') --------
 -- Invoice from ACME against PO 1001 (for the items received)
@@ -396,9 +401,9 @@ VALUES
     ('App PI', 2107, '2026-02-28', 'ACME Supplies Pvt Ltd', 'INV-DELAY-2107', 125000.00, 125000.00, 'INR', 'Invoice for delayed receipt scenario', 'Purchase Invoice', '27AABCU9603R1ZX'),
     ('App PI', 2108, '2026-02-28', 'ACME Supplies Pvt Ltd', 'INV-AUTO-2108', 100200.00, 100200.00, 'INR', 'Invoice within auto-close band', 'Purchase Invoice', '27AABCU9603R1ZX'),
     ('App PI', 2110, '2026-04-02', 'Spectrum Industrial Chemicals Ltd', 'INV-LLM-2110', 240000.00, 240000.00, 'INR', 'Invoice for fuzzy line matching scenario', 'Purchase Invoice', '24AAICS1010Q1ZT'),
-    -- Invoice 2288: AARJAVAM TECHFAB -- no PO reference on the invoice itself
-    --   (tests the agent vendor_search -> po_lookup resolution path for case 8)
-    ('App PI', 2288, '2026-04-12', 'AARJAVAM TECHFAB PVT LTD_HYD', 'ARJ/2026-27/HYD-0041', 216000.00, 216000.00, 'INR', 'Geotextile fabric supply against PO-HYD-288/2026-27', 'Purchase Invoice', '36AAICA0288H1ZX');
+    -- Invoice 2288: AARJAVAM TECHFAB -- mirrors the current live ATP/26-27/288 invoice.
+    -- It intentionally carries no PO number in the extracted app-side case.
+    ('App PI', 2288, '2026-04-17', 'AARJAVAM TECHFAB PVT LTD_HYD', 'ATP/26-27/288', 184753.00, 156570.00, 'INR', 'Current live ATP packing-bag invoice against ERP PO-HYD-288/2026-27', 'Purchase Invoice', '36AAUCA1090K1ZA');
 
 -- Invoice line items
 INSERT INTO [dbo].[Transaction_ItemBody_Table]
@@ -436,9 +441,11 @@ VALUES
     --   -> LineMatchLLMFallbackService invoked to resolve each line
     ('App PI', 2110, 1, '', 'Reactive Blue 21 Dye', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 reactive dye 25 kg drum'),
     ('App PI', 2110, 2, '', 'Reactive Blue 21 Dye', 'Drum', 60, 2000.00, 120000.00, 120000.00, 'Reactive Blue 21 reactive dye 25 kg drum'),
-    -- Invoice 2288 -- AARJAVAM TECHFAB fabric supply lines matching PO 288
-    ('App PI', 2288, 1, 'ARJ-GTX-100', 'Geotextile Filter Fabric 100 GSM', 'Mtr', 1000, 120.00, 120000.00, 120000.00, 'Geotextile filter fabric 100 GSM, 4m width roll'),
-    ('App PI', 2288, 2, 'ARJ-GTX-200', 'Geotextile Filter Fabric 200 GSM', 'Mtr',  800, 120.00,  96000.00,  96000.00, 'Geotextile filter fabric 200 GSM, 4m width roll');
+    -- Invoice 2288 -- AARJAVAM TECHFAB packing-bag lines matching the live ATP invoice.
+    -- Codes are blank to mirror the current extracted invoice and force description-based matching.
+    ('App PI', 2288, 1, '', 'PP Bags 24x31 Palin 3+3 Gusset', 'Bag', 2500, 16.08, 113120.00, 113120.00, 'PP Bags 24x31 PALIN 3+3 GUSSET (HSN: 39232990)'),
+    ('App PI', 2288, 2, '', 'PP Bags 22x31 Blend 2.5+2.5 Gusset', 'Bag', 7000, 18.16, 42450.00, 42450.00, 'PP Bags 22x31 BLEND 2.5+2.5 GUSSET (HSN: 39232990)'),
+    ('App PI', 2288, 3, '', 'Freight Outward (Bag)', 'Each', 1, 1000.00, 1000.00, 1000.00, 'FREIGHT OUTWARD(BAG)');
 
 UPDATE [dbo].[Transaction_ItemBody_Table]
 SET CostCentre = 'RM-COL-01',
@@ -465,7 +472,7 @@ VALUES
     ('App PI', 2108, 1, 'Credit', 'ACME Supplies Pvt Ltd', 100200.00, 100200.00, 'INV-AUTO-2108', '2026-02-28', 'App PI', 2108),
     ('App PI', 2110, 1, 'Credit', 'Spectrum Industrial Chemicals Ltd', 240000.00, 240000.00, 'INV-LLM-2110', '2026-04-02', 'App PI', 2110),
     -- Payment entry for AARJAVAM invoice 2288
-    ('App PI', 2288, 1, 'Credit', 'AARJAVAM TECHFAB PVT LTD_HYD', 216000.00, 216000.00, 'ARJ/2026-27/HYD-0041', '2026-04-12', 'App PI', 2288),
+    ('App PI', 2288, 1, 'Credit', 'AARJAVAM TECHFAB PVT LTD_HYD', 184753.00, 184753.00, 'ATP/26-27/288', '2026-04-17', 'App PI', 2288),
     -- A duplicate invoice (same supplier inv number, different voucher) -- tests the duplicate_check query
     ('App PI', 2003, 1, 'Credit', 'ACME Supplies Pvt Ltd', 144000.00, 144000.00, 'INV-ACME-2026-0045', '2026-01-25', 'App PI', 2003);
 

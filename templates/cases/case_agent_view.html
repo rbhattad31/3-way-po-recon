@@ -362,6 +362,131 @@
                   </div>
                   {% endif %}
 
+                  {# Line Matching Details #}
+                  {% if line_matching_details %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header">
+                      <i class="bi bi-diagram-2"></i> Line Matching Details
+                      <span class="badge bg-secondary ms-2">{{ line_matching_details|length }}</span>
+                    </div>
+                    <div class="cc-section-body p-0">
+                      <div class="accordion" id="lineMatchingAccordion" style="font-size:.8rem">
+                        {% for line in line_matching_details %}
+                        <div class="accordion-item">
+                          <h2 class="accordion-header" id="lineHead{{ line.id }}">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#lineBody{{ line.id }}" aria-expanded="false" aria-controls="lineBody{{ line.id }}" style="padding:.5rem .75rem">
+                              <span class="me-2">
+                                {% if line.match_status == 'MATCHED' %}
+                                  <i class="bi bi-check2 text-success"></i>
+                                {% elif line.match_status == 'PARTIAL_MATCH' %}
+                                  <i class="bi bi-dash-square text-warning"></i>
+                                {% else %}
+                                  <i class="bi bi-x text-danger"></i>
+                                {% endif %}
+                              </span>
+                              <span class="fw-semibold">{{ line.invoice_description|default:"Line"|truncatechars:35 }}</span>
+                              <span class="ms-2">
+                                {% if line.match_method == 'DETERMINISTIC' %}
+                                  <span class="badge bg-info bg-opacity-10 text-info" style="font-size:.65rem">DETERMINISTIC</span>
+                                {% elif line.match_method == 'LLM_FALLBACK' %}
+                                  <span class="badge bg-primary bg-opacity-10 text-primary" style="font-size:.65rem">LLM</span>
+                                {% elif line.match_method == 'EXACT' %}
+                                  <span class="badge bg-success bg-opacity-10 text-success" style="font-size:.65rem">EXACT</span>
+                                {% endif %}
+                              </span>
+                              <span class="ms-auto me-2">
+                                <span class="cc-conf-bar" style="display:inline-block;width:50px;height:6px;margin:0 4px">
+                                  <span class="cc-conf-fill {% if line.match_confidence >= 80 %}high{% elif line.match_confidence >= 50 %}med{% else %}low{% endif %}" style="width:{% widthratio line.match_confidence 1 100 %}%"></span>
+                                </span>
+                                {{ line.match_confidence|floatformat:0 }}%
+                              </span>
+                            </button>
+                          </h2>
+                          <div id="lineBody{{ line.id }}" class="accordion-collapse collapse" aria-labelledby="lineHead{{ line.id }}" data-bs-parent="#lineMatchingAccordion">
+                            <div class="accordion-body" style="padding:.75rem">
+                              {# Line Details Header #}
+                              <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                  <div><strong>Invoice:</strong> {{ line.invoice_description|truncatechars:50|default:"--" }}</div>
+                                  <div class="text-muted" style="font-size:.75rem">Line {{ line.invoice_line_number|default:"--" }}</div>
+                                </div>
+                                <div class="text-end">
+                                  <div><strong>PO:</strong> {{ line.po_description|truncatechars:50|default:"--" }}</div>
+                                  <div class="text-muted" style="font-size:.75rem">Line {{ line.po_line_number|default:"--" }}</div>
+                                </div>
+                              </div>
+
+                              <hr style="margin:.5rem 0">
+
+                              {# Metadata #}
+                              <div class="mb-2 text-muted" style="font-size:.75rem">
+                                <div>
+                                  <strong>Status:</strong> 
+                                  {% if line.match_status == 'MATCHED' %}<span class="badge bg-success">Matched</span>
+                                  {% elif line.match_status == 'PARTIAL_MATCH' %}<span class="badge bg-warning text-dark">Partial</span>
+                                  {% else %}<span class="badge bg-danger">{{ line.match_status }}</span>{% endif %}
+                                  <strong class="ms-3">Confidence Band:</strong> 
+                                  {% if line.confidence_band == 'HIGH' %}<span class="badge bg-success">High</span>
+                                  {% elif line.confidence_band == 'GOOD' %}<span class="badge bg-info">Good</span>
+                                  {% elif line.confidence_band == 'MODERATE' %}<span class="badge bg-warning text-dark">Moderate</span>
+                                  {% elif line.confidence_band == 'LOW' %}<span class="badge bg-danger">Low</span>
+                                  {% else %}<span class="badge bg-secondary">{{ line.confidence_band }}</span>{% endif %}
+                                </div>
+                                {% if line.is_ambiguous %}
+                                <div class="mt-1"><i class="bi bi-exclamation-circle-fill text-warning"></i> <strong>Ambiguous:</strong> {{ line.candidate_count }} candidates considered</div>
+                                {% endif %}
+                              </div>
+
+                              <hr style="margin:.5rem 0">
+
+                              {# Signal Scores #}
+                              <div class="mb-2">
+                                <strong style="font-size:.75rem">Signal Scores:</strong>
+                                <table style="width:100%;font-size:.7rem;margin-top:.35rem">
+                                  {% for signal_key, signal_data in line.signals.items %}
+                                  <tr>
+                                    <td style="padding:.2rem .4rem">{{ signal_data.label }}</td>
+                                    <td style="padding:.2rem .4rem">
+                                      <div class="cc-conf-bar" style="display:inline-block;width:80px;height:5px;margin:0 4px">
+                                        <div class="cc-conf-fill {% if signal_data.score >= 0.8 %}high{% elif signal_data.score >= 0.5 %}med{% else %}low{% endif %}" style="width:{% widthratio signal_data.score 1 100 %}%"></div>
+                                      </div>
+                                    </td>
+                                    <td class="text-end" style="padding:.2rem .4rem">{{ signal_data.score|floatformat:2 }}</td>
+                                  </tr>
+                                  {% endfor %}
+                                </table>
+                              </div>
+
+                              {# Matched/Rejected Signals #}
+                              {% if line.matched_signals or line.rejected_signals %}
+                              <div style="font-size:.7rem">
+                                {% if line.matched_signals %}
+                                <div class="mb-1">
+                                  <strong>Matched:</strong><br>
+                                  {% for sig in line.matched_signals %}
+                                  <span class="badge bg-success bg-opacity-25 text-success me-1">{{ sig }}</span>
+                                  {% endfor %}
+                                </div>
+                                {% endif %}
+                                {% if line.rejected_signals %}
+                                <div>
+                                  <strong>Rejected:</strong><br>
+                                  {% for sig in line.rejected_signals %}
+                                  <span class="badge bg-danger bg-opacity-25 text-danger me-1">{{ sig }}</span>
+                                  {% endfor %}
+                                </div>
+                                {% endif %}
+                              </div>
+                              {% endif %}
+                            </div>
+                          </div>
+                        </div>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  </div>
+                  {% endif %}
+
                 </div>
 
                 {# Right column: Key details #}
@@ -547,14 +672,23 @@
                     </thead>
                     <tbody>
                       {% for run in agent_runs %}
-                      <tr>
-                        <td class="fw-semibold">{{ run.agent_definition.name|default:run.get_agent_type_display }}</td>
+                      <tr {% if run.parent_run %}class="table-light"{% endif %}>
+                        <td class="fw-semibold">
+                          {% if run.parent_run %}
+                          <span class="text-muted me-1" title="Child run delegated by {{ run.parent_run.agent_definition.name|default:run.parent_run.agent_type }}" style="font-size:.8em">&#8627;</span>
+                          {% endif %}
+                          {{ run.agent_definition.name|default:run.get_agent_type_display }}
+                          {% if run.parent_run %}
+                          <br><small class="text-muted" style="font-size:.7rem">via {{ run.parent_run.agent_definition.name|default:run.parent_run.agent_type }}</small>
+                          {% endif %}
+                        </td>
                         <td>
                           {% if "SYSTEM_" in run.agent_type %}
                           <span class="badge bg-secondary">SYSTEM</span>
                           {% else %}
                           <span class="badge bg-primary">LLM</span>
                           {% endif %}
+                          {% if run.parent_run %}<span class="badge bg-light text-muted border ms-1" style="font-size:.6rem">child</span>{% endif %}
                         </td>
                         <td>
                           {% if run.status == "COMPLETED" %}<span class="badge bg-success">Completed</span>
@@ -595,10 +729,11 @@
 
               <div class="accordion" id="agentRunDetails">
                 {% for run in agent_runs %}
-                <div class="accordion-item">
+                <div class="accordion-item {% if run.parent_run %}ms-4 border-start border-info{% endif %}">
                   <h2 class="accordion-header" id="runHead{{ run.pk }}">
                     <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#runBody{{ run.pk }}" aria-expanded="false" aria-controls="runBody{{ run.pk }}" style="font-size:.82rem">
-                      {{ run.agent_definition.name|default:run.get_agent_type_display }} -- {{ run.status }}
+                      {% if run.parent_run %}<span class="badge bg-light text-muted border me-2" style="font-size:.65rem">child</span>{% endif %}
+                      {{ run.agent_definition.name|default:run.get_agent_type_display }} &mdash; {{ run.status }}
                     </button>
                   </h2>
                   <div id="runBody{{ run.pk }}" class="accordion-collapse collapse" aria-labelledby="runHead{{ run.pk }}" data-bs-parent="#agentRunDetails">
@@ -666,7 +801,20 @@
               </div>
               {% endif %}
 
-              {# â”€â”€ Audit Trail (inline, extraction-console style) â”€â”€ #}
+              {# -- Case Activity Events (APCaseActivity) -- #}
+              {% if activities %}
+              <div class="cc-section mt-3 mb-3">
+                <div class="cc-section-header">
+                  <i class="bi bi-activity me-1"></i> Activity Events
+                  <span class="badge bg-secondary ms-2">{{ activities|length }}</span>
+                </div>
+                <div class="cc-section-body p-2">
+                  {% include "cases/partials/_activity_panel.html" %}
+                </div>
+              </div>
+              {% endif %}
+
+              {# -- Audit Trail (inline, extraction-console style) -- #}
               <div class="cc-section mt-3">
                 <div class="cc-section-header">
                   <i class="bi bi-clock-history me-1"></i> Audit Trail
@@ -1142,10 +1290,6 @@
             </div>
             {% endif %}
 
-            <div class="mt-3 pt-3 border-top">
-              <h6 class="mb-2"><i class="bi bi-activity me-1"></i>Activity Events</h6>
-              {% include "cases/partials/_activity_panel.html" %}
-            </div>
             </div>
 
           </div>{# /tab-content #}

@@ -30,6 +30,7 @@ from apps.posting_core.services.import_pipeline.item_importer import ItemImporte
 from apps.posting_core.services.import_pipeline.tax_importer import TaxImporter
 from apps.posting_core.services.import_pipeline.cost_center_importer import CostCenterImporter
 from apps.posting_core.services.import_pipeline.po_importer import POImporter
+from apps.posting_core.services.import_pipeline.grn_importer import GRNImporter
 from apps.posting_core.services.import_pipeline.import_validators import validate_columns
 from apps.erp_integration.services.connector_factory import ConnectorFactory
 
@@ -41,6 +42,7 @@ IMPORTER_MAP = {
     ERPReferenceBatchType.TAX: TaxImporter,
     ERPReferenceBatchType.COST_CENTER: CostCenterImporter,
     ERPReferenceBatchType.OPEN_PO: POImporter,
+    ERPReferenceBatchType.GRN: GRNImporter,
 }
 
 
@@ -273,6 +275,34 @@ class DirectERPImporter:
             logger.warning("Failed to query POs from ERP: %s", exc)
             return
 
+    @staticmethod
+    def query_grns(connector, **params) -> Generator[Dict[str, Any], None, None]:
+        """Query ERP for GRN line items from EFIMRDetailsTable."""
+        try:
+            rows = connector.execute_bulk_query("grn_bulk", params=[])
+            for row in rows:
+                if row and row.get("grn_number"):
+                    yield {
+                        "grn_number": str(row.get("grn_number", "")).strip(),
+                        "po_number": str(row.get("po_number", "") or "").strip(),
+                        "po_voucher_no": str(row.get("po_voucher_no", "") or "").strip(),
+                        "po_line_number": str(row.get("po_line_number", "") or "").strip(),
+                        "receipt_date": row.get("receipt_date"),
+                        "supplier_code": str(row.get("supplier_code", "") or "").strip(),
+                        "supplier_name": str(row.get("supplier_name", "") or "").strip(),
+                        "item_code": str(row.get("item_code", "") or "").strip(),
+                        "item_description": str(row.get("item_description", "") or "").strip(),
+                        "order_qty": row.get("order_qty"),
+                        "grn_qty": row.get("grn_qty"),
+                        "grn_price": row.get("grn_price"),
+                        "grn_value": row.get("grn_value"),
+                        "currency": str(row.get("currency", "") or "").strip(),
+                        "po_date": row.get("po_date"),
+                    }
+        except Exception as exc:
+            logger.warning("Failed to query GRNs from ERP: %s", exc)
+            return
+
     @classmethod
     def get_query_method(cls, batch_type: str):
         """Return the query method for the given batch type."""
@@ -282,6 +312,7 @@ class DirectERPImporter:
             ERPReferenceBatchType.TAX: cls.query_tax_codes,
             ERPReferenceBatchType.COST_CENTER: cls.query_cost_centers,
             ERPReferenceBatchType.OPEN_PO: cls.query_pos,
+            ERPReferenceBatchType.GRN: cls.query_grns,
         }
         return query_map.get(batch_type)
 

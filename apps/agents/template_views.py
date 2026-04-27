@@ -1740,13 +1740,18 @@ def agent_runs_list(request):
             return "procurement"
         return "ap"
 
+    from django.db.models import Q as _Q
     tenant = require_tenant(request)
     base_qs = AgentRun.objects.select_related(
         "reconciliation_result", "reconciliation_result__invoice",
         "agent_definition", "document_upload", "parent_run",
+        "parent_run__agent_definition",
     ).order_by("-created_at")
     if tenant is not None:
-        base_qs = base_qs.filter(tenant=tenant)
+        # Include runs created with NULL tenant (e.g. extraction pipeline runs
+        # that ran before tenant context was fully established) alongside
+        # properly-scoped runs.  This mirrors the filter used in case_agent_view.
+        base_qs = base_qs.filter(_Q(tenant=tenant) | _Q(tenant__isnull=True))
 
     qs = base_qs
 
@@ -1758,6 +1763,7 @@ def agent_runs_list(request):
     model_used = request.GET.get("model_used", "").strip()
     date_from = request.GET.get("date_from", "").strip()
     date_to = request.GET.get("date_to", "").strip()
+    hide_child_runs = request.GET.get("hide_child_runs", "").strip()
     min_conf = request.GET.get("min_confidence", "").strip()
     max_conf = request.GET.get("max_confidence", "").strip()
     invoice_number = request.GET.get("invoice_number", "").strip()
@@ -1807,6 +1813,10 @@ def agent_runs_list(request):
             qs = qs.filter(procurement_q)
         elif domain == "ap":
             qs = qs.exclude(benchmark_q | procurement_q)
+
+    # Optionally hide child runs (runs delegated by a supervisor/parent agent)
+    if hide_child_runs == "1":
+        qs = qs.filter(parent_run__isnull=True)
 
     paginator = Paginator(qs, 50)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -2008,13 +2018,13 @@ def agent_runs_list(request):
     ]
     status_choices = AgentRunStatus.choices
     roles = (
-        AgentRun.objects.exclude(actor_primary_role="")
+        base_qs.exclude(actor_primary_role="")
         .order_by("actor_primary_role")
         .values_list("actor_primary_role", flat=True)
         .distinct()
     )
     models_used = (
-        AgentRun.objects.exclude(llm_model_used="")
+        base_qs.exclude(llm_model_used="")
         .order_by("llm_model_used")
         .values_list("llm_model_used", flat=True)
         .distinct()
@@ -2308,6 +2318,7 @@ def agent_runs_list(request):
         "current_invoice_number": invoice_number,
         "current_domain": domain,
         "current_run_scope": domain,
+        "current_hide_child_runs": hide_child_runs,
         # KPIs
         "total_count": total_count,
         "completed_count": completed_count,

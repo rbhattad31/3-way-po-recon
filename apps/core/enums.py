@@ -909,6 +909,7 @@ class ERPReferenceBatchType(models.TextChoices):
     TAX = "TAX", "Tax"
     COST_CENTER = "COST_CENTER", "Cost Center"
     OPEN_PO = "OPEN_PO", "Open PO"
+    GRN = "GRN", "GRN"
 
 
 class ERPReferenceBatchStatus(models.TextChoices):

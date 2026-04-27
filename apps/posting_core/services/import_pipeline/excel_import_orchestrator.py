@@ -33,6 +33,7 @@ from apps.posting_core.services.import_pipeline.item_importer import ItemImporte
 from apps.posting_core.services.import_pipeline.tax_importer import TaxImporter
 from apps.posting_core.services.import_pipeline.cost_center_importer import CostCenterImporter
 from apps.posting_core.services.import_pipeline.po_importer import POImporter
+from apps.posting_core.services.import_pipeline.grn_importer import GRNImporter
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ IMPORTER_MAP = {
     ERPReferenceBatchType.TAX: TaxImporter,
     ERPReferenceBatchType.COST_CENTER: CostCenterImporter,
     ERPReferenceBatchType.OPEN_PO: POImporter,
+    ERPReferenceBatchType.GRN: GRNImporter,
 }
 
 

@@ -351,6 +351,7 @@ def erp_reference_data(request):
     from apps.core.tenant_utils import get_tenant_or_none
     from apps.posting_core.models import (
         ERPCostCenterReference,
+        ERPGRNReference,
         ERPItemReference,
         ERPPOReference,
         ERPReferenceImportBatch,
@@ -365,7 +366,7 @@ def erp_reference_data(request):
             return qs.filter(tenant=tenant)
         return qs
 
-    VALID_TABS = ("vendors", "items", "tax", "cost_centers", "po_refs")
+    VALID_TABS = ("vendors", "items", "tax", "cost_centers", "po_refs", "grn_refs")
     active_tab = request.GET.get("tab", "vendors")
     if active_tab not in VALID_TABS:
         active_tab = "vendors"
@@ -377,6 +378,7 @@ def erp_reference_data(request):
     tax_count = _scope(ERPTaxCodeReference.objects.filter(is_active=True)).count()
     cost_center_count = _scope(ERPCostCenterReference.objects.filter(is_active=True)).count()
     po_ref_count = _scope(ERPPOReference.objects.filter(is_open=True)).count()
+    grn_ref_count = _scope(ERPGRNReference.objects.all()).count()
     last_batch = _scope(ERPReferenceImportBatch.objects.all()).order_by("-created_at").first()
     total_batches = _scope(ERPReferenceImportBatch.objects.all()).count()
 
@@ -434,6 +436,18 @@ def erp_reference_data(request):
             )
         page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
 
+    elif active_tab == "grn_refs":
+        qs = _scope(ERPGRNReference.objects.select_related("batch")).order_by("grn_number", "po_line_number")
+        if search:
+            qs = qs.filter(
+                Q(grn_number__icontains=search)
+                | Q(po_number__icontains=search)
+                | Q(item_code__icontains=search)
+                | Q(item_description__icontains=search)
+                | Q(supplier_name__icontains=search)
+            )
+        page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
+
     return render(request, "erp_integration/reference_data.html", {
         "active_tab": active_tab,
         "search": search,
@@ -444,6 +458,7 @@ def erp_reference_data(request):
             "tax_count": tax_count,
             "cost_center_count": cost_center_count,
             "po_ref_count": po_ref_count,
+            "grn_ref_count": grn_ref_count,
             "total_batches": total_batches,
         },
         "last_batch": last_batch,

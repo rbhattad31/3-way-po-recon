@@ -170,6 +170,10 @@
           </select>
         </div>
         <div class="col-lg-2 col-md-4 d-flex gap-1 align-items-end">
+          <div class="form-check mb-0 me-1">
+            <input class="form-check-input" type="checkbox" name="hide_child_runs" id="hideChildRuns" value="1" {% if current_hide_child_runs == "1" %}checked{% endif %}>
+            <label class="form-check-label" for="hideChildRuns" style="font-size:.8rem">Hide child runs</label>
+          </div>
           <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
           <a href="{% url 'agents:agent_runs_list' %}" class="btn btn-sm btn-outline-secondary" title="Clear filters"><i class="bi bi-x-lg"></i></a>
         </div>
@@ -186,12 +190,12 @@
       <table class="ar-table w-100 ar-table-wide">
         <thead>
           <tr>
-            <th>ID</th><th>Scope</th><th>Agent</th><th>Status</th><th>Reference</th><th>Confidence*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
+            <th>ID</th><th>Scope</th><th>Agent</th><th>Status</th><th>Parent</th><th>Reference</th><th>Confidence*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
           </tr>
         </thead>
         <tbody>
           {% for run in runs %}
-          <tr>
+          <tr {% if run.parent_run %}style="background:#f8fafc"{% endif %}>
             <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
             <td>
               {% if run.classification == 'benchmarking' %}
@@ -204,6 +208,15 @@
             </td>
             <td><span class="at-badge {% if 'SYSTEM_' in run.agent_type %}at-system{% else %}at-llm{% endif %}">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
             <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
+            <td>
+              {% if run.parent_run %}
+              <a href="{% url 'agents:agent_run_detail' run.parent_run.pk %}" class="small text-muted" title="Child run delegated by #{{ run.parent_run.pk }}">
+                <span class="badge bg-light text-muted border">child of #{{ run.parent_run.pk }}</span>
+              </a>
+              {% else %}
+              <span class="text-muted" style="font-size:.72rem">--</span>
+              {% endif %}
+            </td>
             <td>
               {% if run.classification == 'benchmarking' %}
                 {% if run.quotation_ref %}<span class="mand-ok">{{ run.quotation_ref }}</span>{% else %}<small class="text-muted">--</small>{% endif %}
@@ -221,7 +234,7 @@
             <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
           </tr>
           {% empty %}
-          <tr><td colspan="12" class="text-center text-muted py-4">No agent runs in this page/filter.</td></tr>
+          <tr><td colspan="13" class="text-center text-muted py-4">No agent runs in this page/filter.</td></tr>
           {% endfor %}
         </tbody>
       </table>

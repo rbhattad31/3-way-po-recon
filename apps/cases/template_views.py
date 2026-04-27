@@ -572,7 +572,7 @@ def case_agent_view(request, pk):
         agent_run_qs = agent_run_qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
     agent_runs = list(
         agent_run_qs
-        .select_related("agent_definition")
+        .select_related("agent_definition", "parent_run", "parent_run__agent_definition")
         .prefetch_related(
             "steps", "tool_calls", "decisions", "recommendations",
             "messages",
@@ -580,6 +580,30 @@ def case_agent_view(request, pk):
         .distinct()
         .order_by("created_at")
     )
+
+    # Second pass: include child runs delegated by any supervisor/parent run
+    # found above (e.g. PORetrievalAgent, GRNRetrievalAgent spawned by
+    # SupervisorAgent). Child runs only carry parent_run_id, not the case-
+    # linking fields, so they are missed by the initial Q filter.
+    _found_pks = {r.pk for r in agent_runs}
+    if _found_pks:
+        child_q = Q(parent_run_id__in=_found_pks)
+        if tenant is not None:
+            child_q &= Q(tenant=tenant) | Q(tenant__isnull=True)
+        child_runs = list(
+            AgentRun.objects.filter(child_q)
+            .exclude(pk__in=_found_pks)
+            .select_related("agent_definition", "parent_run", "parent_run__agent_definition")
+            .prefetch_related(
+                "steps", "tool_calls", "decisions", "recommendations",
+                "messages",
+            )
+        )
+        if child_runs:
+            agent_runs = sorted(
+                agent_runs + child_runs,
+                key=lambda r: r.created_at,
+            )
 
     # ── Attach eval field outcomes per agent run ──
     _agent_run_ids = [r.pk for r in agent_runs]
@@ -967,6 +991,70 @@ def case_agent_view(request, pk):
             qr_decision_codes = []
             raw_json_pretty = ""
 
+    # ── Line-level matching details (reconciliation result lines) ──
+    line_matching_details = []
+    if recon_result:
+        try:
+            from apps.reconciliation.models import ReconciliationResultLine
+            line_results = list(
+                ReconciliationResultLine.objects.filter(result=recon_result)
+                .select_related("invoice_line", "po_line")
+                .order_by("id")
+            )
+            for line_result in line_results:
+                # Format signal scores as percentages
+                signals = {
+                    "item_code": {
+                        "score": line_result.description_match_score or 0,
+                        "label": "Item Code",
+                    },
+                    "description": {
+                        "score": line_result.description_match_score or 0,
+                        "label": "Description",
+                    },
+                    "token_sim": {
+                        "score": line_result.token_similarity_score or 0,
+                        "label": "Token Similarity",
+                    },
+                    "fuzzy": {
+                        "score": line_result.fuzzy_similarity_score or 0,
+                        "label": "Fuzzy Match",
+                    },
+                    "quantity": {
+                        "score": line_result.quantity_match_score or 0,
+                        "label": "Quantity",
+                    },
+                    "price": {
+                        "score": line_result.price_match_score or 0,
+                        "label": "Price",
+                    },
+                    "amount": {
+                        "score": line_result.amount_match_score or 0,
+                        "label": "Amount",
+                    },
+                }
+                
+                line_matching_details.append({
+                    "id": line_result.id,
+                    "match_status": line_result.match_status,
+                    "match_method": line_result.match_method,
+                    "match_confidence": float(line_result.match_confidence or 0) * 100,  # as percentage
+                    "confidence_band": line_result.confidence_band,
+                    "is_ambiguous": line_result.is_ambiguous,
+                    "candidate_count": line_result.candidate_count,
+                    "signals": signals,
+                    "matched_signals": line_result.matched_signals or [],
+                    "rejected_signals": line_result.rejected_signals or [],
+                    "line_match_meta": line_result.line_match_meta or {},
+                    "invoice_line_number": line_result.invoice_line.line_number if line_result.invoice_line else None,
+                    "invoice_description": line_result.invoice_line.description if line_result.invoice_line else None,
+                    "po_line_number": line_result.po_line.line_number if line_result.po_line else None,
+                    "po_description": line_result.po_line.description if line_result.po_line else None,
+                })
+        except Exception as e:
+            logger.debug(f"Line matching details build failed (non-fatal): {e}")
+            line_matching_details = []
+
     return render(request, "cases/case_agent_view.html", {
         "case": case,
         "invoice": invoice,
@@ -1020,6 +1108,7 @@ def case_agent_view(request, pk):
         "copilot_context_json": json.dumps(copilot_context, default=str),
         "reviewers": reviewers,
         "activities": list(case.activities.select_related("actor").order_by("-created_at")),
+        "line_matching_details": line_matching_details,
     })
 
 

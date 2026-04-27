@@ -628,6 +628,65 @@ class ERPPOReference(TimestampMixin):
         return f"PO {self.po_number}/{self.po_line_number}"
 
 
+class ERPGRNReference(TimestampMixin):
+    """GRN line item imported from ERP goods-receipt table (EFIMRDetailsTable).
+
+    Each row represents one PO line received under a GRN.
+    Natural key: (tenant, grn_number, po_voucher_no, po_line_number).
+    """
+
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+    batch = models.ForeignKey(
+        ERPReferenceImportBatch,
+        on_delete=models.CASCADE,
+        related_name="grn_refs",
+    )
+    grn_number = models.CharField(max_length=100, db_index=True)
+    # Human-readable PO reference (PartyRefDoc, e.g. "616/2025-26")
+    po_number = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    # Raw integer VoucherNo from ERP (POrderNum column)
+    po_voucher_no = models.CharField(max_length=50, blank=True, default="")
+    po_line_number = models.CharField(max_length=20, blank=True, default="")
+    receipt_date = models.DateField(null=True, blank=True)
+    supplier_code = models.CharField(max_length=50, blank=True, default="")
+    supplier_name = models.CharField(max_length=255, blank=True, default="")
+    item_code = models.CharField(max_length=100, blank=True, default="")
+    item_description = models.TextField(blank=True, default="")
+    order_qty = models.DecimalField(max_digits=18, decimal_places=3, null=True, blank=True)
+    grn_qty = models.DecimalField(max_digits=18, decimal_places=3, null=True, blank=True)
+    grn_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    grn_value = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=10, blank=True, default="")
+    po_date = models.DateField(null=True, blank=True)
+    raw_json = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "posting_core_erp_grn_ref"
+        ordering = ["grn_number", "po_line_number"]
+        verbose_name = "ERP GRN Reference"
+        verbose_name_plural = "ERP GRN References"
+        indexes = [
+            models.Index(fields=["grn_number"], name="idx_grnref_number"),
+            models.Index(fields=["po_number"], name="idx_grnref_po_number"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "grn_number", "po_voucher_no", "po_line_number"],
+                name="uq_erp_grn_ref_tenant_grn_line",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"GRN {self.grn_number} / PO {self.po_number} line {self.po_line_number}"
+
+
 # ============================================================================
 # Alias Mappings (business-owned, human-curated)
 # ============================================================================

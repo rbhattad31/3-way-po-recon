@@ -14,18 +14,32 @@ Source of truth for expectations:
 2. [docs/TEST_DOCUMENTATION.md](c:/3-way-po-recon/docs/TEST_DOCUMENTATION.md)
 3. [docs/AGENT_ARCHITECTURE_COMBINED.md](c:/3-way-po-recon/docs/AGENT_ARCHITECTURE_COMBINED.md)
 
+## Current Live DB Cases
+
+The current Django database contains four invoice-backed cases that matter for ERP scenario coverage:
+
+| Live Case | Invoice | Extracted PO | Current DB Outcome | Coverage Intent |
+|---|---|---|---|---|
+| AP-260427-0002 | `90/26-27` | `616/2025-26` | `PARTIAL_MATCH`, `THREE_WAY`, exceptions `PARTIAL_INVOICE`, `LINE_MATCH_LOW_CONFIDENCE`, `GRN_NOT_FOUND` | Straightforward single-line live case. Seed already mirrors invoice, PO, and GRN. |
+| AP-260427-0003 | `BPPL/2026-27/033` | `PO-KTD-680/2025-26` | `PARTIAL_MATCH`, `THREE_WAY`, exceptions `AMOUNT_MISMATCH`, `LINE_MATCH_LOW_CONFIDENCE`, `GRN_NOT_FOUND` | Straightforward two-line live case. Seed already mirrors invoice, PO, and GRN. |
+| AP-260427-0006 | `SI994099283` | `PO-BUR-13/2026-27` | `PARTIAL_MATCH`, `THREE_WAY`, exceptions `AMOUNT_MISMATCH`, `LINE_MATCH_LOW_CONFIDENCE`, `GRN_NOT_FOUND` | Straightforward single-line live case. Seed already mirrors invoice, PO, and GRN. |
+| AP-260427-0005 | `ATP/26-27/288` | blank | `REQUIRES_REVIEW`, `NON_PO`, exception `MISSING_MANDATORY_FIELDS` | Current vendor-search and description-based recovery case. The seed now mirrors the live invoice values and adds ERP PO and GRN rows for recovery testing. |
+
+Two extra invoice rows are present in the app DB but are not primary validation targets: one blank invalid invoice and one duplicate invalid copy of `90/26-27`.
+
 ## Validation Scope
 
 The SQL seed now covers these categories:
 
-1. Existing live-case PO recovery for invoice numbers `BPPL/2026-27/033` and `SI994099283`.
-2. GRN missing.
-3. Over receipt.
-4. Invoice exceeds received quantity.
-5. Delayed receipt.
-6. Auto-close tolerance band.
-7. Fuzzy or ambiguous line matching.
-8. Duplicate invoice detection.
+1. Existing live straightforward cases for invoice numbers `90/26-27`, `BPPL/2026-27/033`, and `SI994099283`.
+2. Current live vendor-search case for invoice `ATP/26-27/288`.
+3. GRN missing.
+4. Over receipt.
+5. Invoice exceeds received quantity.
+6. Delayed receipt.
+7. Auto-close tolerance band.
+8. Fuzzy or ambiguous line matching.
+9. Duplicate invoice detection.
 
 ## Validation Method
 
@@ -40,9 +54,10 @@ For each scenario, validate in this order:
 
 | Scenario ID | SQL Seed Anchor | Business Intent | Expected PO Lookup | Expected GRN Lookup | Expected Reconciliation Outcome | Expected Agent Outcome |
 |---|---|---|---|---|---|---|
-| LIVE-616 | PO `616`, invoice `90/26-27` | Existing real invoice with tax uplift over PO base | Exact match by `PartyRefDoc='616/2025-26'` | Exact match `ABSR0616` | `PARTIAL_MATCH`; exceptions should include `GRN_NOT_FOUND` only if app-side GRN linkage still fails, otherwise primarily amount or line-confidence variance. Current live DB previously showed `PARTIAL_MATCH` with `LINE_MATCH_LOW_CONFIDENCE`, `GRN_NOT_FOUND`, `PARTIAL_INVOICE`. | If `GRN_NOT_FOUND` remains, planner adds `GRN_RETRIEVAL`; if partial remains outside auto-close, also `RECONCILIATION_ASSIST`, then deterministic routing and summary. |
-| LIVE-680 | PO `680`, invoice `BPPL/2026-27/033` | Repair current `PO_NOT_FOUND` live case by adding missing ERP PO and GRN | Exact match by `PartyRefDoc='PO-KTD-680/2025-26'` or `VoucherNo=680` | Exact match `ABSR0680` with two lines | Expected to move from `UNMATCHED` to a matched or near-matched 3-way result. Target outcome is `MATCHED` if app-side line matching accepts both pigment lines; otherwise `PARTIAL_MATCH` with no `PO_NOT_FOUND`. | `PO_RETRIEVAL` should no longer be needed once ERP data is loaded. If partial remains, planner should prefer `RECONCILIATION_ASSIST`; deterministic tail always appends routing and summary. |
-| LIVE-013 | PO `13`, invoice `SI994099283` | Repair current `PO_NOT_FOUND` live case by adding missing ERP PO and GRN | Exact match by `PartyRefDoc='PO-BUR-13/2026-27'` or `VoucherNo=13` | Exact match `ABSR0013` | Expected to move from `UNMATCHED` to `MATCHED` or `PARTIAL_MATCH`, but must not remain `PO_NOT_FOUND` if connector data is loaded correctly. | `PO_RETRIEVAL` should not be planned after successful PO resolution; only downstream assist or routing agents should remain if another mismatch survives. |
+| LIVE-616 | PO `616`, invoice `90/26-27` | Existing real single-line live case with tax uplift over PO base | Exact match by `PartyRefDoc='616/2025-26'` | Exact match `ABSR0616` | Current live DB outcome is `PARTIAL_MATCH` with `PARTIAL_INVOICE`, `LINE_MATCH_LOW_CONFIDENCE`, and `GRN_NOT_FOUND`. This remains the expected validation result until app-side GRN linkage is fixed. | Current live pattern should still drive `GRN_RETRIEVAL`, then `RECONCILIATION_ASSIST`, then deterministic routing and summary. |
+| LIVE-680 | PO `680`, invoice `BPPL/2026-27/033` | Current live two-line straightforward case | Exact match by `PartyRefDoc='PO-KTD-680/2025-26'` or `VoucherNo=680` | Exact match `ABSR0680` with two lines | Current live DB outcome is `PARTIAL_MATCH` with `AMOUNT_MISMATCH`, two `LINE_MATCH_LOW_CONFIDENCE` exceptions, and `GRN_NOT_FOUND`. The important expectation is that the case is ERP-resolvable and no longer a PO-missing scenario. | `PO_RETRIEVAL` should not be needed. Current live behavior still tends to route through `GRN_RETRIEVAL` and `RECONCILIATION_ASSIST` because the GRN is present in ERP reference data but not linked into the app-side reconciliation path. |
+| LIVE-013 | PO `13`, invoice `SI994099283` | Current live single-line straightforward case | Exact match by `PartyRefDoc='PO-BUR-13/2026-27'` or `VoucherNo=13` | Exact match `ABSR0013` | Current live DB outcome is `PARTIAL_MATCH` with `AMOUNT_MISMATCH`, `LINE_MATCH_LOW_CONFIDENCE`, and `GRN_NOT_FOUND`. The important expectation is ERP PO/GRN availability, even though the current app result is still partial. | `PO_RETRIEVAL` should not be needed after ERP data is loaded. Current live behavior still routes to GRN and assist-style follow-up because reconciliation does not yet consume the ERP GRN rows directly. |
+| LIVE-288 | PO `288`, invoice `ATP/26-27/288` | Current live invoice with no extracted PO number; tests vendor-search and description-based recovery | Exact PO discovery should be possible through vendor search plus `VoucherNo=288` or `PartyRefDoc='PO-HYD-288/2026-27'` | Exact GRN `ABSR0288` with three lines mirroring the current invoice | Current live DB outcome is `REQUIRES_REVIEW` in `NON_PO` mode with `MISSING_MANDATORY_FIELDS`. ERP-backed validation target is successful document discovery for this invoice rather than a blind PO-not-found failure. | Expected agent pattern is vendor-search or PO-recovery first, then normal review routing once the PO and GRN are available. This is the live description-driven recovery case, distinct from the synthetic LLM ambiguity scenario. |
 | GRN-MISSING | PO `1004`, invoice `2104` | Test documented `GRN_NOT_FOUND` scenario | Exact PO match by `PartyRefDoc='SCN-GRN-MISSING/2026-01'` | No GRN rows by design | `REQUIRES_REVIEW` with `GRN_NOT_FOUND` in 3-way mode | Planner should add `GRN_RETRIEVAL`, then `EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY`. |
 | OVER-RECEIPT | PO `1005`, invoice `2105` | Test goods receipt quantity exceeding order quantity | Exact PO match by `PartyRefDoc='SCN-OVER-RECEIPT/2026-01'` | GRN `ABSR1005` where `GRNQTY=850` and `ORDERQTY=800` | `PARTIAL_MATCH` with `OVER_RECEIPT` as primary exception | Planner should not add `PO_RETRIEVAL` or `GRN_RETRIEVAL`; partial outside auto-close should drive `RECONCILIATION_ASSIST`, then deterministic routing and summary. |
 | INVOICE-EXCEEDS | PO `1006`, invoice `2106` | Test invoice quantity higher than received quantity | Exact PO match by `PartyRefDoc='SCN-INVOICE-EXCEEDS/2026-01'` | GRN `ABSR1006` where `GRNQTY=70` and invoice quantity is `100` | `REQUIRES_REVIEW` with `INVOICE_EXCEEDS` as primary exception | Planner should not add retrieval agents; deterministic path should route to procurement-style review recommendation because this is a receipt exception family. |
@@ -75,6 +90,18 @@ Expected validations:
 2. `grn_lookup` returns `ABSR0013`.
 3. `PO_NOT_FOUND` disappears.
 4. Final classification should no longer be `UNMATCHED` because of missing PO.
+
+### 2b. LIVE-288 Expected Outcome
+
+Purpose: cover the current live ATP invoice that has no extracted PO number in the Django DB.
+
+Expected validations:
+
+1. Invoice `ATP/26-27/288` exists in the seed with the live subtotal `156570.00`, tax `28282.60`, and total `184753.00`.
+2. `po_lookup` can discover PO `288` / `PO-HYD-288/2026-27` for the AARJAVAM vendor.
+3. `grn_lookup` returns `ABSR0288` with three lines mirroring the current invoice payload.
+4. This case should validate vendor-search and description-based document recovery, not LLM ambiguity.
+5. Current live app state remains `NON_PO` with `MISSING_MANDATORY_FIELDS` until recovery logic is applied.
 
 ### 3. GRN-MISSING Expected Outcome
 
@@ -164,19 +191,22 @@ Mark each item as pass or fail after loading the SQL script.
 
 | Check | Expected Result |
 |---|---|
-| Scenario-tagged POs exist | POs `13`, `680`, `1004`, `1005`, `1006`, `1007`, `1008`, `1010` are present |
+| Scenario-tagged POs exist | POs `13`, `288`, `680`, `1004`, `1005`, `1006`, `1007`, `1008`, `1010` are present |
+| Live ATP invoice mirror exists | Voucher `2288` mirrors invoice `ATP/26-27/288` with three lines and GSTIN `36AAUCA1090K1ZA` |
 | GRN gap exists for `1004` | Zero GRN rows |
 | Over-receipt exists for `1005` | `GRNQTY > ORDERQTY` |
 | Under-receipt exists for `1006` | `GRNQTY < invoice quantity` |
 | Auto-close variance exists for `1008` | Invoice quantity `1002`, PO and GRN quantity `1000` |
 | Fuzzy lines exist for `1010` | Two similar PO lines and two similar invoice lines |
 | Duplicate payments exist | Two rows for `INV-ACME-2026-0045` |
+| LIVE-288 PO is discoverable | Vendor-search and PO lookup can recover PO `288` even though the invoice itself has no PO number |
 | LIVE-680 PO resolves | No `PO_NOT_FOUND` after ERP-backed re-run |
 | LIVE-013 PO resolves | No `PO_NOT_FOUND` after ERP-backed re-run |
 
 ## Notes
 
 1. `LIVE-616` is included because it already exists in the seeded data and is useful as a known reference invoice, but its exact final exceptions can vary depending on how the app maps tax-inclusive invoice totals to PO and GRN data.
-2. `LIVE-680` and `LIVE-013` are expected to improve from the current live `PO_NOT_FOUND` state once the ERP seed is loaded and the invoices are reprocessed.
-3. The `LLM-FUZZY` scenario is intentionally non-binary: it is designed to validate that the system escalates to assist-style reasoning when deterministic matching confidence is insufficient.
-4. The `AUTO-CLOSE` scenario validates post-reconciliation policy behavior, not just raw match computation.
+2. The live DB has already moved past `PO_NOT_FOUND` for `LIVE-680` and `LIVE-013`; the current remaining gap is `GRN_NOT_FOUND` despite ERP GRN reference rows being present.
+3. `LIVE-288` is now seeded from the current Django invoice data rather than the older geotextile placeholder payload.
+4. The `LLM-FUZZY` scenario is intentionally synthetic and non-binary: it is designed to validate that the system escalates to assist-style reasoning when deterministic matching confidence is insufficient.
+5. The `AUTO-CLOSE` scenario validates post-reconciliation policy behavior, not just raw match computation.

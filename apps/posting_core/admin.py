@@ -3,6 +3,7 @@ from django.contrib import admin
 
 from apps.posting_core.models import (
     ERPCostCenterReference,
+    ERPGRNReference,
     ERPItemReference,
     ERPPOReference,
     ERPReferenceImportBatch,
@@ -108,6 +109,14 @@ class ERPPOReferenceAdmin(admin.ModelAdmin):
     list_display = ("id", "po_number", "po_line_number", "vendor_code", "item_code", "quantity", "unit_price", "is_open")
     search_fields = ("po_number", "vendor_code", "item_code")
     list_filter = ("is_open",)
+    raw_id_fields = ("batch",)
+
+
+@admin.register(ERPGRNReference)
+class ERPGRNReferenceAdmin(admin.ModelAdmin):
+    list_display = ("id", "grn_number", "po_number", "po_line_number", "supplier_name", "item_code", "grn_qty", "grn_value", "receipt_date")
+    search_fields = ("grn_number", "po_number", "supplier_name", "item_code")
+    list_filter = ("currency",)
     raw_id_fields = ("batch",)
 
 

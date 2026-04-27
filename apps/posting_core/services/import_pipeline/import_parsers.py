@@ -202,6 +202,21 @@ def safe_decimal(val: Any) -> Optional[Decimal]:
         return None
 
 
+def safe_date(val: Any):
+    """Safely convert a value to datetime.date. Returns None on failure."""
+    import datetime
+    if val is None or val == "":
+        return None
+    if isinstance(val, datetime.datetime):
+        return val.date()
+    if isinstance(val, datetime.date):
+        return val
+    try:
+        return datetime.date.fromisoformat(str(val).strip()[:10])
+    except (ValueError, TypeError):
+        return None
+
+
 def safe_bool(val: Any, default: bool = True) -> bool:
     """Safely convert a value to bool."""
     if val is None or val == "":
