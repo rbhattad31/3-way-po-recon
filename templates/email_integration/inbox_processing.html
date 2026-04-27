@@ -14,6 +14,13 @@
 {% endblock %}
 
 {% block content %}
+<div id="inboxLoadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none" style="z-index:1085;background:rgba(255,255,255,.75);">
+  <div class="h-100 d-flex flex-column justify-content-center align-items-center">
+    <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+    <div class="mt-2 text-muted" style="font-size:.82rem;">Fetching mailbox data...</div>
+  </div>
+</div>
+
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1" style="font-weight:700;color:#111827;">{{ page_title }}</h4>
@@ -29,7 +36,7 @@
       <div class="col-12 col-md-4">
         <label class="form-label mb-1" style="font-size:.78rem;">Mailbox</label>
         {% if verified_mailboxes %}
-        <form method="get" class="mb-0">
+        <form id="mailboxSelectForm" method="get" class="mb-0">
           <input type="hidden" name="sync_selected" value="0">
           <select name="mailbox" class="form-select form-select-sm" onchange="this.form.sync_selected.value='1'; this.form.submit();">
             {% for mailbox in verified_mailboxes %}
@@ -71,7 +78,7 @@
     {% endif %}
     {% if inbox_graph_counts_cached_at %}
     <div class="text-muted mt-2" style="font-size:.72rem;">
-      Count source: {{ inbox_graph_counts_source|upper }}. Cached at {{ inbox_graph_counts_cached_at }}.
+      Count source: {{ inbox_graph_counts_source|upper }}. Cached at {{ inbox_graph_counts_cached_at_display|default:inbox_graph_counts_cached_at }}.
     </div>
     {% endif %}
   </div>
@@ -134,14 +141,14 @@
               {% if row.manual_decision_required %}
                 <div class="mb-1 text-warning" style="font-size:.72rem;">{{ row.manual_decision_reason }}</div>
                 <div class="d-flex gap-1 flex-wrap">
-                  <form method="post" class="mb-0">
+                  <form method="post" class="mb-0 inboxActionForm">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="approve_uncertain_classification">
                     <input type="hidden" name="message_id" value="{{ msg.pk }}">
                     {% if selected_mailbox %}<input type="hidden" name="mailbox" value="{{ selected_mailbox.pk }}">{% endif %}
                     <button type="submit" class="btn btn-sm btn-outline-success">Approve</button>
                   </form>
-                  <form method="post" class="mb-0">
+                  <form method="post" class="mb-0 inboxActionForm">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="reject_uncertain_classification">
                     <input type="hidden" name="message_id" value="{{ msg.pk }}">
@@ -169,17 +176,76 @@
 
 {% block extra_js %}
 {{ block.super }}
+<script>
+  (function () {
+    var mailboxForm = document.getElementById("mailboxSelectForm");
+    var overlay = document.getElementById("inboxLoadingOverlay");
+    if (!overlay) {
+      return;
+    }
+
+    if (mailboxForm) {
+      mailboxForm.addEventListener("submit", function () {
+        overlay.classList.remove("d-none");
+      });
+    }
+
+    var actionForms = document.querySelectorAll("form.inboxActionForm");
+    actionForms.forEach(function (formEl) {
+      formEl.addEventListener("submit", function () {
+        overlay.classList.remove("d-none");
+      });
+    });
+  })();
+</script>
 {% if inbox_auto_refresh_seconds %}
 <script>
   (function () {
     var refreshSeconds = parseInt("{{ inbox_auto_refresh_seconds|default:'0'|escapejs }}", 10) || 0;
     var refreshMs = refreshSeconds * 1000;
+    var selectedMailboxId = "{{ selected_mailbox.pk|default:''|escapejs }}";
+    var loadingOverlay = document.getElementById("inboxLoadingOverlay");
     if (!refreshMs) {
       return;
     }
-    window.setTimeout(function () {
+
+    var pageLoadedAt = Date.now();
+    var hasReloaded = false;
+
+    function triggerReload() {
+      if (hasReloaded) {
+        return;
+      }
+      hasReloaded = true;
+      if (loadingOverlay) {
+        loadingOverlay.classList.remove("d-none");
+      }
+
+      if (selectedMailboxId) {
+        var params = new URLSearchParams(window.location.search || "");
+        params.set("mailbox", selectedMailboxId);
+        params.set("sync_selected", "1");
+        params.set("sync_reason", "auto_refresh");
+        window.location.assign(window.location.pathname + "?" + params.toString());
+        return;
+      }
+
       window.location.reload();
-    }, refreshMs);
+    }
+
+    window.setTimeout(triggerReload, refreshMs);
+
+    window.setInterval(function () {
+      if (Date.now() - pageLoadedAt >= refreshMs) {
+        triggerReload();
+      }
+    }, 15000);
+
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden && Date.now() - pageLoadedAt >= refreshMs) {
+        triggerReload();
+      }
+    });
   })();
 </script>
 {% endif %}

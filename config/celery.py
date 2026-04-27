@@ -11,6 +11,10 @@ app.conf.task_default_queue = "default"
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {
+    "poll-mailboxes": {
+        "task": "email_integration.poll_mailboxes_task",
+        "schedule": crontab(minute="*"),  # Run every 1 minute
+    },
     "process-approved-learning-actions": {
         "task": "core_eval.process_approved_learning_actions",
         "schedule": crontab(minute="*/30"),

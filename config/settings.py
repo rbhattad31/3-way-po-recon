@@ -105,6 +105,17 @@ WSGI_APPLICATION = "config.wsgi.application"
 # ---------------------------------------------------------------------------
 # Database – MySQL
 # ---------------------------------------------------------------------------
+DB_SSL_MODE = os.getenv("DB_SSL_MODE", "REQUIRED").strip().upper()
+DB_DISABLE_SSL = os.getenv("DB_DISABLE_SSL", "false").lower() in ("true", "1", "yes")
+
+_db_options = {
+    "charset": "utf8mb4",
+    "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+    "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "15")),
+}
+if not DB_DISABLE_SSL and DB_SSL_MODE:
+    _db_options["ssl_mode"] = DB_SSL_MODE
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
@@ -113,12 +124,7 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD"),  # Must be set via environment variable
         "HOST": os.getenv("DB_HOST", "127.0.0.1"),
         "PORT": os.getenv("DB_PORT", "3306"),
-        "OPTIONS": {
-            "charset": "utf8mb4",
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            "ssl_mode": "REQUIRED",
-            "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "15")),
-        },
+        "OPTIONS": _db_options,
         "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
         "CONN_HEALTH_CHECKS": os.getenv("DB_CONN_HEALTH_CHECKS", "true").lower() == "true",
     }

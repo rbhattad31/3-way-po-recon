@@ -8,3 +8,4 @@ class EmailIntegrationConfig(AppConfig):
 
     def ready(self):
         from . import signals  # noqa: F401
+        from . import tasks  # noqa: F401

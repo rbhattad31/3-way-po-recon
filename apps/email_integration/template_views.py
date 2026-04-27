@@ -1732,6 +1732,16 @@ class EmailIntegrationInboxProcessingView(EmailIntegrationFeatureView):
             "error": fetch_error,
         }
 
+    @staticmethod
+    def _format_cached_time(cached_at_raw: str) -> str:
+        cached_at_text = str(cached_at_raw or "").strip()
+        if not cached_at_text:
+            return ""
+        cached_at_dt = MicrosoftGraphEmailAdapter._iso_to_datetime(cached_at_text)
+        if cached_at_dt is None:
+            return cached_at_text
+        return timezone.localtime(cached_at_dt).strftime("%H:%M:%S")
+
     def _build_inbox_processing_context(self, request) -> dict:
         context = self._build_operational_context(request)
         selected_mailbox = context.get("selected_mailbox")
@@ -1838,6 +1848,7 @@ class EmailIntegrationInboxProcessingView(EmailIntegrationFeatureView):
                 "inbox_auto_refresh_seconds": auto_refresh_seconds,
                 "inbox_graph_fetch_error": count_summary["error"],
                 "inbox_graph_counts_cached_at": count_summary["cached_at"],
+                "inbox_graph_counts_cached_at_display": self._format_cached_time(count_summary["cached_at"]),
                 "inbox_graph_counts_source": count_summary["source"],
                 "inbox_processing_rows": detailed_rows,
                 "inbox_processing_summary": {
@@ -1871,7 +1882,10 @@ class EmailIntegrationInboxProcessingView(EmailIntegrationFeatureView):
             ).first()
             if mailbox is not None:
                 try:
-                    EmailProcessingService.sync_mailbox_messages(mailbox)
+                    sync_result = EmailProcessingService.sync_mailbox_messages(mailbox)
+                    processed_messages = int((sync_result or {}).get("processed_messages") or 0)
+                    if processed_messages <= 0:
+                        messages.info(request, "No new email found.")
                 except Exception:
                     pass
             return redirect(f"{reverse('email_integration:inbox_processing')}?mailbox={mailbox_id}")
