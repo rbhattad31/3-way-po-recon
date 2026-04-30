@@ -1004,11 +1004,11 @@ def extraction_ajax_filter(request):
 
     invoice_status = request.GET.get("invoice_status", "").strip()
     if invoice_status:
-        qs = qs.filter(invoice__status=invoice_status)
+        qs = qs.filter(document_upload__invoices__status=invoice_status)
 
     approval_status = request.GET.get("approval_status", "").strip()
     if approval_status:
-        qs = qs.filter(invoice__extraction_approval__status=approval_status)
+        qs = qs.filter(document_upload__invoices__extraction_approval__status=approval_status)
 
     # Build JSON response
     result_rows = list(qs[:200])

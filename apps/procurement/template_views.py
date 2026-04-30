@@ -957,7 +957,10 @@ def api_hvac_store_suggestions(request):
     """Return Store ID suggestions for HVAC form autosuggest/autofill."""
     query = (request.GET.get("q") or "").strip()
 
-    qs = _tenant_scoped_queryset(request, HVACStoreProfile).filter(is_active=True)
+    qs = _tenant_scoped_queryset(request, HVACStoreProfile)
+    store_field_names = {f.name for f in HVACStoreProfile._meta.get_fields()}
+    if "is_active" in store_field_names:
+        qs = qs.filter(is_active=True)
     if query:
         qs = qs.filter(store_id__icontains=query)
 
@@ -4183,7 +4186,7 @@ def api_perplexity_research(request, pk):
                 hvac_system_type=system_code,
                 is_active=True,
                 allowed_for_discovery=True,
-            ).values("source_name", "domain", "source_url", "source_class")
+            ).values("source_name", "domain", "source_url", "source_type")
         )
     if not _approved_sources:
         # Fallback: all active discovery-enabled sources (no open-web leak)
@@ -4191,9 +4194,9 @@ def api_perplexity_research(request, pk):
             _tenant_scoped_queryset(request, _ESR).filter(
                 is_active=True,
                 allowed_for_discovery=True,
-            ).values("source_name", "domain", "source_url", "source_class")
+            ).values("source_name", "domain", "source_url", "source_type")
         )
-    _approved_sources.sort(key=lambda s: _SOURCE_CLASS_ORDER.get(s["source_class"], 99))
+    _approved_sources.sort(key=lambda s: _SOURCE_CLASS_ORDER.get(s.get("source_type"), 99))
     _domain_list = [s["domain"] for s in _approved_sources]
     _domain_to_url = {
         s["domain"]: (s["source_url"] or f"https://{s['domain']}")

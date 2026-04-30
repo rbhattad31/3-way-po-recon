@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import zipfile
+from functools import lru_cache
 from datetime import datetime, timezone
 from io import BytesIO
 from uuid import uuid4
@@ -15,7 +16,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.files.base import ContentFile
-from django.db import transaction
+from django.db import connection, transaction
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -60,6 +61,55 @@ logger = logging.getLogger(__name__)
 
 
 BENCHMARK_ZIP_MAX_FILES = int(getattr(settings, "BENCHMARK_ZIP_MAX_FILES", 50))
+
+
+@lru_cache(maxsize=64)
+def _table_columns(table_name: str):
+    try:
+        with connection.cursor() as cursor:
+            return {
+                col.name for col in connection.introspection.get_table_description(cursor, table_name)
+            }
+    except Exception:
+        return set()
+
+
+def _has_db_column(model_class, column_name: str) -> bool:
+    cols = _table_columns(model_class._meta.db_table)
+    if not cols:
+        return True
+    return column_name in cols
+
+
+def _safe_attr(instance, attr_name: str, default=None):
+    try:
+        return getattr(instance, attr_name)
+    except Exception:
+        return default
+
+
+def _apply_schema_compat(qs):
+    model_class = qs.model
+    optional_fields = ()
+    if model_class is BenchmarkRequest:
+        optional_fields = ("rfq_blob_path", "rfq_blob_url", "rfq_document")
+    elif model_class is BenchmarkQuotation:
+        optional_fields = ("blob_url", "blob_name", "di_extraction_json")
+    elif model_class is BenchmarkLineItem:
+        optional_fields = ("benchmark_source", "live_price_json")
+    elif model_class is BenchmarkResult:
+        optional_fields = ("live_enriched_at", "live_enrichment_json")
+    elif model_class is VarianceThresholdConfig:
+        optional_fields = ("variance_status",)
+
+    missing = [field for field in optional_fields if not _has_db_column(model_class, field)]
+    if missing:
+        return qs.defer(*missing)
+    return qs
+
+
+def _threshold_qs():
+    return _apply_schema_compat(VarianceThresholdConfig.objects.all())
 
 
 def _is_pdf_name(file_name: str) -> bool:
@@ -156,6 +206,7 @@ def _is_platform_admin(user) -> bool:
 def _scope_requests(request, qs=None):
     tenant = require_tenant(request)
     scoped = qs if qs is not None else BenchmarkRequest.objects.all()
+    scoped = _apply_schema_compat(scoped)
     if tenant is not None and not _is_platform_admin(request.user):
         scoped = scoped.filter(tenant=tenant)
     return scoped
@@ -164,6 +215,7 @@ def _scope_requests(request, qs=None):
 def _scope_quotations(request, qs=None):
     tenant = require_tenant(request)
     scoped = qs if qs is not None else BenchmarkQuotation.objects.all()
+    scoped = _apply_schema_compat(scoped)
     if tenant is not None and not _is_platform_admin(request.user):
         scoped = scoped.filter(tenant=tenant)
     return scoped
@@ -463,7 +515,7 @@ def request_delete(request, pk):
         name for name in active_quotations.values_list("blob_name", flat=True)
         if name
     ]
-    rfq_blob_path = (bench_request.rfq_blob_path or "").strip()
+    rfq_blob_path = str(_safe_attr(bench_request, "rfq_blob_path", "") or "").strip()
     request_title = bench_request.title
 
     with transaction.atomic():
@@ -473,7 +525,7 @@ def request_delete(request, pk):
                 is_active=True,
             ).update(is_active=False)
         active_quotations.update(is_active=False)
-        BenchmarkResult.objects.filter(request=bench_request, is_active=True).update(is_active=False)
+        _apply_schema_compat(BenchmarkResult.objects.filter(request=bench_request, is_active=True)).update(is_active=False)
         bench_request.is_active = False
         bench_request.save(update_fields=["is_active", "updated_at"])
 
@@ -645,13 +697,13 @@ def _build_quotation_preview_url(quotation) -> str:
     if not _ensure_quotation_document_source(quotation):
         return ""
 
-    blob_name = (quotation.blob_name or "").strip()
+    blob_name = (_safe_attr(quotation, "blob_name", "") or "").strip()
     if blob_name:
         sas_url = (BlobStorageService.get_sas_url(blob_name, expiry_hours=24) or "").strip()
         if sas_url:
             return sas_url
 
-    blob_url = (quotation.blob_url or "").strip()
+    blob_url = (_safe_attr(quotation, "blob_url", "") or "").strip()
     if blob_url:
         return blob_url
 
@@ -673,7 +725,7 @@ def quotation_document_preview(request, pk):
     quotation = get_object_or_404(
         _scope_quotations(
             request,
-            BenchmarkQuotation.objects.filter(is_active=True).select_related("request"),
+            _apply_schema_compat(BenchmarkQuotation.objects.filter(is_active=True).select_related("request")),
         ),
         pk=pk,
     )
@@ -688,15 +740,15 @@ def quotation_document_preview(request, pk):
 
     _ensure_quotation_document_source(quotation)
 
-    if (quotation.blob_name or "").strip():
+    if (_safe_attr(quotation, "blob_name", "") or "").strip():
         try:
-            pdf_bytes = BlobStorageService.download_blob_bytes(quotation.blob_name)
+            pdf_bytes = BlobStorageService.download_blob_bytes(_safe_attr(quotation, "blob_name", ""))
             return _build_inline_pdf_response(pdf_bytes, base_filename)
         except Exception:
             logger.exception(
                 "Failed to stream benchmarking blob document for quotation_id=%s blob_name=%s",
                 quotation.pk,
-                quotation.blob_name,
+                _safe_attr(quotation, "blob_name", ""),
             )
 
     if quotation.document:
@@ -715,8 +767,8 @@ def quotation_document_preview(request, pk):
                 quotation.pk,
             )
 
-    if (quotation.blob_url or "").strip():
-        return redirect(quotation.blob_url)
+    if (_safe_attr(quotation, "blob_url", "") or "").strip():
+        return redirect(_safe_attr(quotation, "blob_url", ""))
 
     return HttpResponse("Quotation document not found.", status=404)
 
@@ -727,12 +779,14 @@ def request_detail(request, pk):
     bench_request = get_object_or_404(_scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)), pk=pk)
 
     # Gather all line items across all quotations
-    quotations = bench_request.quotations.filter(is_active=True).prefetch_related("line_items")
+    quotations = _apply_schema_compat(
+        bench_request.quotations.filter(is_active=True).prefetch_related("line_items")
+    )
     line_items = []
     quotation_summaries = []
     vendor_cards = []
     for idx, q in enumerate(quotations, start=1):
-        q_items = list(q.line_items.filter(is_active=True))
+        q_items = list(_apply_schema_compat(q.line_items.filter(is_active=True)))
         line_items.extend(q_items)
         fallback_vendor_label = f"Vendor {chr(64 + idx)}" if idx <= 26 else f"Vendor {idx}"
         supplier_name = (q.supplier_name or "").strip() or fallback_vendor_label
@@ -749,18 +803,21 @@ def request_detail(request, pk):
         }
         live_reference_count = 0
         for li in q_items:
-            line_amt = float(li.line_amount or 0)
+            line_amt = float(_safe_attr(li, "line_amount") or 0)
             q_total += line_amt
-            if li.benchmark_mid is not None and li.quantity is not None:
+            li_benchmark_mid = _safe_attr(li, "benchmark_mid")
+            li_quantity = _safe_attr(li, "quantity")
+            if li_benchmark_mid is not None and li_quantity is not None:
                 q_total_bench_covered += line_amt
-                q_bench += float(li.benchmark_mid) * float(li.quantity)
+                q_bench += float(li_benchmark_mid) * float(li_quantity)
                 benchmarked_line_count += 1
-            elif li.benchmark_mid is not None:
+            elif li_benchmark_mid is not None:
                 q_total_bench_covered += line_amt
-                q_bench += float(li.benchmark_mid)
+                q_bench += float(li_benchmark_mid)
                 benchmarked_line_count += 1
-            status_counts[li.variance_status] = status_counts.get(li.variance_status, 0) + 1
-            lp_json = li.live_price_json or {}
+            status_key = _safe_attr(li, "variance_status", "NEEDS_REVIEW") or "NEEDS_REVIEW"
+            status_counts[status_key] = status_counts.get(status_key, 0) + 1
+            lp_json = _safe_attr(li, "live_price_json", {}) or {}
             live_reference_count += len(lp_json.get("citations", []) or [])
         q_dev = None
         if q_bench > 0:
@@ -864,9 +921,12 @@ def request_detail(request, pk):
     category_summary = {}
     negotiation_notes = []
     try:
-        result = bench_request.result
-        category_summary = result.category_summary_json or {}
-        negotiation_notes = result.negotiation_notes_json or []
+        result = _apply_schema_compat(
+            BenchmarkResult.objects.filter(request=bench_request, is_active=True)
+        ).first()
+        if result:
+            category_summary = _safe_attr(result, "category_summary_json", {}) or {}
+            negotiation_notes = _safe_attr(result, "negotiation_notes_json", []) or []
     except Exception:
         pass
 
@@ -883,9 +943,9 @@ def request_detail(request, pk):
     rfq_ref = (bench_request.rfq_ref or "").strip()
     rfq_present = bool(
         rfq_ref
-        or bench_request.rfq_blob_path
-        or bench_request.rfq_blob_url
-        or bench_request.rfq_document
+        or _safe_attr(bench_request, "rfq_blob_path")
+        or _safe_attr(bench_request, "rfq_blob_url")
+        or _safe_attr(bench_request, "rfq_document")
     )
     if rfq_present:
         if rfq_source == "system":
@@ -920,12 +980,13 @@ def request_detail(request, pk):
         rfq_scope_source = "generated_rfq" if _rfq_exists else "quotation_fallback"
 
     total_line_count = len(line_items)
-    db_line_count = len([li for li in line_items if li.benchmark_source == "CORRIDOR_DB"])
-    market_line_count = len([li for li in line_items if li.benchmark_source == "PERPLEXITY_LIVE"])
+    db_line_count = len([li for li in line_items if _safe_attr(li, "benchmark_source") == "CORRIDOR_DB"])
+    market_line_count = len([li for li in line_items if _safe_attr(li, "benchmark_source") == "PERPLEXITY_LIVE"])
     no_benchmark_line_count = len(
         [
             li for li in line_items
-            if li.benchmark_source not in {"CORRIDOR_DB", "PERPLEXITY_LIVE"} or li.benchmark_mid is None
+            if _safe_attr(li, "benchmark_source") not in {"CORRIDOR_DB", "PERPLEXITY_LIVE"}
+            or _safe_attr(li, "benchmark_mid") is None
         ]
     )
     if total_line_count > 0:
@@ -2187,7 +2248,7 @@ def reports(request):
     )
 
     # Recent completed requests
-    recent = completed_qs.select_related("result").order_by("-updated_at")[:10]
+    recent = completed_qs.order_by("-updated_at")[:10]
 
     ctx = _base_ctx(
         total_requests=total_requests,
@@ -2216,8 +2277,8 @@ def configurations(request):
         "category_active": len([item for item in category_items if item.get("is_active")]),
         "corridor_total": BenchmarkCorridorRule.objects.count(),
         "corridor_active": BenchmarkCorridorRule.objects.filter(is_active=True).count(),
-        "threshold_total": VarianceThresholdConfig.objects.count(),
-        "threshold_active": VarianceThresholdConfig.objects.filter(is_active=True).count(),
+        "threshold_total": _threshold_qs().count(),
+        "threshold_active": _threshold_qs().filter(is_active=True).count(),
     }
     scope_choices_with_all = ScopeType.CHOICES + [("ALL", "All Scopes")]
     geo_choices_with_all = Geography.CHOICES + [("ALL", "All Geographies")]
@@ -2641,6 +2702,8 @@ def api_bench_thresholds(request):
         "HIGH": "High",
     }
 
+    has_variance_status = _has_db_column(VarianceThresholdConfig, "variance_status")
+
     if request.method == "POST":
         try:
             body = _json.loads(request.body)
@@ -2652,7 +2715,7 @@ def api_bench_thresholds(request):
         geography = "ALL"
         variance_status = str(body.get("variance_status") or "").strip().upper()
 
-        if variance_status not in {"WITHIN_RANGE", "MODERATE", "HIGH"}:
+        if has_variance_status and variance_status not in {"WITHIN_RANGE", "MODERATE", "HIGH"}:
             return JsonResponse({"success": False, "message": "Variance status is required."}, status=400)
 
         try:
@@ -2673,27 +2736,32 @@ def api_bench_thresholds(request):
             "is_active": bool(body.get("is_active", True)),
             "updated_by": request.user,
         }
-        row = VarianceThresholdConfig.objects.filter(
-            category="ALL",
-            geography="ALL",
-            variance_status=variance_status,
-        ).first()
+        threshold_filter = {
+            "category": "ALL",
+            "geography": "ALL",
+        }
+        if has_variance_status:
+            threshold_filter["variance_status"] = variance_status
+        row = _threshold_qs().filter(**threshold_filter).first()
         created = False
         if row:
             row.category = "ALL"
             row.geography = "ALL"
-            row.variance_status = variance_status
+            if has_variance_status:
+                row.variance_status = variance_status
             for field_name, field_value in defaults.items():
                 setattr(row, field_name, field_value)
             row.save()
         else:
-            row = VarianceThresholdConfig.objects.create(
-                category="ALL",
-                geography="ALL",
-                variance_status=variance_status,
-                created_by=request.user,
+            create_kwargs = {
+                "category": "ALL",
+                "geography": "ALL",
+                "created_by": request.user,
                 **defaults,
-            )
+            }
+            if has_variance_status:
+                create_kwargs["variance_status"] = variance_status
+            row = VarianceThresholdConfig.objects.create(**create_kwargs)
             created = True
         if created and not getattr(row, "created_by_id", None):
             row.created_by = request.user
@@ -2707,7 +2775,8 @@ def api_bench_thresholds(request):
         })
 
     items = []
-    for row in VarianceThresholdConfig.objects.all().order_by("category", "geography"):
+    for row in _threshold_qs().order_by("category", "geography"):
+        row_status = row.variance_status if has_variance_status else "WITHIN_RANGE"
         items.append({
             "id": row.pk,
             "category": row.category,
@@ -2716,8 +2785,8 @@ def api_bench_thresholds(request):
             "geography_display": geography_map.get(row.geography, row.geography),
             "within_range_max_pct": row.within_range_max_pct,
             "moderate_max_pct": row.moderate_max_pct,
-            "variance_status": row.variance_status,
-            "variance_status_display": status_label_map.get(row.variance_status, row.variance_status),
+            "variance_status": row_status,
+            "variance_status_display": status_label_map.get(row_status, row_status),
             "notes": row.notes,
             "is_active": row.is_active,
         })
@@ -2742,13 +2811,14 @@ def api_bench_threshold_detail(request, pk):
     """GET: threshold detail. POST: update / toggle / deactivate."""
     import json as _json
 
-    row = get_object_or_404(VarianceThresholdConfig, pk=pk)
+    has_variance_status = _has_db_column(VarianceThresholdConfig, "variance_status")
+    row = get_object_or_404(_threshold_qs(), pk=pk)
     if request.method == "GET":
         return JsonResponse({
             "id": row.pk,
             "category": row.category,
             "geography": row.geography,
-            "variance_status": row.variance_status,
+            "variance_status": row.variance_status if has_variance_status else "WITHIN_RANGE",
             "within_range_max_pct": row.within_range_max_pct,
             "moderate_max_pct": row.moderate_max_pct,
             "notes": row.notes,
@@ -2937,7 +3007,7 @@ def benchmark_e2e_timeline(request, pk):
     })
 
     # RFQ document upload
-    if bench_request.rfq_blob_path or bench_request.rfq_document or bench_request.rfq_ref:
+    if _safe_attr(bench_request, "rfq_blob_path") or _safe_attr(bench_request, "rfq_document") or _safe_attr(bench_request, "rfq_ref"):
         _events.append({
             "stage": "RFQ_UPLOADED",
             "icon": "bi-file-earmark-text-fill",
