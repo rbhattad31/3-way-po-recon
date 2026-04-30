@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
+from difflib import SequenceMatcher
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 from apps.core.utils import normalize_string, within_tolerance
@@ -26,9 +28,11 @@ class HeaderMatchResult:
     total_comparison: Optional[FieldComparison] = None
     tax_match: Optional[bool] = None
     tax_comparison: Optional[FieldComparison] = None
+    total_comparison_basis: str = "gross"
     all_ok: bool = False
     is_partial_invoice: bool = False
     prior_invoice_count: int = 0
+    vendor_match_details: Dict = field(default_factory=dict)
 
     # Tax compliance fields
     gstin_match: Optional[bool] = None  # vendor GSTIN/tax-id match
@@ -52,14 +56,32 @@ class HeaderMatchService:
             result.prior_invoice_count = po_balance.prior_invoice_count
 
         # 1. Vendor match
-        result.vendor_match = self._check_vendor(invoice, po)
+        vendor_match, vendor_details = self._check_vendor(invoice, po)
+        result.vendor_match = vendor_match
+        result.vendor_match_details = vendor_details
 
         # 2. Currency match
         inv_currency = (invoice.currency or "").strip().upper()
         po_currency = (po.currency or "").strip().upper()
         result.currency_match = inv_currency == po_currency if inv_currency and po_currency else None
 
-        # 3. Total amount comparison
+        # 3. Tax amount comparison
+        compare_tax = po.tax_amount
+        if po_balance and po_balance.is_partial and po_balance.remaining_tax is not None:
+            if po_balance.prior_invoice_count > 0:
+                compare_tax = po_balance.remaining_tax
+            else:
+                # First partial: tax proportional check -- accept if
+                # invoice tax <= PO tax (partial tax on partial amount).
+                compare_tax = invoice.tax_amount
+
+        if invoice.tax_amount is not None and compare_tax is not None:
+            result.tax_comparison = self.engine.compare_amount(
+                invoice.tax_amount, compare_tax
+            )
+            result.tax_match = result.tax_comparison.within_tolerance
+
+        # 4. Total amount comparison
         # When a PO has prior invoices, compare against the remaining balance
         # instead of the full PO total.
         # For first partial invoices (no priors but invoice << PO), verify
@@ -75,26 +97,38 @@ class HeaderMatchService:
                 # downstream logic uses the is_partial_invoice flag.
                 compare_total = invoice.total_amount
 
+        expected_total = compare_total
+        compare_invoice_total = invoice.total_amount
+        comparison_basis = "gross"
+        invoice_subtotal = invoice.subtotal
+        if invoice_subtotal is None and invoice.total_amount is not None and invoice.tax_amount is not None:
+            invoice_subtotal = invoice.total_amount - invoice.tax_amount
+
+        # Some source systems capture PO.total_amount as pre-tax amount while
+        # invoice.total_amount is tax-inclusive. If invoice subtotal aligns
+        # with PO total, compare gross-to-gross by adding PO tax.
+        if (
+            invoice_subtotal is not None
+            and compare_total is not None
+        ):
+            if within_tolerance(
+                invoice_subtotal,
+                compare_total,
+                self.engine.thresholds.amount_pct,
+            ):
+                if compare_tax is not None:
+                    expected_total = compare_total + compare_tax
+                else:
+                    # PO tax may be missing while PO total is net-of-tax.
+                    # In this case compare net invoice amount against PO total.
+                    compare_invoice_total = invoice_subtotal
+                    comparison_basis = "net"
+
         result.total_comparison = self.engine.compare_amount(
-            invoice.total_amount, compare_total
+            compare_invoice_total, expected_total
         )
+        result.total_comparison_basis = comparison_basis
         result.po_total_match = result.total_comparison.within_tolerance
-
-        # 4. Tax amount comparison
-        compare_tax = po.tax_amount
-        if po_balance and po_balance.is_partial and po_balance.remaining_tax is not None:
-            if po_balance.prior_invoice_count > 0:
-                compare_tax = po_balance.remaining_tax
-            else:
-                # First partial: tax proportional check -- accept if
-                # invoice tax <= PO tax (partial tax on partial amount).
-                compare_tax = invoice.tax_amount
-
-        if invoice.tax_amount is not None and compare_tax is not None:
-            result.tax_comparison = self.engine.compare_amount(
-                invoice.tax_amount, compare_tax
-            )
-            result.tax_match = result.tax_comparison.within_tolerance
 
         # 5. Tax compliance checks (GSTIN, country, supply type)
         self._check_tax_compliance(invoice, po, result)
@@ -120,21 +154,87 @@ class HeaderMatchService:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _check_vendor(invoice: Invoice, po: PurchaseOrder) -> Optional[bool]:
-        """Compare vendor at multiple levels: FK, normalised name."""
-        # Direct FK match
-        if invoice.vendor_id and po.vendor_id:
-            return invoice.vendor_id == po.vendor_id
+    def _check_vendor(invoice: Invoice, po: PurchaseOrder) -> tuple[Optional[bool], Dict]:
+        """Compare vendor at multiple levels: FK, normalised name, fuzzy name."""
+        details: Dict = {
+            "strategy": "inconclusive",
+            "similarity_score": None,
+        }
 
-        # Normalised name fallback
-        inv_name = normalize_string(invoice.raw_vendor_name) if invoice.raw_vendor_name else ""
-        po_name = ""
-        if po.vendor:
-            po_name = po.vendor.normalized_name or normalize_string(po.vendor.name)
+        # Direct FK match (strongest signal).
+        if invoice.vendor_id and po.vendor_id and invoice.vendor_id == po.vendor_id:
+            details.update({
+                "strategy": "vendor_id_exact",
+                "similarity_score": 1.0,
+            })
+            return True, details
+
+        # Name fallback: needed when duplicate vendor masters exist or one side
+        # stores a prefixed ERP label (for example "VND680 - Vendor Name").
+        inv_name = HeaderMatchService._normalise_vendor_name(
+            str(invoice.vendor or invoice.raw_vendor_name or "")
+        )
+        po_name = HeaderMatchService._normalise_vendor_name(
+            str(po.vendor or "")
+        )
+
         if inv_name and po_name:
-            return inv_name == po_name
+            ratio = SequenceMatcher(None, inv_name, po_name).ratio()
+            details.update({
+                "strategy": "name_compare",
+                "invoice_name_normalized": inv_name,
+                "po_name_normalized": po_name,
+                "similarity_score": round(ratio, 4),
+            })
 
-        return None  # Inconclusive
+            if inv_name == po_name:
+                details["strategy"] = "name_exact"
+                return True, details
+
+            fuzzy_match, coverage = HeaderMatchService._is_vendor_name_fuzzy_match(inv_name, po_name)
+            details["token_coverage"] = round(coverage, 4)
+            if fuzzy_match:
+                details["strategy"] = "name_fuzzy"
+                return True, details
+
+            details["strategy"] = "name_mismatch"
+            return False, details
+
+        # Fallback to FK mismatch only when names are unavailable.
+        if invoice.vendor_id and po.vendor_id:
+            details.update({
+                "strategy": "vendor_id_mismatch_no_names",
+                "invoice_vendor_id": invoice.vendor_id,
+                "po_vendor_id": po.vendor_id,
+            })
+            return False, details
+
+        return None, details  # Inconclusive
+
+    @staticmethod
+    def _normalise_vendor_name(value: str) -> str:
+        """Normalise vendor names and remove leading ERP code prefixes."""
+        text = normalize_string(value)
+        # Drop common code prefixes like "vnd680", "ven123", etc.
+        text = re.sub(r"^(?:vnd|ven|vendor)\s*\d+\s*[-:]?\s*", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    @staticmethod
+    def _is_vendor_name_fuzzy_match(left: str, right: str) -> tuple[bool, float]:
+        """Return fuzzy decision and token-overlap coverage for vendor names."""
+        ratio = SequenceMatcher(None, left, right).ratio()
+        if ratio >= 0.90:
+            return True, 1.0
+
+        left_tokens = set(left.split())
+        right_tokens = set(right.split())
+        if not left_tokens or not right_tokens:
+            return False, 0.0
+
+        overlap = len(left_tokens & right_tokens)
+        coverage = overlap / float(min(len(left_tokens), len(right_tokens)))
+        return coverage >= 0.85, coverage
 
     # ------------------------------------------------------------------
     # Tax compliance helpers

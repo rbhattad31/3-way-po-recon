@@ -783,23 +783,7 @@
                         </td>
                         <td>{{ run.created_at|date:"d M Y H:i" }}</td>
                       </tr>
-                      {% endfor %}
 
-                      {% for step in deterministic_agent_steps %}
-                      <tr class="table-light">
-                        <td class="text-center align-middle text-muted">--</td>
-                        <td class="fw-semibold">{{ step.name }}</td>
-                        <td><span class="badge bg-info">{{ step.type_label }}</span></td>
-                        <td><span class="badge bg-{{ step.status_class }}">{{ step.status_label }}</span></td>
-                        <td>{% if step.confidence is not None %}{{ step.confidence }}%{% else %}--{% endif %}</td>
-                        <td>{{ step.tokens }}</td>
-                        <td>{{ step.duration }}</td>
-                        <td>{{ step.recommendation }}</td>
-                        <td>{{ step.started }}</td>
-                      </tr>
-                      {% endfor %}
-
-                      {% for run in llm_agent_runs %}
                       <tr class="collapse" id="runDetail{{ run.pk }}">
                         <td></td>
                         <td colspan="8" class="p-2 bg-light-subtle">
@@ -898,22 +882,17 @@
                                       <tr>
                                         <th>#</th>
                                         <th>Role</th>
-                                        <th>Tokens</th>
-                                        <th>Content</th>
+                                        <th>Message</th>
+                                        <th>Time</th>
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {% for m in run.messages.all %}
+                                      {% for msg in run.messages.all %}
                                       <tr>
-                                        <td>{{ m.message_index }}</td>
-                                        <td><span class="badge bg-light text-dark border">{{ m.role }}</span></td>
-                                        <td>{{ m.token_count|default:"--" }}</td>
-                                        <td style="max-width:680px">
-                                          <details>
-                                            <summary style="cursor:pointer">view message</summary>
-                                            <pre class="mb-0" style="white-space:pre-wrap;max-height:180px;overflow:auto">{{ m.content }}</pre>
-                                          </details>
-                                        </td>
+                                        <td>{{ forloop.counter }}</td>
+                                        <td>{{ msg.role }}</td>
+                                        <td style="white-space:pre-wrap">{{ msg.content|default:"--" }}</td>
+                                        <td>{{ msg.created_at|date:"d M Y H:i:s" }}</td>
                                       </tr>
                                       {% endfor %}
                                     </tbody>
@@ -945,6 +924,20 @@
                             </div>
                           </div>
                         </td>
+                      </tr>
+                      {% endfor %}
+
+                      {% for step in deterministic_agent_steps %}
+                      <tr class="table-light">
+                        <td class="text-center align-middle text-muted">--</td>
+                        <td class="fw-semibold">{{ step.name }}</td>
+                        <td><span class="badge bg-info">{{ step.type_label }}</span></td>
+                        <td><span class="badge bg-{{ step.status_class }}">{{ step.status_label }}</span></td>
+                        <td>{% if step.confidence is not None %}{{ step.confidence }}%{% else %}--{% endif %}</td>
+                        <td>{{ step.tokens }}</td>
+                        <td>{{ step.duration }}</td>
+                        <td>{{ step.recommendation }}</td>
+                        <td>{{ step.started }}</td>
                       </tr>
                       {% endfor %}
                     </tbody>

@@ -15,6 +15,7 @@ from apps.core.enums import (
     CaseStatus,
     InvoiceStatus,
     MatchStatus,
+    ExceptionSeverity,
     PerformedByType,
     ProcessingPath,
 )
@@ -619,16 +620,24 @@ class StageExecutor:
             # the result's match_status is already upgraded to MATCHED.
             # Summary refresh is handled by CASE_SUMMARY stage which always runs.
             auto_closed = False
-            if orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED:
+            blocking_high_exceptions = StageExecutor._has_unresolved_high_exceptions(case)
+
+            if not blocking_high_exceptions and orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED:
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
                 auto_closed = True
-            elif orch_result.final_recommendation == "AUTO_CLOSE":
+            elif not blocking_high_exceptions and orch_result.final_recommendation == "AUTO_CLOSE":
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.AGENT)
                 auto_closed = True
             elif orch_result.final_recommendation == "ESCALATE_TO_MANAGER":
                 CaseStateMachine.transition(case, CaseStatus.ESCALATED, PerformedByType.AGENT)
             else:
                 CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.AGENT)
+
+            if blocking_high_exceptions:
+                logger.info(
+                    "Case %s blocked from auto-close due to unresolved HIGH exceptions",
+                    case.case_number,
+                )
 
             # When closing, mark the invoice as RECONCILED
             if auto_closed:
@@ -664,6 +673,7 @@ class StageExecutor:
                 "confidence": orch_result.final_confidence,
                 "skipped": orch_result.skipped,
                 "auto_closed": auto_closed,
+                "blocked_by_high_exception": blocking_high_exceptions,
                 "posting_enqueued": auto_closed,
             }
 
@@ -694,3 +704,17 @@ class StageExecutor:
 
         summary = CaseSummaryService.build_summary(case)
         return {"summary_id": summary.id, "summary_length": len(summary.latest_summary)}
+
+    @staticmethod
+    def _has_unresolved_high_exceptions(case: APCase) -> bool:
+        """Return True when unresolved HIGH-severity reconciliation exceptions exist."""
+        if not case.reconciliation_result_id:
+            return False
+
+        from apps.reconciliation.models import ReconciliationException
+
+        return ReconciliationException.objects.filter(
+            result_id=case.reconciliation_result_id,
+            resolved=False,
+            severity=ExceptionSeverity.HIGH,
+        ).exists()

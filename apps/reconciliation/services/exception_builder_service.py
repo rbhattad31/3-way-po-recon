@@ -118,14 +118,20 @@ class ExceptionBuilderService:
         excs: List[ReconciliationException] = []
 
         if header.vendor_match is False:
+            invoice_vendor_name = str(result.invoice.vendor or result.invoice.raw_vendor_name or "")
+            po_vendor_name = str(result.purchase_order.vendor if result.purchase_order else "")
             excs.append(self._make(
                 result=result,
                 exc_type=ExceptionType.VENDOR_MISMATCH,
                 severity=ExceptionSeverity.HIGH,
-                message="Vendor on invoice does not match vendor on PO",
+                message=(
+                    f"Vendor mismatch: invoice vendor='{invoice_vendor_name}' "
+                    f"vs PO vendor='{po_vendor_name}'"
+                ),
                 details={
-                    "invoice_vendor": str(result.invoice.vendor or result.invoice.raw_vendor_name),
-                    "po_vendor": str(result.purchase_order.vendor if result.purchase_order else ""),
+                    "invoice_vendor": invoice_vendor_name,
+                    "po_vendor": po_vendor_name,
+                    "vendor_match_diagnostics": header.vendor_match_details,
                 },
             ))
 
@@ -174,6 +180,9 @@ class ExceptionBuilderService:
 
         if header.po_total_match is False and header.total_comparison:
             tc = header.total_comparison
+            txc = header.tax_comparison
+            comparison_basis = getattr(header, "total_comparison_basis", "gross")
+            basis_label = "tax-inclusive" if comparison_basis == "gross" else "net-of-tax"
             # Partial invoice context
             partial_note = ""
             details = {
@@ -181,7 +190,19 @@ class ExceptionBuilderService:
                 "po_total": str(tc.po_value),
                 "difference": str(tc.difference),
                 "difference_pct": str(tc.difference_pct),
+                "comparison_basis": comparison_basis,
             }
+            tax_note = ""
+            if txc:
+                tax_note = (
+                    f", tax(invoice={txc.invoice_value}, po={txc.po_value}, "
+                    f"diff={txc.difference})"
+                )
+                details["invoice_tax"] = str(txc.invoice_value)
+                details["po_tax"] = str(txc.po_value)
+                details["tax_difference"] = str(txc.difference)
+                details["tax_difference_pct"] = str(txc.difference_pct)
+
             if header.is_partial_invoice and po_balance:
                 partial_note = (
                     f" (partial invoice: PO total={po_balance.po_total}, "
@@ -200,8 +221,9 @@ class ExceptionBuilderService:
                 exc_type=ExceptionType.AMOUNT_MISMATCH,
                 severity=ExceptionSeverity.HIGH,
                 message=(
-                    f"Total amount mismatch: invoice={tc.invoice_value}, "
-                    f"PO remaining={tc.po_value}, diff={tc.difference} ({tc.difference_pct}%)"
+                    f"Total amount mismatch ({basis_label}): invoice={tc.invoice_value}, "
+                    f"PO expected={tc.po_value}, diff={tc.difference} ({tc.difference_pct}%)"
+                    f"{tax_note}"
                     f"{partial_note}"
                 ),
                 details=details,
