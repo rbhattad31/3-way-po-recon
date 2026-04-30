@@ -71,14 +71,29 @@ class InvoiceExtractionAdapter:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
+            runtime_settings = self._get_runtime_settings(tenant=tenant)
             # Check runtime setting for OCR mode
-            ocr_enabled = self._is_ocr_enabled()
+            ocr_enabled = (
+                bool(runtime_settings.ocr_enabled)
+                if runtime_settings is not None
+                else self._is_ocr_enabled(tenant=tenant)
+            )
             used_native_fallback = False
 
             if ocr_enabled:
                 try:
                     # Step 1a: OCR via Azure Document Intelligence (also returns raw QR strings)
-                    ocr_text, ocr_page_count, ocr_duration_ms, qr_texts = self._ocr_document(file_path)
+                    ocr_text, ocr_page_count, ocr_duration_ms, qr_texts = self._ocr_document(
+                        file_path,
+                        timeout_seconds=(
+                            int(runtime_settings.timeout_seconds)
+                            if runtime_settings and runtime_settings.timeout_seconds
+                            else None
+                        ),
+                        preserve_page_breaks=bool(
+                            runtime_settings.multi_document_split_enabled
+                        ) if runtime_settings is not None else False,
+                    )
                 except TimeoutError as exc:
                     logger.warning(
                         "Azure OCR timed out for %s; falling back to native PDF text extraction: %s",
@@ -100,6 +115,22 @@ class InvoiceExtractionAdapter:
                 qr_texts = []
 
             ocr_char_count = len(ocr_text)
+            if (
+                runtime_settings is not None
+                and runtime_settings.max_pages
+                and ocr_page_count > int(runtime_settings.max_pages)
+            ):
+                return ExtractionResponse(
+                    success=False,
+                    error_message=(
+                        f"Document has {ocr_page_count} page(s), exceeds configured max_pages "
+                        f"{int(runtime_settings.max_pages)}"
+                    ),
+                    duration_ms=int((time.time() - start) * 1000),
+                    ocr_page_count=ocr_page_count,
+                    ocr_duration_ms=ocr_duration_ms,
+                )
+
             if not ocr_text.strip():
                 return ExtractionResponse(
                     success=False,
@@ -229,7 +260,7 @@ class InvoiceExtractionAdapter:
             pass
 
     @staticmethod
-    def _is_ocr_enabled() -> bool:
+    def _is_ocr_enabled(tenant=None) -> bool:
         """Check ExtractionRuntimeSettings.ocr_enabled flag.
 
         Falls back to settings.EXTRACTION_OCR_ENABLED (default True) if no
@@ -237,18 +268,29 @@ class InvoiceExtractionAdapter:
         """
         try:
             from apps.extraction_core.models import ExtractionRuntimeSettings
-            active = ExtractionRuntimeSettings.get_active()
+            active = ExtractionRuntimeSettings.get_active(tenant=tenant)
             if active is not None:
                 return active.ocr_enabled
         except Exception:
             logger.debug("Could not read ExtractionRuntimeSettings; using settings fallback")
         return getattr(settings, "EXTRACTION_OCR_ENABLED", True)
 
+    @staticmethod
+    def _get_runtime_settings(tenant=None):
+        """Return tenant-scoped ExtractionRuntimeSettings when available."""
+        try:
+            from apps.extraction_core.services.runtime_settings_service import RuntimeSettingsService
+
+            return RuntimeSettingsService.get_active_settings(tenant=tenant)
+        except Exception:
+            logger.debug("Could not load runtime settings; proceeding with defaults")
+            return None
+
     # ------------------------------------------------------------------
     # Step 1a: Azure Document Intelligence OCR
     # ------------------------------------------------------------------
     @staticmethod
-    def _ocr_document(file_path: str) -> tuple:
+    def _ocr_document(file_path: str, timeout_seconds: Optional[int] = None, preserve_page_breaks: bool = False) -> tuple:
         """Use Azure Document Intelligence to extract text + barcodes from a document.
 
         Returns:
@@ -274,7 +316,7 @@ class InvoiceExtractionAdapter:
         )
         ocr_timeout_seconds = max(
             1,
-            int(getattr(settings, "AZURE_DI_OCR_TIMEOUT_SECONDS", 90)),
+            int(timeout_seconds or getattr(settings, "AZURE_DI_OCR_TIMEOUT_SECONDS", 90)),
         )
 
         ocr_start = time.time()
@@ -308,9 +350,13 @@ class InvoiceExtractionAdapter:
         page_count = len(result.pages) if result.pages else 0
         lines = []
         qr_texts: list = []
+        page_texts = []
         for page in result.pages:
+            page_lines = []
             for line in page.lines:
                 lines.append(line.content)
+                page_lines.append(line.content)
+            page_texts.append("\n".join(page_lines))
             # Extract QR code strings from Azure DI barcodes add-on.
             # Azure DI returns kind="QRCode" (PascalCase); .upper() normalises to
             # "QRCODE" for a case-insensitive comparison.
@@ -324,7 +370,12 @@ class InvoiceExtractionAdapter:
         if qr_texts:
             logger.info("Azure DI returned %d QR code(s) for %s", len(qr_texts), file_path)
 
-        return "\n".join(lines), page_count, ocr_duration_ms, qr_texts
+        if preserve_page_breaks and page_texts:
+            text_out = "\f\n".join(page_texts)
+        else:
+            text_out = "\n".join(lines)
+
+        return text_out, page_count, ocr_duration_ms, qr_texts
 
     @staticmethod
     def _decode_qr(

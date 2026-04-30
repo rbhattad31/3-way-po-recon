@@ -133,6 +133,22 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
     """
     from apps.accounts.models import CompanyProfile
     tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
+    runtime_settings = None
+    runtime_retry_count = 2
+    runtime_review_threshold = None
+    runtime_analytics_enabled = True
+    runtime_llm_enabled = False
+    try:
+        from apps.extraction_core.services.runtime_settings_service import RuntimeSettingsService
+
+        runtime_settings = RuntimeSettingsService.get_active_settings(tenant=tenant)
+        if runtime_settings is not None:
+            runtime_retry_count = int(runtime_settings.retry_count)
+            runtime_review_threshold = float(runtime_settings.review_confidence_threshold)
+            runtime_analytics_enabled = bool(runtime_settings.analytics_enabled)
+            runtime_llm_enabled = bool(runtime_settings.llm_extraction_enabled)
+    except Exception:
+        logger.exception("Failed to load runtime settings in extraction task; using defaults")
     from apps.extraction.services.extraction_adapter import InvoiceExtractionAdapter, ExtractionResponse
     from apps.extraction.services.parser_service import ExtractionParserService
     from apps.extraction.services.normalization_service import NormalizationService
@@ -285,7 +301,12 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
         # 1b. Run governed extraction pipeline (enrichment)
         _update_progress(upload_id, "Enriching extraction results...")
         _s_governed = _lf_span(_lf_root, "governed_pipeline", metadata={"upload_id": upload_id})
-        _run_governed_pipeline(upload, extraction_resp)
+        _run_governed_pipeline(
+            upload,
+            extraction_resp,
+            tenant=tenant,
+            enable_llm=runtime_llm_enabled,
+        )
         _lf_end(_s_governed, output={"status": "completed"})
 
         # 2. Parse
@@ -389,7 +410,10 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
         _update_progress(upload_id, "Validating required fields...")
         _s_validate = _lf_span(_lf_root, "validation", metadata={"upload_id": upload_id})
         validator = ValidationService()
-        validation_result = validator.validate(normalized)
+        validation_result = validator.validate(
+            normalized,
+            confidence_threshold=runtime_review_threshold,
+        )
 
         # 4a. Hard reconciliation validation (math checks)
         recon_val_result = None
@@ -696,20 +720,21 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
                             span=_lf_root, comment=f"strategy={extraction_resp.qr_data.decode_strategy}")
 
         # ── core_eval: persist extraction eval run + metrics + field outcomes ──
-        try:
-            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
-            ExtractionEvalAdapter.sync_for_extraction_result(
-                ext_result,
-                invoice,
-                validation_result=validation_result,
-                field_conf_result=field_conf_result,
-                dup_result=dup_result,
-                decision_codes=decision_codes,
-                extraction_resp=extraction_resp,
-                trace_id=_trace_id,
-            )
-        except Exception:
-            logger.debug("core_eval sync failed (non-fatal)")
+        if runtime_analytics_enabled:
+            try:
+                from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+                ExtractionEvalAdapter.sync_for_extraction_result(
+                    ext_result,
+                    invoice,
+                    validation_result=validation_result,
+                    field_conf_result=field_conf_result,
+                    dup_result=dup_result,
+                    decision_codes=decision_codes,
+                    extraction_resp=extraction_resp,
+                    trace_id=_trace_id,
+                )
+            except Exception:
+                logger.debug("core_eval sync failed (non-fatal)")
 
         # Audit: extraction completed
         from apps.auditlog.services import AuditService
@@ -856,6 +881,9 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
         except Exception:
             pass
         try:
+            current_retries = int(getattr(getattr(self, "request", None), "retries", 0) or 0)
+            if current_retries >= runtime_retry_count:
+                raise exc
             raise self.retry(exc=exc)
         except (AttributeError, TypeError):
             # Running outside Celery context (sync fallback) — re-raise directly
@@ -879,7 +907,7 @@ def _classify_document(ocr_text: str):
         return None
 
 
-def _run_governed_pipeline(upload: DocumentUpload, extraction_resp) -> None:
+def _run_governed_pipeline(upload: DocumentUpload, extraction_resp, tenant=None, enable_llm: bool = False) -> None:
     """Run the governed extraction pipeline as enrichment.
 
     Passes the DocumentUpload PK directly to ExtractionPipeline.run(),
@@ -897,8 +925,9 @@ def _run_governed_pipeline(upload: DocumentUpload, extraction_resp) -> None:
             ocr_text=extraction_resp.ocr_text or "",
             document_type="INVOICE",
             vendor_id=None,
-            enable_llm=False,
+            enable_llm=enable_llm,
             user=upload.uploaded_by,
+            tenant=tenant,
         )
         logger.info(
             "Governed pipeline completed for upload %s: run=%s status=%s confidence=%.2f",

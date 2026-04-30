@@ -1,5 +1,6 @@
 """Extraction Core models — jurisdiction profiles, schema registry, and runtime settings."""
 from django.db import models
+from django.db.models import Q
 
 from apps.core.enums import (
     CountryPackStatus,
@@ -168,12 +169,22 @@ class ExtractionSchemaDefinition(BaseModel):
 
 class ExtractionRuntimeSettings(BaseModel):
     """
-    System-level singleton settings governing jurisdiction resolution behaviour.
+    Tenant-level settings governing jurisdiction resolution behaviour.
 
-    Only one active record should exist at a time (enforced by the service
-    layer; ``get_active()`` returns the first ``is_active=True`` row ordered
-    by ``-updated_at``).
+    Only one active record should exist per tenant (enforced by DB constraint
+    plus service layer). For backwards compatibility, lookups can fall back to
+    legacy global records where ``tenant`` is NULL.
     """
+
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        related_name="extraction_runtime_settings",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Tenant/company this runtime settings profile belongs to",
+    )
 
     name = models.CharField(
         max_length=100,
@@ -289,6 +300,13 @@ class ExtractionRuntimeSettings(BaseModel):
     class Meta:
         db_table = "extraction_core_runtime_settings"
         ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant"],
+                condition=Q(is_active=True),
+                name="uniq_active_extraction_runtime_per_tenant",
+            ),
+        ]
         verbose_name = "Extraction Runtime Settings"
         verbose_name_plural = "Extraction Runtime Settings"
 
@@ -296,8 +314,17 @@ class ExtractionRuntimeSettings(BaseModel):
         return f"{self.name} ({self.get_jurisdiction_mode_display()})"
 
     @classmethod
-    def get_active(cls) -> "ExtractionRuntimeSettings | None":
-        """Return the current active settings record (or None)."""
+    def get_active(cls, tenant=None) -> "ExtractionRuntimeSettings | None":
+        """Return active settings for a tenant, with legacy global fallback."""
+        if tenant is not None:
+            tenant_settings = cls.objects.filter(is_active=True, tenant=tenant).first()
+            if tenant_settings is not None:
+                return tenant_settings
+            return cls.objects.filter(is_active=True, tenant__isnull=True).first()
+
+        global_settings = cls.objects.filter(is_active=True, tenant__isnull=True).first()
+        if global_settings is not None:
+            return global_settings
         return cls.objects.filter(is_active=True).first()
 
 

@@ -72,7 +72,7 @@ class SettingsResolutionService:
     @classmethod
     def get_effective_settings(cls, profile: EntityExtractionProfile) -> dict:
         """Return dict showing system defaults vs entity overrides."""
-        system = ExtractionRuntimeSettings.get_active()
+        system = ExtractionRuntimeSettings.get_active(tenant=getattr(profile, "tenant", None))
         result = {}
         compare_fields = [
             ("default_country_code", "Default Country Code"),

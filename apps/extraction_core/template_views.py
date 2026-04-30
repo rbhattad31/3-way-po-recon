@@ -59,15 +59,26 @@ def cc_overview(request):
 @observed_action("cc.runtime_settings")
 @permission_required_code("extraction.settings.view")
 def cc_runtime_settings(request):
-    """Runtime settings view and edit."""
-    settings_obj = RuntimeSettingsService.get_active_settings()
+    """Legacy runtime settings endpoint (disabled)."""
+    messages.info(
+        request,
+        "Runtime Settings moved to Settings -> Runtime Settings.",
+    )
+    return redirect("runtime_settings")
+
+
+@observed_action("runtime.settings")
+@permission_required_code("extraction.settings.view")
+def runtime_settings(request):
+    """Global runtime settings view and edit."""
+    tenant = getattr(request, "tenant", None)
+    settings_obj = RuntimeSettingsService.get_or_create_active_settings(
+        tenant=tenant,
+        user=request.user,
+    )
     can_edit = _has_perm(request.user, "extraction.settings.edit")
 
     if request.method == "POST" and can_edit:
-        if not settings_obj:
-            messages.error(request, "No active settings to update.")
-            return redirect("extraction_control_center:runtime_settings")
-
         data = {}
         for field in RuntimeSettingsService.EDITABLE_FIELDS:
             val = request.POST.get(field)
@@ -111,11 +122,11 @@ def cc_runtime_settings(request):
         else:
             RuntimeSettingsService.update_settings(settings_obj, data, request.user)
             messages.success(request, "Runtime settings updated successfully.")
-            return redirect("extraction_control_center:runtime_settings")
+            return redirect("runtime_settings")
 
     sections = RuntimeSettingsService.get_settings_sections(settings_obj) if settings_obj else {}
 
-    return render(request, "extraction_control_center/runtime_settings.html", {
+    return render(request, "settings/runtime_settings.html", {
         "settings": settings_obj,
         "sections": sections,
         "can_edit": can_edit,

@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.extraction_core.models import (
     EntityExtractionProfile,
     ExtractionRuntimeSettings,
@@ -176,7 +177,7 @@ class SchemaLookupView(APIView):
 # ---------------------------------------------------------------------------
 
 
-class ExtractionRuntimeSettingsViewSet(viewsets.ModelViewSet):
+class ExtractionRuntimeSettingsViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     """CRUD for system-level extraction runtime settings."""
 
     queryset = ExtractionRuntimeSettings.objects.all()
@@ -193,7 +194,9 @@ class ExtractionRuntimeSettingsViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def active(self, request):
         """Return the currently active settings record."""
-        settings = ExtractionRuntimeSettings.get_active()
+        settings = ExtractionRuntimeSettings.get_active(
+            tenant=getattr(request, "tenant", None),
+        )
         if not settings:
             return Response(
                 {"detail": "No active runtime settings found."},
@@ -203,7 +206,10 @@ class ExtractionRuntimeSettingsViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(
+            created_by=self.request.user,
+            tenant=getattr(self.request, "tenant", None),
+        )
 
     def perform_update(self, serializer):
         serializer.save(updated_by=self.request.user)
@@ -308,6 +314,7 @@ class ExtractionView(APIView):
             vendor_id=data.get("vendor_id"),
             extraction_document_id=data.get("extraction_document_id"),
             enable_llm=data.get("enable_llm", False),
+            tenant=getattr(request, "tenant", None),
         )
 
         http_status = (

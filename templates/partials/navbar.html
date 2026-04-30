@@ -170,6 +170,13 @@
                href="{% url 'reconciliation:recon_settings' %}">
               <i class="bi bi-gear me-2 opacity-75"></i>Settings
             </a>
+            {% has_permission "extraction.settings.view" as can_view_runtime_settings %}
+            {% if can_view_runtime_settings %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'runtime_settings' %}active{% endif %}"
+               href="{% url 'runtime_settings' %}">
+              <i class="bi bi-toggles2 me-2 opacity-75"></i>Runtime Settings
+            </a>
+            {% endif %}
             {% endif %}
             {% endwith %}
             {% else %}
@@ -194,6 +201,13 @@
                href="{% url 'reconciliation:recon_settings' %}">
               <i class="bi bi-gear me-2 opacity-75"></i>Settings
             </a>
+            {% has_permission "extraction.settings.view" as can_view_runtime_settings %}
+            {% if can_view_runtime_settings %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'runtime_settings' %}active{% endif %}"
+               href="{% url 'runtime_settings' %}">
+              <i class="bi bi-toggles2 me-2 opacity-75"></i>Runtime Settings
+            </a>
+            {% endif %}
             {% endif %}
             {% endif %}
           </div>

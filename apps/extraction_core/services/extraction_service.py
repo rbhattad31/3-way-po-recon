@@ -32,7 +32,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.extraction_configs.services.field_registry import FieldRegistryService
-from apps.extraction_core.models import ExtractionSchemaDefinition
+from apps.extraction_core.models import ExtractionRuntimeSettings, ExtractionSchemaDefinition
 from apps.extraction_core.services.resolution_service import (
     JurisdictionResolutionService,
     ResolutionResult,
@@ -369,6 +369,7 @@ class ExtractionService:
         vendor_id: int | None = None,
         extraction_document_id: int | None = None,
         enable_llm: bool = False,
+        tenant=None,
     ) -> ExtractionExecutionResult:
         """
         Run the full extraction pipeline.
@@ -388,6 +389,7 @@ class ExtractionService:
         """
         start = timezone.now()
         result = ExtractionExecutionResult()
+        runtime_settings = ExtractionRuntimeSettings.get_active(tenant=tenant)
 
         # ── Step 1: Resolve jurisdiction ──────────────────────────────
         resolution = JurisdictionResolutionService.resolve(
@@ -395,6 +397,7 @@ class ExtractionService:
             declared_country_code=declared_country_code,
             declared_regime_code=declared_regime_code,
             vendor_id=vendor_id,
+            tenant=tenant,
         )
 
         # ── Step 2: Extract jurisdiction metadata ─────────────────────
@@ -455,7 +458,11 @@ class ExtractionService:
 
         if not schema and resolution.resolution_mode != "AUTO":
             schema = cls._try_schema_fallback(
-                resolution, ocr_text, document_type, result,
+                resolution,
+                ocr_text,
+                document_type,
+                result,
+                runtime_settings=runtime_settings,
             )
 
         if not schema:
@@ -495,9 +502,22 @@ class ExtractionService:
         cls._extract_line_items(result, template, parsed_doc, resolution)
 
         # ── Step 5b: LLM extraction for unresolved fields ─────────────
-        if enable_llm:
+        llm_enabled = bool(enable_llm)
+        if runtime_settings is not None and not runtime_settings.llm_extraction_enabled:
+            llm_enabled = False
+            result.warnings.append("LLM extraction disabled by runtime settings")
+
+        if llm_enabled:
             cls._run_llm_extraction(
-                result, template, clean_text, resolution,
+                result,
+                template,
+                clean_text,
+                resolution,
+                confidence_threshold=(
+                    float(runtime_settings.review_confidence_threshold)
+                    if runtime_settings and runtime_settings.review_confidence_threshold is not None
+                    else cls.LLM_CONFIDENCE_THRESHOLD
+                ),
             )
 
         # ── Step 6: Normalize extracted values ────────────────────────
@@ -515,6 +535,13 @@ class ExtractionService:
                 extraction_result=result,
                 country_code=resolution.country_code,
                 regime_code=resolution.regime_code or "",
+                tenant=tenant,
+                options={
+                    "vendor_matching_enabled": bool(runtime_settings.vendor_matching_enabled) if runtime_settings else True,
+                    "vendor_fuzzy_threshold": float(runtime_settings.vendor_fuzzy_threshold) if runtime_settings and runtime_settings.vendor_fuzzy_threshold is not None else None,
+                    "po_lookup_enabled": bool(runtime_settings.po_lookup_enabled) if runtime_settings else True,
+                    "contract_lookup_enabled": bool(runtime_settings.contract_lookup_enabled) if runtime_settings else False,
+                },
             )
             result.enrichment = enrichment
             result.warnings.extend(enrichment.warnings)
@@ -617,16 +644,17 @@ class ExtractionService:
         ocr_text: str,
         document_type: str,
         result: ExtractionExecutionResult,
+        runtime_settings: ExtractionRuntimeSettings | None = None,
     ) -> ExtractionSchemaDefinition | None:
         """
         When the primary resolution's jurisdiction has no schema and
         ``fallback_to_detection_on_schema_miss`` is enabled, try
         auto-detection to find a schema under a different jurisdiction.
         """
-        from apps.extraction_core.models import ExtractionRuntimeSettings
-
-        settings = ExtractionRuntimeSettings.get_active()
+        settings = runtime_settings or ExtractionRuntimeSettings.get_active()
         if not settings or not settings.fallback_to_detection_on_schema_miss:
+            return None
+        if not settings.enable_jurisdiction_detection:
             return None
 
         logger.info(
@@ -1135,6 +1163,7 @@ class ExtractionService:
         template: ExtractionTemplate,
         ocr_text: str,
         resolution: ResolutionResult,
+        confidence_threshold: float | None = None,
     ) -> None:
         """
         Run LLM extraction for fields that deterministic extraction
@@ -1147,7 +1176,11 @@ class ExtractionService:
             LLMExtractionAdapter,
         )
 
-        unresolved = cls._find_unresolved_fields(result, template)
+        unresolved = cls._find_unresolved_fields(
+            result,
+            template,
+            threshold=confidence_threshold,
+        )
         if not unresolved:
             logger.info("All fields resolved deterministically — skipping LLM")
             return
@@ -1191,6 +1224,7 @@ class ExtractionService:
         cls,
         result: ExtractionExecutionResult,
         template: ExtractionTemplate,
+        threshold: float | None = None,
     ) -> set[str]:
         """
         Identify field keys that were not extracted or have confidence
@@ -1198,12 +1232,13 @@ class ExtractionService:
         """
         unresolved: set[str] = set()
         all_results = {**result.header_fields, **result.tax_fields}
+        conf_threshold = threshold if threshold is not None else cls.LLM_CONFIDENCE_THRESHOLD
 
         for key in template.all_field_keys:
             fr = all_results.get(key)
             if not fr or not fr.extracted:
                 unresolved.add(key)
-            elif fr.confidence < cls.LLM_CONFIDENCE_THRESHOLD:
+            elif fr.confidence < conf_threshold:
                 unresolved.add(key)
 
         return unresolved

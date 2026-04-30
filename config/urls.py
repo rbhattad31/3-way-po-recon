@@ -7,6 +7,7 @@ from django.shortcuts import render
 from django.views.generic import RedirectView
 
 from apps.core.health import health_check, health_live, health_ready
+from apps.extraction_core.template_views import runtime_settings as runtime_settings_view
 
 
 def custom_page_not_found(request, exception=None):
@@ -58,6 +59,7 @@ urlpatterns = [
     path("email/", include("apps.email_integration.urls")),
     path("api/v1/email-integration/", include("apps.email_integration.api.urls")),
     path("posting/", include("apps.posting.urls")),
+    path("settings/runtime/", runtime_settings_view, name="runtime_settings"),
     path("api/v1/posting/", include("apps.posting.api_urls")),
     path("api/v1/posting-core/", include("apps.posting_core.api_urls")),
     path("erp/", include("apps.erp_integration.api_urls")),

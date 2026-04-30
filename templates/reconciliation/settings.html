@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load rbac_tags %}
 {% block title %}Reconciliation Settings — PO Reconciliation{% endblock %}
 
 {% block breadcrumb %}
@@ -18,6 +19,21 @@
   </button>
   {% endif %}
 </div>
+
+{% has_permission "extraction.settings.view" as can_extraction_settings %}
+{% if can_extraction_settings %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center mb-4">
+  <div class="me-3">
+    <strong><i class="bi bi-toggles2 me-2"></i>Extraction Auto-Approval Settings</strong>
+    <div class="small mb-0">
+      Auto-approval toggles are managed in Extraction Control Center Runtime Settings.
+    </div>
+  </div>
+  <a href="{% url 'runtime_settings' %}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-box-arrow-up-right me-1"></i>Open Runtime Settings
+  </a>
+</div>
+{% endif %}
 
 {# ── Reconciliation Mode Selector ── #}
 <div class="card mb-4 border-primary">

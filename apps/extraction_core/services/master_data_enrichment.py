@@ -179,6 +179,8 @@ class MasterDataEnrichmentService:
         extraction_result: Any,
         country_code: str = "",
         regime_code: str = "",
+        tenant=None,
+        options: Optional[dict] = None,
     ) -> EnrichmentResult:
         """
         Enrich extraction result with master data matches.
@@ -195,6 +197,11 @@ class MasterDataEnrichmentService:
 
         start = timezone.now()
         result = EnrichmentResult()
+        opts = options or {}
+        vendor_enabled = bool(opts.get("vendor_matching_enabled", True))
+        po_enabled = bool(opts.get("po_lookup_enabled", True))
+        contract_enabled = bool(opts.get("contract_lookup_enabled", False))
+        vendor_fuzzy_threshold = opts.get("vendor_fuzzy_threshold")
 
         # Extract inputs from the extraction result
         intel = getattr(extraction_result, "document_intelligence", None)
@@ -269,21 +276,28 @@ class MasterDataEnrichmentService:
             logger.exception("Self-company detection failed")
 
         # ── 1. Vendor matching ────────────────────────────────────────
-        try:
-            result.vendor_match = cls._match_vendor(
-                supplier_name, supplier_tax_id, country_code,
-            )
-            if result.vendor_match.match_type != "NOT_FOUND":
-                logger.info(
-                    "Vendor matched: %s → %s (%s, conf=%.2f)",
+        if vendor_enabled:
+            try:
+                result.vendor_match = cls._match_vendor(
                     supplier_name,
-                    result.vendor_match.entity_name,
-                    result.vendor_match.match_type,
-                    result.vendor_match.confidence,
+                    supplier_tax_id,
+                    country_code,
+                    tenant=tenant,
+                    fuzzy_threshold=vendor_fuzzy_threshold,
                 )
-        except Exception:
-            logger.exception("Vendor matching failed")
-            result.warnings.append("Vendor matching failed")
+                if result.vendor_match.match_type != "NOT_FOUND":
+                    logger.info(
+                        "Vendor matched: %s → %s (%s, conf=%.2f)",
+                        supplier_name,
+                        result.vendor_match.entity_name,
+                        result.vendor_match.match_type,
+                        result.vendor_match.confidence,
+                    )
+            except Exception:
+                logger.exception("Vendor matching failed")
+                result.warnings.append("Vendor matching failed")
+        else:
+            result.warnings.append("Vendor matching skipped by runtime settings")
 
         # ── 2. Customer matching ──────────────────────────────────────
         try:
@@ -300,18 +314,24 @@ class MasterDataEnrichmentService:
             result.warnings.append("Customer matching failed")
 
         # ── 3. PO lookup ─────────────────────────────────────────────
-        try:
-            result.po_lookup = cls._lookup_po(po_number)
-            if result.po_lookup.found:
-                logger.info(
-                    "PO found: %s (vendor=%s, status=%s)",
-                    po_number,
-                    result.po_lookup.vendor_name,
-                    result.po_lookup.po_status,
-                )
-        except Exception:
-            logger.exception("PO lookup failed")
-            result.warnings.append("PO lookup failed")
+        if po_enabled:
+            try:
+                result.po_lookup = cls._lookup_po(po_number, tenant=tenant)
+                if result.po_lookup.found:
+                    logger.info(
+                        "PO found: %s (vendor=%s, status=%s)",
+                        po_number,
+                        result.po_lookup.vendor_name,
+                        result.po_lookup.po_status,
+                    )
+            except Exception:
+                logger.exception("PO lookup failed")
+                result.warnings.append("PO lookup failed")
+        else:
+            result.warnings.append("PO lookup skipped by runtime settings")
+
+        if not contract_enabled:
+            result.warnings.append("Contract lookup skipped by runtime settings")
 
         # ── 4. Confidence adjustments ─────────────────────────────────
         cls._apply_confidence_adjustments(extraction_result, result)
@@ -331,6 +351,8 @@ class MasterDataEnrichmentService:
         supplier_name: str,
         supplier_tax_id: str,
         country_code: str,
+        tenant=None,
+        fuzzy_threshold: float | None = None,
     ) -> MasterDataMatch:
         """
         Match supplier against vendor master using 3-tier strategy:
@@ -345,15 +367,17 @@ class MasterDataEnrichmentService:
             return MasterDataMatch(match_type="NOT_FOUND")
 
         # ── Tier 1: Exact tax ID ──
+        threshold = float(fuzzy_threshold) if fuzzy_threshold is not None else cls.FUZZY_THRESHOLD
+
         if supplier_tax_id:
             tax_id_clean = supplier_tax_id.strip().upper()
-            vendor = (
-                Vendor.objects.filter(
-                    tax_id__iexact=tax_id_clean,
-                    is_active=True,
-                )
-                .first()
+            vendor_qs = Vendor.objects.filter(
+                tax_id__iexact=tax_id_clean,
+                is_active=True,
             )
+            if tenant is not None and hasattr(Vendor, "tenant_id"):
+                vendor_qs = vendor_qs.filter(tenant=tenant)
+            vendor = vendor_qs.first()
             if vendor:
                 return MasterDataMatch(
                     match_type="EXACT_TAX_ID",
@@ -371,15 +395,14 @@ class MasterDataEnrichmentService:
         normalized_input = cls._normalize_name(supplier_name)
 
         # ── Tier 2: Alias match ──
-        alias = (
-            VendorAliasMapping.objects.select_related("vendor")
-            .filter(
-                normalized_alias=normalized_input,
-                vendor__is_active=True,
-                is_active=True,
-            )
-            .first()
+        alias_qs = VendorAliasMapping.objects.select_related("vendor").filter(
+            normalized_alias=normalized_input,
+            vendor__is_active=True,
+            is_active=True,
         )
+        if tenant is not None and hasattr(Vendor, "tenant_id"):
+            alias_qs = alias_qs.filter(vendor__tenant=tenant)
+        alias = alias_qs.first()
         if alias:
             return MasterDataMatch(
                 match_type="ALIAS",
@@ -394,6 +417,8 @@ class MasterDataEnrichmentService:
         # ── Tier 3: Fuzzy name match ──
         # Scope vendors by country if provided
         vendor_qs = Vendor.objects.filter(is_active=True)
+        if tenant is not None and hasattr(Vendor, "tenant_id"):
+            vendor_qs = vendor_qs.filter(tenant=tenant)
         if country_code:
             # Try country-scoped first, fall back to all
             country_vendors = vendor_qs.filter(
@@ -421,11 +446,11 @@ class MasterDataEnrichmentService:
                 best_sim = sim
                 best_match = (pk, code, name)
 
-        if best_match and best_sim >= cls.FUZZY_THRESHOLD:
+        if best_match and best_sim >= threshold:
             pk, code, name = best_match
             confidence = (
                 0.90 if best_sim >= cls.FUZZY_HIGH_THRESHOLD else
-                0.70 + (best_sim - cls.FUZZY_THRESHOLD) * 1.3
+                0.70 + (best_sim - threshold) * 1.3
             )
             return MasterDataMatch(
                 match_type="FUZZY",
@@ -516,7 +541,7 @@ class MasterDataEnrichmentService:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _lookup_po(cls, po_number: str) -> POLookupResult:
+    def _lookup_po(cls, po_number: str, tenant=None) -> POLookupResult:
         """
         Look up PO by number (exact then normalized).
         """
@@ -532,14 +557,20 @@ class MasterDataEnrichmentService:
         po_clean = po_number.strip()
 
         # Exact match
-        po = PurchaseOrder.objects.filter(po_number__iexact=po_clean).first()
+        po_qs = PurchaseOrder.objects.filter(po_number__iexact=po_clean)
+        if tenant is not None and hasattr(PurchaseOrder, "tenant_id"):
+            po_qs = po_qs.filter(tenant=tenant)
+        po = po_qs.first()
 
         # Try normalized match
         if not po:
             normalized = cls._normalize_po_number(po_clean)
-            po = PurchaseOrder.objects.filter(
+            po_qs = PurchaseOrder.objects.filter(
                 normalized_po_number__iexact=normalized,
-            ).first()
+            )
+            if tenant is not None and hasattr(PurchaseOrder, "tenant_id"):
+                po_qs = po_qs.filter(tenant=tenant)
+            po = po_qs.first()
 
         if not po:
             # Fallback to imported ERP open-PO snapshot if transactional PO is unavailable.

@@ -22,7 +22,11 @@ from django.utils import timezone
 
 from apps.extraction_configs.models import TaxFieldDefinition
 from apps.extraction_configs.services.field_registry import FieldRegistryService
-from apps.extraction_core.models import ExtractionSchemaDefinition, TaxJurisdictionProfile
+from apps.extraction_core.models import (
+    ExtractionRuntimeSettings,
+    ExtractionSchemaDefinition,
+    TaxJurisdictionProfile,
+)
 from apps.extraction_core.services.resolution_service import (
     JurisdictionResolutionService,
     ResolutionResult,
@@ -109,6 +113,7 @@ class BaseExtractionService:
         vendor_id: int | None = None,
         document_type: str = "INVOICE",
         extraction_document_id: int | None = None,
+        tenant=None,
     ) -> ExtractionOutput:
         """
         Run the full extraction pipeline on *ocr_text*.
@@ -132,6 +137,7 @@ class BaseExtractionService:
         """
         start = timezone.now()
         output = ExtractionOutput()
+        runtime_settings = ExtractionRuntimeSettings.get_active(tenant=tenant)
 
         # 1 — Jurisdiction resolution (4-tier precedence chain)
         resolution = JurisdictionResolutionService.resolve(
@@ -139,6 +145,7 @@ class BaseExtractionService:
             declared_country_code=declared_country_code,
             declared_regime_code=declared_regime_code,
             vendor_id=vendor_id,
+            tenant=tenant,
         )
         output.jurisdiction_resolution = resolution
 
@@ -157,7 +164,13 @@ class BaseExtractionService:
         # 3 — Fallback: if no schema found and resolution was not AUTO,
         #     try auto-detection to find a schema under a different jurisdiction
         if not schema and resolution.resolution_mode != "AUTO":
-            schema = cls._try_schema_fallback(resolution, ocr_text, document_type, output)
+            schema = cls._try_schema_fallback(
+                resolution,
+                ocr_text,
+                document_type,
+                output,
+                runtime_settings=runtime_settings,
+            )
 
         if not schema:
             output.errors.append(
@@ -237,6 +250,7 @@ class BaseExtractionService:
         ocr_text: str,
         document_type: str,
         output: ExtractionOutput,
+        runtime_settings: ExtractionRuntimeSettings | None = None,
     ) -> ExtractionSchemaDefinition | None:
         """
         When schema is missing for the primary resolution and the system
@@ -244,10 +258,10 @@ class BaseExtractionService:
         attempt auto-detection to find a schema under a different
         jurisdiction.
         """
-        from apps.extraction_core.models import ExtractionRuntimeSettings
-
-        settings = ExtractionRuntimeSettings.get_active()
+        settings = runtime_settings or ExtractionRuntimeSettings.get_active()
         if not settings or not settings.fallback_to_detection_on_schema_miss:
+            return None
+        if not settings.enable_jurisdiction_detection:
             return None
 
         logger.info(

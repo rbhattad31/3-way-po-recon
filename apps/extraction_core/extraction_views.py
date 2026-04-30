@@ -349,6 +349,7 @@ class ExtractionRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
             ocr_text=ocr_record.ocr_text if ocr_record else "",
             document_type=run.schema.document_type if run.schema else "INVOICE",
             user=request.user,
+            tenant=getattr(request, "tenant", None),
         )
 
         return Response(
@@ -421,6 +422,7 @@ class RunPipelineView(APIView):
             vendor_id=data.get("vendor_id"),
             enable_llm=data.get("enable_llm", False),
             user=request.user,
+            tenant=getattr(request, "tenant", None),
         )
 
         http_status = (

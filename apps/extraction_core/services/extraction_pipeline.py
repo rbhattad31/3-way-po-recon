@@ -357,6 +357,7 @@ class ExtractionPipeline:
         resolution = JurisdictionResolutionService.resolve(
             ocr_text,
             vendor_id=vendor_id,
+            tenant=run.tenant,
         )
 
         # Determine source type
@@ -675,6 +676,7 @@ class ExtractionPipeline:
 
         # Line-item fields
         for li in output.line_items:
+            tenant=tenant,
             for field_code, fv in li.fields.items():
                 records.append(
                     ExtractionFieldValue(

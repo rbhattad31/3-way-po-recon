@@ -43,8 +43,29 @@ class RuntimeSettingsService:
     ]
 
     @classmethod
-    def get_active_settings(cls) -> ExtractionRuntimeSettings | None:
-        return ExtractionRuntimeSettings.get_active()
+    def get_active_settings(cls, tenant=None) -> ExtractionRuntimeSettings | None:
+        return ExtractionRuntimeSettings.get_active(tenant=tenant)
+
+    @classmethod
+    def get_or_create_active_settings(cls, tenant=None, user=None) -> ExtractionRuntimeSettings:
+        """Return active settings for tenant, creating a tenant-scoped record when missing."""
+        settings_obj = cls.get_active_settings(tenant=tenant)
+        if settings_obj is not None and settings_obj.tenant_id == getattr(tenant, "pk", None):
+            return settings_obj
+
+        defaults: dict[str, Any] = {
+            "name": "Default",
+            "tenant": tenant,
+            "is_active": True,
+            "updated_by": user,
+        }
+
+        if settings_obj is not None:
+            for field in cls.EDITABLE_FIELDS:
+                defaults[field] = getattr(settings_obj, field)
+
+        created_obj = ExtractionRuntimeSettings.objects.create(**defaults)
+        return created_obj
 
     @classmethod
     def get_settings_by_id(cls, pk: int) -> ExtractionRuntimeSettings | None:

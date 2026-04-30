@@ -112,7 +112,7 @@ class ValidationService:
     """Run validation rules on a NormalizedInvoice."""
 
     @observed_service("extraction.validate", entity_type="Invoice")
-    def validate(self, inv: NormalizedInvoice) -> ValidationResult:
+    def validate(self, inv: NormalizedInvoice, confidence_threshold: float | None = None) -> ValidationResult:
         result = ValidationResult()
 
         # Mandatory header fields
@@ -192,7 +192,11 @@ class ValidationService:
             )
 
         # Low extraction confidence
-        threshold = getattr(settings, "EXTRACTION_CONFIDENCE_THRESHOLD", 0.75)
+        threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else getattr(settings, "EXTRACTION_CONFIDENCE_THRESHOLD", 0.75)
+        )
         if inv.confidence < threshold:
             result.add_warning(
                 "extraction_confidence",

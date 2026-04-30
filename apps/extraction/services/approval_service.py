@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import Optional, Tuple
 
 from django.conf import settings
 from django.db import transaction
@@ -94,6 +94,31 @@ class ExtractionApprovalService:
     # Auto-approve check
     # ------------------------------------------------------------------
     @classmethod
+    def _resolve_auto_approve_config(cls, tenant=None) -> Tuple[bool, float, str]:
+        """Resolve auto-approve controls from runtime settings (UI) first.
+
+        Returns ``(enabled, threshold, source)`` where source is one of:
+        - ``runtime_settings`` (preferred, UI-controlled)
+        - ``django_settings`` (fallback only)
+        """
+        try:
+            from apps.extraction_core.services.runtime_settings_service import RuntimeSettingsService
+
+            runtime_settings = RuntimeSettingsService.get_active_settings(tenant=tenant)
+            if runtime_settings is not None:
+                enabled = bool(runtime_settings.auto_approval_enabled)
+                threshold = float(runtime_settings.auto_approval_threshold)
+                threshold = max(0.0, min(1.0, threshold))
+                return enabled, threshold, "runtime_settings"
+        except Exception:
+            logger.exception("Failed to resolve extraction runtime settings; falling back to django settings")
+
+        enabled = bool(getattr(settings, "EXTRACTION_AUTO_APPROVE_ENABLED", False))
+        threshold = float(getattr(settings, "EXTRACTION_AUTO_APPROVE_THRESHOLD", 1.1))
+        threshold = max(0.0, min(1.1, threshold))
+        return enabled, threshold, "django_settings"
+
+    @classmethod
     @observed_service("extraction.try_auto_approve", entity_type="ExtractionApproval")
     def try_auto_approve(
         cls,
@@ -110,10 +135,12 @@ class ExtractionApprovalService:
         because the task dispatches process_case_task separately with the
         correct skip_agent_pipeline flag.
         """
-        enabled = getattr(settings, "EXTRACTION_AUTO_APPROVE_ENABLED", False)
-        threshold = getattr(settings, "EXTRACTION_AUTO_APPROVE_THRESHOLD", 1.1)
+        enabled, threshold, config_source = cls._resolve_auto_approve_config(
+            tenant=getattr(invoice, "tenant", None),
+        )
 
         if not enabled:
+            logger.debug("Extraction auto-approve disabled via %s", config_source)
             return None
 
         confidence = invoice.extraction_confidence or 0.0
@@ -150,7 +177,11 @@ class ExtractionApprovalService:
             AuditEventType.EXTRACTION_AUTO_APPROVED,
             f"Extraction auto-approved (confidence {confidence:.0%} >= threshold {threshold:.0%})",
             user=None,
-            metadata={"confidence": confidence, "threshold": threshold},
+            metadata={
+                "confidence": confidence,
+                "threshold": threshold,
+                "config_source": config_source,
+            },
         )
 
         logger.info(
@@ -162,11 +193,13 @@ class ExtractionApprovalService:
             cls._ensure_case_and_process(invoice, user=None)
 
         # ── core_eval: persist auto-approval learning signal ──
-        try:
-            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
-            ExtractionEvalAdapter.sync_for_approval(approval, user=None)
-        except Exception:
-            logger.debug("core_eval auto-approve sync failed (non-fatal)")
+        runtime_settings = cls._get_runtime_settings_for_invoice(invoice)
+        if runtime_settings is None or runtime_settings.analytics_enabled:
+            try:
+                from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+                ExtractionEvalAdapter.sync_for_approval(approval, user=None)
+            except Exception:
+                logger.debug("core_eval auto-approve sync failed (non-fatal)")
 
         try:
             from apps.core.langfuse_client import score_trace
@@ -356,13 +389,15 @@ class ExtractionApprovalService:
         cls._record_governance_trail(approval, "APPROVE", user)
 
         # ── core_eval: persist approval learning signals ──
-        try:
-            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
-            ExtractionEvalAdapter.sync_for_approval(
-                approval, user=user, correction_records=all_correction_records,
-            )
-        except Exception:
-            logger.debug("core_eval approval sync failed (non-fatal)")
+        runtime_settings = cls._get_runtime_settings_for_invoice(invoice)
+        if runtime_settings is None or runtime_settings.analytics_enabled:
+            try:
+                from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+                ExtractionEvalAdapter.sync_for_approval(
+                    approval, user=user, correction_records=all_correction_records,
+                )
+            except Exception:
+                logger.debug("core_eval approval sync failed (non-fatal)")
 
         # ── Create AP Case and trigger case pipeline ──
         # The case orchestrator handles reconciliation, agents, review
@@ -466,11 +501,13 @@ class ExtractionApprovalService:
         cls._record_governance_trail(approval, "REJECT", user, reason)
 
         # ── core_eval: persist rejection learning signal ──
-        try:
-            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
-            ExtractionEvalAdapter.sync_for_approval(approval, user=user)
-        except Exception:
-            logger.debug("core_eval reject sync failed (non-fatal)")
+        runtime_settings = cls._get_runtime_settings_for_invoice(invoice)
+        if runtime_settings is None or runtime_settings.analytics_enabled:
+            try:
+                from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+                ExtractionEvalAdapter.sync_for_approval(approval, user=user)
+            except Exception:
+                logger.debug("core_eval reject sync failed (non-fatal)")
 
         try:
             from apps.core.langfuse_client import score_trace
@@ -561,6 +598,12 @@ class ExtractionApprovalService:
     ) -> list[ExtractionFieldCorrection]:
         """Apply corrections to invoice/line items and create correction records."""
         records: list[ExtractionFieldCorrection] = []
+        runtime_settings = cls._get_runtime_settings_for_invoice(invoice)
+        correction_tracking_enabled = (
+            bool(runtime_settings.correction_tracking_enabled)
+            if runtime_settings is not None
+            else True
+        )
 
         # Header corrections
         header = corrections.get("header", {})
@@ -655,8 +698,15 @@ class ExtractionApprovalService:
             if len(line_update_fields) > 1:
                 line_item.save(update_fields=line_update_fields)
 
-        if records:
+        if records and correction_tracking_enabled:
             ExtractionFieldCorrection.objects.bulk_create(records)
+        elif records and not correction_tracking_enabled:
+            logger.info(
+                "Correction tracking disabled by runtime settings for tenant %s; "
+                "skipping %d correction record writes",
+                getattr(invoice, "tenant_id", None),
+                len(records),
+            )
 
         return records
 
@@ -670,23 +720,54 @@ class ExtractionApprovalService:
         if invoice.vendor or not invoice.raw_vendor_name:
             return
         try:
+            runtime_settings = ExtractionApprovalService._get_runtime_settings_for_invoice(invoice)
+            if runtime_settings is not None and not runtime_settings.vendor_matching_enabled:
+                logger.info(
+                    "Vendor re-resolution skipped by runtime settings for invoice %s",
+                    invoice.pk,
+                )
+                return
+
             from apps.core.utils import normalize_string
-            from apps.documents.models import Invoice as _Inv
             from apps.vendors.models import Vendor
             from apps.posting_core.models import VendorAliasMapping
+            from difflib import SequenceMatcher
+
+            fuzzy_threshold = (
+                float(runtime_settings.vendor_fuzzy_threshold)
+                if runtime_settings and runtime_settings.vendor_fuzzy_threshold is not None
+                else 0.80
+            )
+
             norm = normalize_string(invoice.raw_vendor_name)
-            vendor = Vendor.objects.filter(normalized_name=norm, is_active=True).first()
+            vendor_qs = Vendor.objects.filter(is_active=True)
+            if getattr(invoice, "tenant_id", None) is not None and hasattr(Vendor, "tenant_id"):
+                vendor_qs = vendor_qs.filter(tenant_id=invoice.tenant_id)
+
+            vendor = vendor_qs.filter(normalized_name=norm).first()
             if not vendor:
                 # Fallback: case-insensitive exact name match
-                vendor = Vendor.objects.filter(
-                    name__iexact=invoice.raw_vendor_name.strip(), is_active=True
-                ).first()
+                vendor = vendor_qs.filter(name__iexact=invoice.raw_vendor_name.strip()).first()
             if not vendor:
-                alias = VendorAliasMapping.objects.filter(
+                alias_qs = VendorAliasMapping.objects.filter(
                     normalized_alias=norm, is_active=True
-                ).select_related("vendor").first()
+                ).select_related("vendor")
+                if getattr(invoice, "tenant_id", None) is not None and hasattr(Vendor, "tenant_id"):
+                    alias_qs = alias_qs.filter(vendor__tenant_id=invoice.tenant_id)
+                alias = alias_qs.first()
                 if alias and alias.vendor:
                     vendor = alias.vendor
+            if not vendor and fuzzy_threshold > 0:
+                best_vendor = None
+                best_score = 0.0
+                for cand in vendor_qs.values_list("pk", "name", "normalized_name")[:300]:
+                    cand_pk, cand_name, cand_norm = cand
+                    score = SequenceMatcher(None, norm, cand_norm or normalize_string(cand_name)).ratio()
+                    if score > best_score:
+                        best_score = score
+                        best_vendor = cand_pk
+                if best_vendor and best_score >= fuzzy_threshold:
+                    vendor = vendor_qs.filter(pk=best_vendor).first()
             if vendor:
                 invoice.vendor = vendor
                 logger.info(
@@ -698,6 +779,22 @@ class ExtractionApprovalService:
                 "Vendor re-resolution failed at approval for invoice %s: %s",
                 invoice.pk, exc,
             )
+
+    @staticmethod
+    def _get_runtime_settings_for_invoice(invoice: Invoice):
+        """Return tenant-scoped runtime settings for an invoice."""
+        try:
+            from apps.extraction_core.services.runtime_settings_service import RuntimeSettingsService
+
+            return RuntimeSettingsService.get_active_settings(
+                tenant=getattr(invoice, "tenant", None),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load runtime settings for invoice %s",
+                getattr(invoice, "pk", None),
+            )
+            return None
 
     @staticmethod
     def _build_values_snapshot(invoice: Invoice) -> dict:

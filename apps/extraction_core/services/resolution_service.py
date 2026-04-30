@@ -171,6 +171,7 @@ class JurisdictionResolutionService:
         declared_country_code: str = "",
         declared_regime_code: str = "",
         vendor_id: int | None = None,
+        tenant=None,
     ) -> ResolutionResult:
         """
         Resolve jurisdiction for a document using the 4-tier chain.
@@ -185,8 +186,8 @@ class JurisdictionResolutionService:
             ResolutionResult with the final jurisdiction, confidence,
             source tier, and any mismatch warnings.
         """
-        settings = cls._load_settings()
-        entity_profile = cls._load_entity_profile(vendor_id)
+        settings = cls._load_settings(tenant=tenant)
+        entity_profile = cls._load_entity_profile(vendor_id, tenant=tenant)
         tiers: list[str] = []
 
         # --- Tier 1: Document-level override ---
@@ -226,6 +227,13 @@ class JurisdictionResolutionService:
                 return result
 
         # --- Tier 4: Auto-detection fallback ---
+        if settings and not cls._should_run_detection(settings):
+            return ResolutionResult(
+                warning_message=(
+                    "Auto-detection is disabled by runtime settings and no "
+                    "configured jurisdiction could be resolved."
+                ),
+            )
         tiers.append("AUTO_DETECTION")
         result = cls.resolve_from_auto_detection(ocr_text=ocr_text)
         result.tiers_evaluated = tiers
@@ -420,6 +428,9 @@ class JurisdictionResolutionService:
         mode = settings.jurisdiction_mode
 
         if mode == JurisdictionMode.AUTO:
+            if not cls._should_run_detection(settings):
+                logger.info("System settings mode=AUTO but auto-detection is disabled")
+                return ResolutionResult()
             logger.debug("System settings mode=AUTO — deferring to auto-detection")
             return ResolutionResult()
 
@@ -540,6 +551,9 @@ class JurisdictionResolutionService:
         """
         if not ocr_text or not ocr_text.strip():
             return
+        if settings and not cls._should_run_detection(settings):
+            logger.info("HYBRID guardrail skipped because auto-detection is disabled")
+            return
 
         threshold = cls._get_confidence_threshold(settings)
         detection = cls._run_detection(ocr_text)
@@ -646,6 +660,7 @@ class JurisdictionResolutionService:
         should_fallback = (
             settings
             and settings.fallback_to_detection_on_schema_miss
+            and cls._should_run_detection(settings)
             and mode in (JurisdictionMode.FIXED, JurisdictionMode.HYBRID)
         )
         if should_fallback:
@@ -697,14 +712,15 @@ class JurisdictionResolutionService:
         return qs.first()
 
     @classmethod
-    def _load_settings(cls) -> ExtractionRuntimeSettings | None:
+    def _load_settings(cls, tenant=None) -> ExtractionRuntimeSettings | None:
         """Load the active system runtime settings (or None)."""
-        return ExtractionRuntimeSettings.get_active()
+        return ExtractionRuntimeSettings.get_active(tenant=tenant)
 
     @classmethod
     def _load_entity_profile(
         cls,
         vendor_id: int | None,
+        tenant=None,
     ) -> EntityExtractionProfile | None:
         """
         Load the extraction profile for a vendor, if any.
@@ -718,11 +734,21 @@ class JurisdictionResolutionService:
         if not vendor_id:
             return None
         try:
-            return EntityExtractionProfile.objects.select_related(
+            qs = EntityExtractionProfile.objects.select_related(
                 "entity",
-            ).get(entity_id=vendor_id, is_active=True)
+            ).filter(entity_id=vendor_id, is_active=True)
+            if tenant is not None:
+                qs = qs.filter(entity__tenant=tenant)
+            return qs.get()
         except EntityExtractionProfile.DoesNotExist:
             return None
+
+    @staticmethod
+    def _should_run_detection(settings: ExtractionRuntimeSettings | None) -> bool:
+        """Return whether auto-detection is enabled by runtime settings."""
+        if settings is None:
+            return True
+        return bool(getattr(settings, "enable_jurisdiction_detection", True))
 
     @staticmethod
     def _get_confidence_threshold(

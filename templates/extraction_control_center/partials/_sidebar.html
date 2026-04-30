@@ -15,7 +15,7 @@ zzz{% load rbac_tags %}
     {% has_permission "extraction.settings.view" as can_settings %}
     {% if can_settings %}
     <li>
-      <a href="{% url 'extraction_control_center:runtime_settings' %}" class="{% if request.resolver_match.url_name == 'runtime_settings' %}active{% endif %}">
+      <a href="{% url 'runtime_settings' %}" class="{% if request.resolver_match.url_name == 'runtime_settings' %}active{% endif %}">
         <i class="bi bi-gear"></i> Runtime Settings
       </a>
     </li>
