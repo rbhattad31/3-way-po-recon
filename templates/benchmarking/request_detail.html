@@ -1102,8 +1102,8 @@
                         {% endif %}
                       </td>
                       <td>
-                        {% if log.triggered_by %}
-                          {{ log.triggered_by.get_full_name|default:log.triggered_by.email|truncatechars:22 }}
+                        {% if log.actor_label %}
+                          {{ log.actor_label|truncatechars:22 }}
                         {% else %}
                           <span class="text-muted">System</span>
                         {% endif %}

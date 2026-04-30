@@ -1561,7 +1561,7 @@ def request_detail(request, pk):
         timestamp=bench_request.created_at,
         tone="primary",
         icon="bi-plus-circle-fill",
-        actor=_actor_label(bench_request.submitted_by),
+        actor=_actor_label(_safe_attr(bench_request, "submitted_by", None)),
         badge=bench_request.status,
         extra={
             "request_pk": bench_request.pk,
@@ -1601,6 +1601,8 @@ def request_detail(request, pk):
             BenchmarkRunLog.RunType.EXPORT_CSV: "CSV export downloaded",
             BenchmarkRunLog.RunType.EXPORT_PDF: "PDF export downloaded",
         }.get(_log.run_type, _log.run_type)
+        _log_actor = _actor_label(_safe_attr(_log, "triggered_by", None))
+        setattr(_log, "actor_label", _log_actor)
         _push_timeline_event(
             source="BenchmarkRunLog",
             title=_log_title,
@@ -1612,7 +1614,7 @@ def request_detail(request, pk):
             timestamp=_log.created_at,
             tone=_status_tone(_log.status),
             icon="bi-clock-history",
-            actor=_actor_label(_log.triggered_by),
+            actor=_log_actor,
             badge=_log.status,
             extra={
                 "notes": _log.notes or "",
