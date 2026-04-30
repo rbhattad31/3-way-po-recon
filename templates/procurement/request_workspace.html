@@ -478,7 +478,6 @@
               <th>Rule ID</th>
               <th>System Code</th>
               <th>Confidence</th>
-              <th>Compliance</th>
               <th>Cooling Capacity</th>
             
             </tr>
@@ -518,19 +517,6 @@
                   <span class="fw-bold text-success small">{% widthratio recommendation.confidence_score 1 100 %}%</span>
                 </div>
                 {% else %}<span class="text-muted">--</span>{% endif %}
-              </td>
-              <td>
-                {% with cs=recommendation.compliance_status %}
-                  {% if cs == "PASS" or cs == "COMPLIANT" %}
-                    <span class="badge bg-success">PASS</span>
-                  {% elif cs == "FAIL" or cs == "NON_COMPLIANT" %}
-                    <span class="badge bg-danger">FAIL</span>
-                  {% elif cs %}
-                    <span class="badge bg-warning text-dark">{{ cs }}</span>
-                  {% else %}
-                    <span class="text-muted small">Not checked</span>
-                  {% endif %}
-                {% endwith %}
               </td>
               <td class="text-dark small">
                 {% if reason_summary and reason_summary.capacity_guidance %}
