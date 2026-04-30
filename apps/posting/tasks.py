@@ -4,10 +4,28 @@ from __future__ import annotations
 import logging
 
 from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 
 from apps.core.decorators import observed_task
 
 logger = logging.getLogger(__name__)
+
+
+def _mark_direct_import_batch_failed(batch_id: int | None, error_message: str) -> None:
+    """Best-effort status update to avoid stale PENDING import batches."""
+    if not batch_id:
+        return
+
+    from apps.core.enums import ERPReferenceBatchStatus
+    from apps.posting_core.models import ERPReferenceImportBatch
+
+    batch = ERPReferenceImportBatch.objects.filter(pk=batch_id).first()
+    if not batch:
+        return
+
+    batch.status = ERPReferenceBatchStatus.FAILED
+    batch.error_summary = (error_message or "Import failed")[:500]
+    batch.save(update_fields=["status", "error_summary", "updated_at"])
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=60, acks_late=True)
@@ -167,8 +185,13 @@ def import_reference_direct_task(
         }
     except ValueError as exc:
         # Known failure (connectivity, bad config) — log as WARNING, no retry.
+        _mark_direct_import_batch_failed(batch_id, str(exc))
         logger.warning("import_reference_direct_task failed for %s (%s): %s", connector_name, batch_type, exc)
         raise
     except Exception as exc:
         logger.exception("import_reference_direct_task failed unexpectedly for %s (%s)", connector_name, batch_type)
-        raise self.retry(exc=exc)
+        try:
+            raise self.retry(exc=exc)
+        except MaxRetriesExceededError:
+            _mark_direct_import_batch_failed(batch_id, str(exc))
+            raise
