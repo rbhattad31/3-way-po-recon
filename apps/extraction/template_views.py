@@ -36,6 +36,7 @@ from apps.core.enums import (
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
+from apps.core.utils import build_case_remarks
 from apps.documents.models import DocumentUpload, Invoice, InvoiceLineItem
 from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
 from apps.extraction.services.export_mapping_agent import ExportFieldMappingAgent
@@ -169,30 +170,73 @@ def extraction_workbench(request):
     exception_map = {}  # invoice_id -> count of exceptions
     exception_details_map = {}  # invoice_id -> tooltip text of unresolved exceptions
     recon_path_map = {}  # invoice_id -> processing_path
+    review_decision_map = {}  # reconciliation_result_id -> latest decision
     if invoice_ids:
         from apps.cases.models import APCase
+        from apps.cases.models import ReviewDecision
         from apps.reconciliation.models import ReconciliationException
         
-        for c in APCase.objects.filter(invoice_id__in=invoice_ids, is_active=True).select_related("reconciliation_result"):
+        for c in APCase.objects.filter(
+            invoice_id__in=invoice_ids,
+            is_active=True,
+        ).select_related("reconciliation_result").order_by("-created_at"):
             case_map[c.invoice_id] = c
             recon_path_map[c.invoice_id] = c.processing_path or ""
+
+        result_ids_for_reviews = [
+            c.reconciliation_result_id
+            for c in case_map.values()
+            if c.reconciliation_result_id
+        ]
+        if result_ids_for_reviews:
+            for decision in (
+                ReviewDecision.objects
+                .filter(assignment__reconciliation_result_id__in=result_ids_for_reviews)
+                .select_related("assignment")
+                .order_by("assignment__reconciliation_result_id", "-decided_at")
+            ):
+                result_id = decision.assignment.reconciliation_result_id
+                if result_id and result_id not in review_decision_map:
+                    review_decision_map[result_id] = decision.decision
         
-        # Pre-load exception counts per case
+        # Prefer exceptions from the case-linked reconciliation result so the
+        # extraction workbench matches the case console counts.
         from django.db.models import Count
-        exception_counts = ReconciliationException.objects.filter(
-            result__invoice_id__in=invoice_ids,
-            resolved=False
-        ).values('result__invoice_id').annotate(count=Count('id'))
+        case_result_ids = [
+            c.reconciliation_result_id
+            for c in case_map.values()
+            if c.reconciliation_result_id
+        ]
+
+        if case_result_ids:
+            exception_counts = ReconciliationException.objects.filter(
+                result_id__in=case_result_ids,
+                resolved=False,
+            ).values('result__invoice_id').annotate(count=Count('id'))
+        else:
+            exception_counts = ReconciliationException.objects.filter(
+                result__invoice_id__in=invoice_ids,
+                resolved=False,
+            ).values('result__invoice_id').annotate(count=Count('id'))
+
         for exc_count in exception_counts:
             exception_map[exc_count['result__invoice_id']] = exc_count['count']
 
-        # Pre-load unresolved exception details for hover tooltip
-        exception_rows = ReconciliationException.objects.filter(
-            result__invoice_id__in=invoice_ids,
-            resolved=False,
-        ).order_by("result__invoice_id", "-created_at").values(
-            "result__invoice_id", "exception_type", "message"
-        )
+        # Pre-load unresolved exception details for hover tooltip.
+        if case_result_ids:
+            exception_rows = ReconciliationException.objects.filter(
+                result_id__in=case_result_ids,
+                resolved=False,
+            ).order_by("result__invoice_id", "-created_at").values(
+                "result__invoice_id", "exception_type", "message"
+            )
+        else:
+            exception_rows = ReconciliationException.objects.filter(
+                result__invoice_id__in=invoice_ids,
+                resolved=False,
+            ).order_by("result__invoice_id", "-created_at").values(
+                "result__invoice_id", "exception_type", "message"
+            )
         _detail_lists = {}
         for row in exception_rows:
             inv_id = row["result__invoice_id"]
@@ -224,6 +268,26 @@ def extraction_workbench(request):
         # Prefer deterministic confidence from invoice over LLM self-report
         if r.invoice and r.invoice.extraction_confidence is not None:
             r.confidence = r.invoice.extraction_confidence
+
+        _case = case_map.get(r.invoice_id)
+        _match_status = ""
+        if _case and getattr(_case, "reconciliation_result", None):
+            _match_status = getattr(_case.reconciliation_result, "match_status", "") or ""
+        r.closure_remark = build_case_remarks(
+            invoice_status=(getattr(getattr(r, "invoice", None), "status", "") or ""),
+            case_status=(getattr(_case, "status", "") if _case else ""),
+            match_status=_match_status,
+            unresolved_exceptions=exception_map.get(r.invoice_id, 0),
+            has_case=bool(_case),
+            policy_applied=(
+                getattr(getattr(_case, "reconciliation_result", None), "policy_applied", "")
+                if _case else ""
+            ) or "",
+            review_decision=review_decision_map.get(
+                getattr(_case, "reconciliation_result_id", None),
+                "",
+            ) if _case else "",
+        )
 
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
@@ -1022,23 +1086,56 @@ def extraction_ajax_filter(request):
 
     exc_count_map = {}
     exc_detail_map = {}
+    review_decision_map = {}
     if invoice_ids:
         from apps.reconciliation.models import ReconciliationException
+        from apps.cases.models import ReviewDecision
         from django.db.models import Count
 
-        exc_counts = ReconciliationException.objects.filter(
-            result__invoice_id__in=invoice_ids,
-            resolved=False,
-        ).values("result__invoice_id").annotate(count=Count("id"))
+        case_result_ids = [
+            c.reconciliation_result_id
+            for c in case_map.values()
+            if c.reconciliation_result_id
+        ]
+
+        if case_result_ids:
+            exc_counts = ReconciliationException.objects.filter(
+                result_id__in=case_result_ids,
+                resolved=False,
+            ).values("result__invoice_id").annotate(count=Count("id"))
+
+            for decision in (
+                ReviewDecision.objects
+                .filter(assignment__reconciliation_result_id__in=case_result_ids)
+                .select_related("assignment")
+                .order_by("assignment__reconciliation_result_id", "-decided_at")
+            ):
+                result_id = decision.assignment.reconciliation_result_id
+                if result_id and result_id not in review_decision_map:
+                    review_decision_map[result_id] = decision.decision
+        else:
+            exc_counts = ReconciliationException.objects.filter(
+                result__invoice_id__in=invoice_ids,
+                resolved=False,
+            ).values("result__invoice_id").annotate(count=Count("id"))
+
         for row in exc_counts:
             exc_count_map[row["result__invoice_id"]] = row["count"]
 
-        exc_rows = ReconciliationException.objects.filter(
-            result__invoice_id__in=invoice_ids,
-            resolved=False,
-        ).order_by("result__invoice_id", "-created_at").values(
-            "result__invoice_id", "exception_type", "message"
-        )
+        if case_result_ids:
+            exc_rows = ReconciliationException.objects.filter(
+                result_id__in=case_result_ids,
+                resolved=False,
+            ).order_by("result__invoice_id", "-created_at").values(
+                "result__invoice_id", "exception_type", "message"
+            )
+        else:
+            exc_rows = ReconciliationException.objects.filter(
+                result__invoice_id__in=invoice_ids,
+                resolved=False,
+            ).order_by("result__invoice_id", "-created_at").values(
+                "result__invoice_id", "exception_type", "message"
+            )
         _detail_lists = {}
         for row in exc_rows:
             inv_id = row.get("result__invoice_id")
@@ -1110,8 +1207,21 @@ def extraction_ajax_filter(request):
             "case_number": case.case_number if case else "",
             "case_status": case.status if case else "",
             "recon_path": case.processing_path if case else "",
+            "policy_code": (case.reconciliation_result.policy_applied if case and case.reconciliation_result else ""),
             "exception_count": exc_count_map.get(r.invoice_id, 0),
             "exception_details": exc_detail_map.get(r.invoice_id, ""),
+            "remarks": build_case_remarks(
+                invoice_status=(inv.status if inv else ""),
+                case_status=(case.status if case else ""),
+                match_status=(case.reconciliation_result.match_status if case and case.reconciliation_result else ""),
+                unresolved_exceptions=exc_count_map.get(r.invoice_id, 0),
+                has_case=bool(case),
+                policy_applied=(case.reconciliation_result.policy_applied if case and case.reconciliation_result else ""),
+                review_decision=review_decision_map.get(
+                    (case.reconciliation_result_id if case else None),
+                    "",
+                ),
+            ),
             "created_at": r.created_at.strftime("%d %b %Y %H:%M") if r.created_at else "",
         })
 

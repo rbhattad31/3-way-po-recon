@@ -3,6 +3,7 @@ import json
 
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, render
 
 from apps.core.permissions import permission_required_code
@@ -10,6 +11,52 @@ from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.core_eval.models import EvalRun, EvalFieldOutcome, EvalMetric, LearningAction, LearningSignal
 
 _VIEW_PERM = "eval.view"
+
+PIPELINE_MODULE_MAP = {
+    "Extraction": ["extraction"],
+    "Reconciliation": ["reconciliation"],
+    "Agents": ["agents"],
+}
+
+
+def _eval_pipeline_label(app_module: str, entity_type: str) -> str:
+    app = (app_module or "").lower()
+    et = (entity_type or "").lower()
+    if app == "extraction":
+        return "Extraction"
+    if app == "reconciliation":
+        return "Reconciliation"
+    if app == "agents":
+        return "Agents"
+    if app == "procurement":
+        return "Procurement"
+    if app == "benchmarking":
+        return "Benchmarking"
+    if "extraction" in et:
+        return "Extraction"
+    if "reconciliation" in et:
+        return "Reconciliation"
+    return app_module or "Unknown"
+
+
+def _outcome_note(run: EvalRun) -> str:
+    field_outcome_count = getattr(run, "field_outcome_count", None)
+    if field_outcome_count is None:
+        # Detail view uses a plain EvalRun instance (no annotation).
+        try:
+            field_outcome_count = run.field_outcomes.count()
+        except Exception:
+            field_outcome_count = 0
+
+    if field_outcome_count:
+        return ""
+    if run.status != EvalRun.Status.COMPLETED:
+        return "Run not completed yet"
+    if (run.app_module or "").lower() == "reconciliation":
+        return "Reconciliation eval currently tracks metrics/signals; field outcomes may be empty"
+    if (run.entity_type or "") != "ExtractionResult":
+        return "No per-field outcome mapping for this entity type"
+    return "No field outcomes captured for this run"
 
 
 # ---------------------------------------------------------------------------
@@ -20,14 +67,31 @@ _VIEW_PERM = "eval.view"
 def eval_run_list(request):
     """Browsable list of evaluation runs with filtering."""
     tenant = require_tenant(request)
-    qs = EvalRun.objects.order_by("-created_at")
+    qs = EvalRun.objects.order_by("-created_at").annotate(
+        field_outcome_count=Count("field_outcomes", distinct=True),
+        baseline_outcome_count=Count(
+            "field_outcomes",
+            filter=Q(field_outcomes__detail_json__source="reconciliation_baseline"),
+            distinct=True,
+        ),
+        reviewer_correction_count=Count(
+            "field_outcomes",
+            filter=Q(field_outcomes__detail_json__source="reviewer_correction"),
+            distinct=True,
+        ),
+        metric_count=Count("metrics", distinct=True),
+    )
     if tenant is not None:
         qs = qs.filter(tenant=tenant)
 
     # Filters
+    pipeline = request.GET.get("pipeline", "").strip()
     app_module = request.GET.get("app_module", "").strip()
     status = request.GET.get("status", "").strip()
     entity_type = request.GET.get("entity_type", "").strip()
+
+    if pipeline in PIPELINE_MODULE_MAP:
+        qs = qs.filter(app_module__in=PIPELINE_MODULE_MAP[pipeline])
 
     if app_module:
         qs = qs.filter(app_module=app_module)
@@ -38,6 +102,14 @@ def eval_run_list(request):
 
     paginator = Paginator(qs, 50)
     page_obj = paginator.get_page(request.GET.get("page"))
+
+    # Row-level UX annotations for clarity in list view.
+    for run in page_obj.object_list:
+        run.pipeline_label = _eval_pipeline_label(run.app_module, run.entity_type)
+        run.outcome_note = _outcome_note(run)
+        run.has_outcomes = bool(getattr(run, "field_outcome_count", 0))
+        run.has_baseline_outcomes = bool(getattr(run, "baseline_outcome_count", 0))
+        run.has_reviewer_corrections = bool(getattr(run, "reviewer_correction_count", 0))
 
     # Distinct values for filter dropdowns
     dropdown_base = EvalRun.objects.all()
@@ -66,9 +138,11 @@ def eval_run_list(request):
 
     return render(request, "core_eval/eval_run_list.html", {
         "page_obj": page_obj,
+        "pipeline_options": list(PIPELINE_MODULE_MAP.keys()),
         "app_modules": app_modules,
         "statuses": statuses,
         "entity_types": entity_types,
+        "current_pipeline": pipeline,
         "current_app_module": app_module,
         "current_status": status,
         "current_entity_type": entity_type,
@@ -130,6 +204,8 @@ def eval_run_detail(request, pk):
         "incorrect_count": incorrect_count,
         "missing_count": missing_count,
         "run_confidence": run_confidence,
+        "pipeline_label": _eval_pipeline_label(run.app_module, run.entity_type),
+        "empty_outcome_note": _outcome_note(run),
     })
 
 

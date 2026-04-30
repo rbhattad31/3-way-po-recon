@@ -20,10 +20,21 @@
   <h4 class="mb-0"><i class="bi bi-clipboard-data me-2"></i>Eval Runs</h4>
   <div class="d-flex align-items-center gap-2">
     <span class="text-muted">{{ page_obj.paginator.count }} run{{ page_obj.paginator.count|pluralize }}</span>
-    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel" aria-expanded="{% if current_app_module or current_status or current_entity_type %}true{% else %}false{% endif %}">
-      <i class="bi bi-funnel me-1"></i>Filters{% if current_app_module or current_status or current_entity_type %} <span class="badge bg-primary ms-1">active</span>{% endif %}
+    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel" aria-expanded="{% if current_pipeline or current_app_module or current_status or current_entity_type %}true{% else %}false{% endif %}">
+      <i class="bi bi-funnel me-1"></i>Filters{% if current_pipeline or current_app_module or current_status or current_entity_type %} <span class="badge bg-primary ms-1">active</span>{% endif %}
     </button>
   </div>
+</div>
+
+{# -- One-click Pipeline Switch -- #}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <span class="text-muted small">Pipeline:</span>
+  <a href="{% url 'core_eval:eval_run_list' %}{% if current_status or current_entity_type or current_app_module %}?{% if current_app_module %}app_module={{ current_app_module|urlencode }}&{% endif %}{% if current_status %}status={{ current_status|urlencode }}&{% endif %}{% if current_entity_type %}entity_type={{ current_entity_type|urlencode }}{% endif %}{% endif %}"
+     class="btn btn-sm {% if not current_pipeline %}btn-primary{% else %}btn-outline-primary{% endif %}">All</a>
+  {% for p in pipeline_options %}
+  <a href="{% url 'core_eval:eval_run_list' %}?pipeline={{ p|urlencode }}{% if current_status %}&status={{ current_status|urlencode }}{% endif %}{% if current_entity_type %}&entity_type={{ current_entity_type|urlencode }}{% endif %}"
+     class="btn btn-sm {% if current_pipeline == p %}btn-primary{% else %}btn-outline-primary{% endif %}">{{ p }}</a>
+  {% endfor %}
 </div>
 
 {# -- KPI Cards -- #}
@@ -49,10 +60,19 @@
 </div>
 
 {# -- Collapsible Filters -- #}
-<div class="collapse {% if current_app_module or current_status or current_entity_type %}show{% endif %}" id="filterPanel">
+<div class="collapse {% if current_pipeline or current_app_module or current_status or current_entity_type %}show{% endif %}" id="filterPanel">
   <div class="ap-card mb-3">
     <div class="ap-card-body py-2 px-3">
       <form method="get" class="row g-2 align-items-end">
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Pipeline</label>
+          <select name="pipeline" class="form-select form-select-sm">
+            <option value="">All Pipelines</option>
+            {% for p in pipeline_options %}
+            <option value="{{ p }}" {% if p == current_pipeline %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+          </select>
+        </div>
         <div class="col-lg-3 col-md-4">
           <label class="form-label form-label-sm mb-0">Module</label>
           <select name="app_module" class="form-select form-select-sm">
@@ -96,8 +116,10 @@
       <thead>
         <tr>
           <th>ID</th>
-          <th>Module</th>
+          <th>Pipeline</th>
+          <th>Source</th>
           <th>Entity</th>
+          <th>Field Outcomes</th>
           <th>Status</th>
           <th>Duration</th>
           <th style="width:140px">Created</th>
@@ -107,11 +129,52 @@
         {% for run in page_obj %}
         <tr>
           <td><a href="{% url 'core_eval:eval_run_detail' run.pk %}">#{{ run.pk }}</a></td>
-          <td><span class="ap-badge ap-badge-info">{{ run.app_module }}</span></td>
+          <td>
+            <span class="ap-badge ap-badge-info">{{ run.pipeline_label }}</span>
+          </td>
+          <td>
+            <small class="text-muted">{{ run.app_module }}</small>
+          </td>
           <td>
             <span class="text-muted small">{{ run.entity_type }}</span>
             <span class="text-muted">#{{ run.entity_id }}</span>
             {% if run.run_key %}<br><small class="text-muted font-monospace">{{ run.run_key|truncatechars:20 }}</small>{% endif %}
+          </td>
+          <td>
+            {% if run.field_outcome_count %}
+              <span class="badge bg-success-subtle text-success border me-1"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Total field outcomes on this eval run">
+                {{ run.field_outcome_count }}
+              </span>
+              {% if run.has_baseline_outcomes %}
+                <span class="badge bg-info-subtle text-info border me-1"
+                      data-bs-toggle="tooltip"
+                      data-bs-placement="top"
+                      title="Baseline outcomes auto-created from reconciliation predictions and actuals for key fields (match_status, route, auto_close)">
+                  Baseline {{ run.baseline_outcome_count }}
+                </span>
+              {% endif %}
+              {% if run.has_reviewer_corrections %}
+                <span class="badge bg-warning-subtle text-warning border"
+                      data-bs-toggle="tooltip"
+                      data-bs-placement="top"
+                      title="Reviewer-correction outcomes captured from manual review actions">
+                  Corrections {{ run.reviewer_correction_count }}
+                </span>
+              {% endif %}
+            {% else %}
+              <span class="badge bg-light text-muted border"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="No field outcomes recorded for this run">
+                0
+              </span>
+              {% if run.outcome_note %}
+                <div><small class="text-muted">{{ run.outcome_note }}</small></div>
+              {% endif %}
+            {% endif %}
           </td>
           <td>
             <span class="ap-badge
@@ -130,7 +193,7 @@
           <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
         </tr>
         {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-4">No eval runs found.</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">No eval runs found.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -164,6 +227,11 @@ document.getElementById('evalPagination').addEventListener('click', function(e) 
   var params = new URLSearchParams(window.location.search);
   params.set('page', link.dataset.page);
   window.location.search = params.toString();
+});
+
+var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+tooltipTriggerList.forEach(function (tooltipTriggerEl) {
+  new bootstrap.Tooltip(tooltipTriggerEl);
 });
 </script>
 {% endif %}

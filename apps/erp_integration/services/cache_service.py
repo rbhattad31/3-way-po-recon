@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_CACHE_TTL = getattr(settings, "ERP_CACHE_TTL_SECONDS", 3600)
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert nested values into JSON-serialisable primitives."""
+    return json.loads(json.dumps(value, default=str))
+
+
 class ERPCacheService:
     """TTL-based cache for ERP reference lookups.
 
@@ -74,13 +79,14 @@ class ERPCacheService:
         cache_key = ERPCacheService.build_cache_key(resolution_type, **lookup_params)
         ttl = ttl_seconds or DEFAULT_CACHE_TTL
         expires_at = timezone.now() + timedelta(seconds=ttl)
+        safe_value = _json_safe(result.value or {})
         try:
             ERPReferenceCacheRecord.objects.update_or_create(
                 cache_key=cache_key,
                 defaults={
                     "resolution_type": resolution_type,
                     "connector_name": result.connector_name,
-                    "value_json": result.value or {},
+                    "value_json": safe_value,
                     "expires_at": expires_at,
                     "source_type": result.source_type,
                 },

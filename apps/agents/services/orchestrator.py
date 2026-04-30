@@ -114,6 +114,33 @@ class AgentOrchestrator:
         self.decision_service = DecisionLogService()
         self.resolver = DeterministicResolver()
 
+    @staticmethod
+    def _enforce_po_retrieval_in_plan(result: ReconciliationResult, plan) -> None:
+        """Ensure PO_RETRIEVAL runs for PO-backed workflows when agents are scheduled.
+
+        Deterministic reconciliation already performs PO lookup, but the product
+        expectation is that PO-backed cases should also execute the PO retrieval
+        agent for traceable AI validation when the agent pipeline runs.
+        """
+        if getattr(plan, "skip_agents", False):
+            return
+
+        recon_mode = (getattr(plan, "reconciliation_mode", "") or getattr(result, "reconciliation_mode", "") or "").upper()
+        if recon_mode == "NON_PO":
+            return
+
+        agents = list(getattr(plan, "agents", []) or [])
+        if not agents:
+            return
+
+        if AgentType.PO_RETRIEVAL in agents:
+            return
+
+        # Keep deterministic system-tail ordering intact by prepending PO retrieval.
+        plan.agents = [AgentType.PO_RETRIEVAL] + agents
+        extra_note = "PO_RETRIEVAL enforced for PO-backed workflow consistency"
+        plan.reason = f"{plan.reason}; {extra_note}" if getattr(plan, "reason", "") else extra_note
+
     @observed_service("agents.orchestrator.execute", audit_event="AGENT_PIPELINE_STARTED", entity_type="ReconciliationResult")
     @transaction.atomic
     def execute(self, result: ReconciliationResult, request_user=None, tenant=None) -> OrchestrationResult:
@@ -243,6 +270,7 @@ class AgentOrchestrator:
 
         # 1. Build the plan
         plan = self.policy.plan(result)
+        self._enforce_po_retrieval_in_plan(result, plan)
         orch_result.plan_source = plan.plan_source
         orch_result.plan_confidence = plan.plan_confidence
 

@@ -9,8 +9,11 @@ for this invoice?"
 Where:
 - cumulative_received_qty: total GRN-received for the PO line (from GRNSummary)
 - previously_consumed_qty: sum of qty_invoice on prior ReconciliationResultLine
-  records that matched the same po_line and belong to a counted reconciliation
-  result (MATCHED / PARTIAL_MATCH / REQUIRES_REVIEW).
+  records that matched the same po_line and belong to the LATEST counted
+  reconciliation result per invoice (MATCHED / PARTIAL_MATCH / REQUIRES_REVIEW).
+  Only the latest result per invoice is counted to prevent rerun double-counting:
+  when the same invoice is re-reconciled N times, only the most-recent run
+  represents the current consumption state.
 """
 from __future__ import annotations
 
@@ -19,7 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from django.db.models import Sum
+from django.db.models import Max, Sum
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +65,8 @@ class ReceiptAvailabilityService:
     Combines:
     - GRN-received quantities (from ``GRNSummary.total_received_by_po_line``)
     - Prior consumption (from ``ReconciliationResultLine`` rows that paired
-      against the same ``po_line`` in reconciliations with counted statuses)
+      against the same ``po_line`` in the latest counted reconciliation result
+      per invoice -- reruns of the same invoice are deduplicated)
     """
 
     @staticmethod
@@ -86,25 +90,40 @@ class ReceiptAvailabilityService:
         Returns:
             ReceiptAvailability with an entry per PO line in the received map.
         """
-        from apps.reconciliation.models import ReconciliationResultLine
+        from apps.reconciliation.models import ReconciliationResult, ReconciliationResultLine
 
         po_line_ids = list(total_received_by_po_line.keys())
         if not po_line_ids:
             return ReceiptAvailability()
 
-        # Query prior consumption: sum of qty_invoice on result lines that
-        # are paired to the same po_line, in results with counted statuses,
-        # belonging to the same PO.
+        # Determine the latest ReconciliationResult per invoice for this PO
+        # in a counted status.  When the same invoice is re-reconciled multiple
+        # times (reruns), each run creates a new ReconciliationResult row.  We
+        # must count only ONE result per invoice -- the most recent one --
+        # otherwise every rerun inflates "prior consumed" by the full invoice qty.
+        latest_per_invoice_qs = (
+            ReconciliationResult.objects
+            .filter(
+                purchase_order_id=po_id,
+                match_status__in=_COUNTED_MATCH_STATUSES,
+            )
+            .values("invoice_id")
+            .annotate(latest_id=Max("id"))
+            .values("latest_id")
+        )
+        if exclude_result_id is not None:
+            latest_per_invoice_qs = latest_per_invoice_qs.exclude(
+                latest_id=exclude_result_id
+            )
+
+        # Query prior consumption using only the latest result per invoice.
         prior_qs = (
             ReconciliationResultLine.objects
             .filter(
                 po_line_id__in=po_line_ids,
-                result__purchase_order_id=po_id,
-                result__match_status__in=_COUNTED_MATCH_STATUSES,
+                result_id__in=latest_per_invoice_qs,
             )
         )
-        if exclude_result_id is not None:
-            prior_qs = prior_qs.exclude(result_id=exclude_result_id)
 
         consumed_agg = (
             prior_qs

@@ -156,6 +156,76 @@ def within_tolerance(a: Decimal, b: Decimal, tolerance_pct: float) -> bool:
     return pct_difference(a, b) <= Decimal(str(tolerance_pct))
 
 
+def build_case_remarks(
+    *,
+    invoice_status: str = "",
+    case_status: str = "",
+    match_status: str = "",
+    unresolved_exceptions: int = 0,
+    has_case: bool = False,
+    policy_applied: str = "",
+    review_decision: str = "",
+) -> str:
+    """Return a concise, user-facing remark for case/extraction list views."""
+    invoice_status = (invoice_status or "").upper()
+    case_status = (case_status or "").upper()
+    match_status = (match_status or "").upper()
+    policy_applied = (policy_applied or "").strip()
+    review_decision = (review_decision or "").upper()
+    unresolved_exceptions = max(0, int(unresolved_exceptions or 0))
+
+    if not has_case:
+        if invoice_status == "PENDING_APPROVAL":
+            return "Pending extraction approval before reconciliation."
+        if invoice_status in ("UPLOADED", "EXTRACTION_IN_PROGRESS", "EXTRACTED", "VALIDATED"):
+            return "Extraction completed; waiting for approval/reconciliation trigger."
+        if invoice_status == "READY_FOR_RECON":
+            return "Ready for reconciliation; case orchestration pending."
+        if invoice_status == "RECONCILED":
+            return "Reconciled; case linkage/closure record pending sync."
+        return "Awaiting next pipeline step."
+
+    if case_status == "CLOSED":
+        if unresolved_exceptions > 0:
+            suffix = "s" if unresolved_exceptions != 1 else ""
+            detail_parts = []
+            if policy_applied:
+                detail_parts.append(f"policy={policy_applied}")
+            if review_decision:
+                detail_parts.append(f"review={review_decision}")
+            detail = ""
+            if detail_parts:
+                detail = " (" + "; ".join(detail_parts) + ")"
+
+            return (
+                f"Closed with {unresolved_exceptions} unresolved exception{suffix}; "
+                f"closed by policy/review outcome{detail}."
+            )
+        if match_status == "MATCHED":
+            return "Closed after matched reconciliation."
+        if match_status in ("PARTIAL_MATCH", "UNMATCHED", "REQUIRES_REVIEW"):
+            return f"Closed after review decision ({match_status})."
+        return "Closed after workflow completion."
+
+    if case_status == "PENDING_EXTRACTION_APPROVAL":
+        return "Open: waiting for extraction approval to continue."
+    if case_status in ("READY_FOR_REVIEW", "IN_REVIEW", "READY_FOR_APPROVAL", "APPROVAL_IN_PROGRESS"):
+        return "Open: waiting for human review decision."
+    if case_status == "ESCALATED":
+        return "Open: escalated and awaiting senior reviewer action."
+    if case_status in ("FAILED", "REJECTED"):
+        return "Open: failed/rejected stage requires reprocess or manual action."
+
+    if unresolved_exceptions > 0:
+        suffix = "s" if unresolved_exceptions != 1 else ""
+        return f"Open: {unresolved_exceptions} unresolved exception{suffix} to resolve before closure."
+
+    if case_status:
+        return f"Open: pending {case_status.replace('_', ' ').lower()} stage completion."
+
+    return "Open: pending remaining workflow stages."
+
+
 # ---------------------------------------------------------------------------
 # Celery helpers — Windows/no-Redis fallback
 # ---------------------------------------------------------------------------

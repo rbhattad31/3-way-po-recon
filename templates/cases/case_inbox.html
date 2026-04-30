@@ -294,6 +294,7 @@
           <th>Amount</th>
           <th>Assigned</th>
           <th>Age</th>
+          <th>Remarks</th>
           <th></th>
         </tr>
       </thead>
@@ -395,6 +396,19 @@
             {% endif %}
           </td>
           <td><small class="text-muted">{{ case.created_at|timesince }}</small></td>
+          <td style="max-width:260px">
+            {% if case.reconciliation_result and case.reconciliation_result.policy_applied %}
+            <a class="badge bg-primary text-white text-decoration-none mb-1"
+               href="{% url 'reconciliation:recon_settings' %}?policy_code={{ case.reconciliation_result.policy_applied|urlencode }}"
+               title="Open policy {{ case.reconciliation_result.policy_applied }}">
+              <i class="bi bi-box-arrow-up-right me-1"></i>{{ case.reconciliation_result.policy_applied }}
+            </a>
+            {% endif %}
+            <br>
+            <small class="text-muted d-inline-block text-truncate"
+                   style="max-width:240px;white-space:nowrap"
+                   title="{{ case.closure_remark }}">{{ case.closure_remark }}</small>
+          </td>
           <td>
             <div class="d-flex gap-1">
             <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Investigate"
@@ -420,7 +434,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="12">
+          <td colspan="13">
             <div class="ap-empty-state">
               <i class="bi bi-inbox"></i>
               <div class="ap-empty-state-label">No cases found matching your filters</div>

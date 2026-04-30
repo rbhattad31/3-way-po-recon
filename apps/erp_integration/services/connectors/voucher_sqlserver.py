@@ -103,10 +103,11 @@ DEFAULT_VOUCHER_QUERIES: Dict[str, str] = {
         "ORDER BY th.[Date] DESC"
     ),
     "grn_lookup": (
-        "SELECT TOP 1 "
+        "SELECT "
         "  em.GRNNO AS grn_number, "
         "  em.GRNDATE AS receipt_date, "
         "  em.POrderNum AS po_number, "
+        "  em.POrderLineNum AS po_line_number, "
         "  em.POrderDate AS po_date, "
         "  em.Suppcode AS supplier_code, "
         "  em.SuppName AS supplier_name, "
@@ -117,7 +118,9 @@ DEFAULT_VOUCHER_QUERIES: Dict[str, str] = {
         "  em.GRNVALUE AS grn_value, "
         "  em.CURRENCYCODE AS currency "
         "FROM EFIMRDetailsTable em "
-        "WHERE CAST(em.POrderNum AS varchar(60)) = ? "
+        "LEFT JOIN Transaction_Header_Table th "
+        "  ON th.VoucherSeries LIKE 'App PO%' AND th.VoucherNo = em.POrderNum "
+        "WHERE (CAST(em.POrderNum AS varchar(60)) = ? OR th.PartyRefDoc = ?) "
         "  AND (? IS NULL OR em.GRNNO = ?) "
         "ORDER BY em.GRNDATE DESC"
     ),
@@ -274,4 +277,14 @@ class VoucherSQLServerERPConnector(SQLServerERPConnector):
             "po_lookup",
             [po_number, po_number, vendor_name, vendor_name],
             "po",
+        )
+
+    def lookup_grn(
+        self, po_number: str = "", grn_number: str = "", **kw
+    ):
+        gn = grn_number or None
+        return self._do_query(
+            "grn_lookup",
+            [po_number, po_number, gn, gn],
+            "grn",
         )

@@ -433,6 +433,11 @@ class ExceptionBuilderService:
                 decision.status == "MATCHED"
                 and decision.confidence_band_val in ("LOW", "MODERATE")
             ):
+                _reason = self._explain_low_confidence(decision)
+                _candidate = (
+                    decision.candidate_scores[0]
+                    if decision.candidate_scores else None
+                )
                 excs.append(self._make(
                     result=result,
                     result_line=rl,
@@ -440,7 +445,7 @@ class ExceptionBuilderService:
                     severity=ExceptionSeverity.LOW,
                     message=(
                         f"Line {ln}: matched with {decision.confidence_band_val} confidence "
-                        f"(score {decision.total_score:.2f})"
+                        f"(score {decision.total_score:.2f}). Reason: {_reason}"
                     ),
                     details={
                         "line_number": ln,
@@ -448,10 +453,88 @@ class ExceptionBuilderService:
                         "confidence_band": decision.confidence_band_val,
                         "match_method": decision.match_method,
                         "matched_signals": decision.matched_signals,
+                        "rejected_signals": decision.rejected_signals,
+                        "decision_notes": (
+                            _candidate.decision_notes if _candidate else []
+                        ),
+                        "matched_tokens": (
+                            _candidate.matched_tokens if _candidate else []
+                        ),
+                        "token_overlap_pct": (
+                            round(_candidate.token_similarity_raw * 100)
+                            if _candidate else None
+                        ),
+                        "fuzzy_similarity_pct": (
+                            round(_candidate.fuzzy_similarity_raw * 100)
+                            if _candidate else None
+                        ),
                     },
                 ))
 
         return excs
+
+    # ------------------------------------------------------------------
+    # Line-match confidence explanation helper
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _explain_low_confidence(decision) -> str:
+        """Return a plain-English reason string for why confidence is MODERATE/LOW.
+
+        Uses signal values embedded in the matched_signals list (e.g.
+        'token_overlap_0.35') and decision_notes from the candidate scores.
+        """
+        reasons: List[str] = []
+
+        # Pull decision_notes from top candidate (most actionable)
+        notes = []
+        if decision.candidate_scores:
+            notes = decision.candidate_scores[0].decision_notes or []
+        for note in notes:
+            reasons.append(note)
+
+        # Parse key signal values for human-readable summary
+        sig_map: dict = {}
+        for sig in (decision.matched_signals or []):
+            if "_" in sig:
+                parts = sig.rsplit("_", 1)
+                try:
+                    sig_map[parts[0]] = float(parts[1])
+                except (ValueError, IndexError):
+                    pass
+
+        token_overlap = sig_map.get("token_overlap")
+        if token_overlap is not None and token_overlap < 0.60:
+            pct = int(round(token_overlap * 100))
+            reasons.append(f"description token overlap only {pct}% (low text similarity)")
+
+        # Warn when UOM, category, or service/stock info is absent on one side
+        missing_fields = []
+        for sig in (decision.matched_signals or []):
+            if "uom_one_side_missing" in sig:
+                missing_fields.append("unit-of-measure")
+            elif "category_one_side_missing" in sig:
+                missing_fields.append("item category")
+        if missing_fields:
+            reasons.append(
+                f"{', '.join(missing_fields)} missing on one side (partial credit only)"
+            )
+
+        # Surface any rejected signals
+        for sig in (decision.rejected_signals or []):
+            if "qty" in sig:
+                reasons.append("quantity mismatch between invoice and PO line")
+            elif "price" in sig:
+                reasons.append("unit price mismatch between invoice and PO line")
+            elif "description" in sig:
+                reasons.append("description contradicts PO line")
+
+        if not reasons:
+            reasons.append(
+                f"score {decision.total_score:.2f} below the high-confidence threshold "
+                f"({decision.confidence_band_val})"
+            )
+
+        return "; ".join(reasons)
 
     # ------------------------------------------------------------------
     # GRN exceptions

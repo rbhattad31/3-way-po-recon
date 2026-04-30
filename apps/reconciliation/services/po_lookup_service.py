@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
+
 from apps.core.utils import normalize_po_number, normalize_string, within_tolerance
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.erp_integration.enums import ERPSourceType
@@ -64,7 +66,16 @@ class POLookupService:
     """
 
     def __init__(self, erp_service: Optional[ERPResolutionService] = None):
-        self._erp = erp_service or ERPResolutionService.with_default_connector()
+        if erp_service is not None:
+            self._erp = erp_service
+        else:
+            use_mirror_primary = getattr(settings, "ERP_RECON_USE_MIRROR_AS_PRIMARY", True)
+            if use_mirror_primary:
+                # Reconciliation path should not block on live ERP when mirror/reference
+                # data exists; run cache + DB mirror/fallback only.
+                self._erp = ERPResolutionService(connector=None)
+            else:
+                self._erp = ERPResolutionService.with_default_connector()
 
     def lookup(self, invoice: Invoice, skip_vendor_amount: bool = False,
                lf_parent_span=None) -> POLookupResult:

@@ -1748,10 +1748,7 @@ def agent_runs_list(request):
         "parent_run__agent_definition",
     ).order_by("-created_at")
     if tenant is not None:
-        # Include runs created with NULL tenant (e.g. extraction pipeline runs
-        # that ran before tenant context was fully established) alongside
-        # properly-scoped runs.  This mirrors the filter used in case_agent_view.
-        base_qs = base_qs.filter(_Q(tenant=tenant) | _Q(tenant__isnull=True))
+        base_qs = base_qs.filter(tenant=tenant)
 
     qs = base_qs
 

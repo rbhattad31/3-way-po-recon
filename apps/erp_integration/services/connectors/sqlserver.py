@@ -24,6 +24,42 @@ from apps.erp_integration.services.secrets_resolver import resolve_secret
 logger = logging.getLogger(__name__)
 
 
+_TRANSIENT_SQL_ERROR_CODES = {
+    "40613",  # Database not currently available (Azure SQL)
+    "40197",  # Service encountered an error processing request
+    "40501",  # Service busy / throttled
+    "49918",  # Not enough resources to process request
+    "49919",  # Too many create/update operations in progress
+    "49920",  # Too many operations in progress for subscription
+    "HYT00",  # Timeout expired
+    "08001",  # Client unable to establish connection
+}
+
+
+def _is_transient_sql_error(exc: Exception) -> bool:
+    """Best-effort transient SQL error detection.
+
+    Works for pyodbc tuple-shaped messages and plain string messages.
+    """
+    msg = str(exc or "")
+    if not msg:
+        return False
+
+    if any(f"({code})" in msg for code in _TRANSIENT_SQL_ERROR_CODES):
+        return True
+
+    lowered = msg.lower()
+    transient_markers = (
+        "not currently available",
+        "retry the connection later",
+        "service is currently busy",
+        "timeout expired",
+        "temporarily unavailable",
+        "connection timeout",
+    )
+    return any(marker in lowered for marker in transient_markers)
+
+
 # ============================================================================
 # Default SQL queries -- one per resolution type.
 #
@@ -114,6 +150,8 @@ class SQLServerERPConnector(BaseERPConnector):
         user_queries = meta.get("queries") or {}
         self._queries: Dict[str, str] = {**DEFAULT_QUERIES, **user_queries}
         self._query_timeout: int = meta.get("query_timeout", 30)
+        self._retry_attempts: int = int(meta.get("retry_attempts", 2) or 2)
+        self._retry_backoff_seconds: float = float(meta.get("retry_backoff_seconds", 0.5) or 0.5)
 
     # ------------------------------------------------------------------
     # Connection management
@@ -411,57 +449,88 @@ class SQLServerERPConnector(BaseERPConnector):
             )
 
         start = time.time()
-        try:
-            conn = self._connect()
+        max_attempts = max(1, self._retry_attempts + 1)
+
+        for attempt in range(1, max_attempts + 1):
             try:
-                cursor = conn.cursor()
-                cursor.execute(query, params)
-                rows = _rows_to_dicts(cursor)
-                elapsed = int((time.time() - start) * 1000)
+                conn = self._connect()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(query, params)
+                    rows = _rows_to_dicts(cursor)
+                    elapsed = int((time.time() - start) * 1000)
 
-                if rows:
+                    if rows:
+                        return ERPResolutionResult(
+                            resolved=True,
+                            value={"results": rows, **rows[0]},
+                            source_type=ERPSourceType.API,
+                            confidence=1.0,
+                            connector_name=self.connector_name,
+                            reason=f"SQL {label} lookup found {len(rows)} row(s)",
+                            metadata={
+                                "duration_ms": elapsed,
+                                "row_count": len(rows),
+                                "attempt": attempt,
+                            },
+                        )
+
                     return ERPResolutionResult(
-                        resolved=True,
-                        value={"results": rows, **rows[0]},
+                        resolved=False,
                         source_type=ERPSourceType.API,
-                        confidence=1.0,
                         connector_name=self.connector_name,
-                        reason=f"SQL {label} lookup found {len(rows)} row(s)",
-                        metadata={
-                            "duration_ms": elapsed,
-                            "row_count": len(rows),
-                        },
+                        reason=f"SQL {label} lookup returned no rows",
+                        metadata={"duration_ms": elapsed, "row_count": 0, "attempt": attempt},
                     )
+                finally:
+                    conn.close()
 
+            except ImportError:
+                logger.error("pyodbc is not installed -- cannot use SQLServerERPConnector")
                 return ERPResolutionResult(
                     resolved=False,
-                    source_type=ERPSourceType.API,
+                    source_type=ERPSourceType.NONE,
                     connector_name=self.connector_name,
-                    reason=f"SQL {label} lookup returned no rows",
-                    metadata={"duration_ms": elapsed, "row_count": 0},
+                    reason="pyodbc is not installed",
                 )
-            finally:
-                conn.close()
 
-        except ImportError:
-            logger.error("pyodbc is not installed -- cannot use SQLServerERPConnector")
-            return ERPResolutionResult(
-                resolved=False,
-                source_type=ERPSourceType.NONE,
-                connector_name=self.connector_name,
-                reason="pyodbc is not installed",
-            )
+            except Exception as exc:
+                is_transient = _is_transient_sql_error(exc)
+                if is_transient and attempt < max_attempts:
+                    backoff = max(0.1, self._retry_backoff_seconds * attempt)
+                    logger.warning(
+                        "Transient SQL Server error for %s lookup (attempt %s/%s): %s -- retrying in %.1fs",
+                        label,
+                        attempt,
+                        max_attempts,
+                        str(exc)[:200],
+                        backoff,
+                    )
+                    time.sleep(backoff)
+                    continue
 
-        except Exception as exc:
-            elapsed = int((time.time() - start) * 1000)
-            logger.exception("SQL Server error for %s lookup", label)
-            return ERPResolutionResult(
-                resolved=False,
-                source_type=ERPSourceType.NONE,
-                connector_name=self.connector_name,
-                reason=f"SQL error: {type(exc).__name__}: {str(exc)[:200]}",
-                metadata={"duration_ms": elapsed, "error": str(exc)[:200]},
-            )
+                elapsed = int((time.time() - start) * 1000)
+                if is_transient:
+                    logger.warning(
+                        "SQL Server transient error persisted for %s lookup after %s attempt(s): %s",
+                        label,
+                        attempt,
+                        str(exc)[:200],
+                    )
+                else:
+                    logger.exception("SQL Server error for %s lookup", label)
+                return ERPResolutionResult(
+                    resolved=False,
+                    source_type=ERPSourceType.NONE,
+                    connector_name=self.connector_name,
+                    reason=f"SQL error: {type(exc).__name__}: {str(exc)[:200]}",
+                    metadata={
+                        "duration_ms": elapsed,
+                        "error": str(exc)[:200],
+                        "attempts": attempt,
+                        "transient": is_transient,
+                    },
+                )
 
     def execute_bulk_query(
         self, query_key: str, params: list = None

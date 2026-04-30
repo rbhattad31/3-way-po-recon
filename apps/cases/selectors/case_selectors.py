@@ -14,6 +14,54 @@ from apps.core.enums import CaseStatus, ProcessingPath, UserRole
 class CaseSelectors:
 
     @staticmethod
+    def stats_from_queryset(base: QuerySet) -> dict:
+        """Aggregate case statistics from a pre-scoped/pre-filtered queryset."""
+        total = base.count()
+        by_status = dict(
+            base
+            .values_list("status")
+            .annotate(count=Count("id"))
+            .values_list("status", "count")
+        )
+        by_path = dict(
+            base
+            .values_list("processing_path")
+            .annotate(count=Count("id"))
+            .values_list("processing_path", "count")
+        )
+        overdue = base.filter(
+            status__in=[CaseStatus.READY_FOR_REVIEW, CaseStatus.IN_REVIEW],
+            created_at__lt=timezone.now() - timezone.timedelta(hours=48),
+        ).count()
+
+        agent_processed = base.filter(
+            requires_human_review=False,
+        ).exclude(status=CaseStatus.NEW).count()
+        human_involved = base.filter(
+            requires_human_review=True,
+        ).count()
+
+        # In-progress: all *_IN_PROGRESS statuses + NEW (pipeline not yet complete)
+        in_progress_statuses = [
+            s for s in CaseStatus
+            if "IN_PROGRESS" in s.value or s == CaseStatus.NEW
+        ]
+        in_progress = base.filter(status__in=in_progress_statuses).count()
+
+        failed = by_status.get(CaseStatus.FAILED, 0)
+
+        return {
+            "total": total,
+            "by_status": by_status,
+            "by_path": by_path,
+            "overdue": overdue,
+            "agent_processed": agent_processed,
+            "human_involved": human_involved,
+            "in_progress": in_progress,
+            "failed": failed,
+        }
+
+    @staticmethod
     def inbox(
         processing_path: str = "",
         status: str = "",
@@ -133,51 +181,7 @@ class CaseSelectors:
         base = APCase.objects.filter(is_active=True)
         if user:
             base = CaseSelectors.scope_for_user(base, user)
-
-        total = base.count()
-        by_status = dict(
-            base
-            .values_list("status")
-            .annotate(count=Count("id"))
-            .values_list("status", "count")
-        )
-        by_path = dict(
-            base
-            .values_list("processing_path")
-            .annotate(count=Count("id"))
-            .values_list("processing_path", "count")
-        )
-        overdue = base.filter(
-            status__in=[CaseStatus.READY_FOR_REVIEW, CaseStatus.IN_REVIEW],
-            created_at__lt=timezone.now() - timezone.timedelta(hours=48),
-        ).count()
-
-        agent_processed = base.filter(
-            requires_human_review=False,
-        ).exclude(status=CaseStatus.NEW).count()
-        human_involved = base.filter(
-            requires_human_review=True,
-        ).count()
-
-        # In-progress: all *_IN_PROGRESS statuses + NEW (pipeline not yet complete)
-        in_progress_statuses = [
-            s for s in CaseStatus
-            if "IN_PROGRESS" in s.value or s == CaseStatus.NEW
-        ]
-        in_progress = base.filter(status__in=in_progress_statuses).count()
-
-        failed = by_status.get(CaseStatus.FAILED, 0)
-
-        return {
-            "total": total,
-            "by_status": by_status,
-            "by_path": by_path,
-            "overdue": overdue,
-            "agent_processed": agent_processed,
-            "human_involved": human_involved,
-            "in_progress": in_progress,
-            "failed": failed,
-        }
+        return CaseSelectors.stats_from_queryset(base)
 
     @staticmethod
     def get_with_related(case_id: int) -> APCase:

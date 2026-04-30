@@ -400,6 +400,25 @@ def recon_settings(request):
             messages.success(request, "Default config updated.")
             return redirect("reconciliation:recon_settings")
 
+        if action == "set_recon_mode":
+            mode = request.POST.get("recon_mode", "").strip()
+            valid_modes = [m for m, _ in ReconciliationMode.choices]
+            if mode not in valid_modes:
+                messages.error(request, "Invalid reconciliation mode.")
+                return redirect("reconciliation:recon_settings")
+            default_cfg = ReconciliationConfig.objects.filter(is_default=True).first()
+            if not default_cfg:
+                default_cfg = ReconciliationConfig.objects.first()
+            if default_cfg:
+                default_cfg.default_reconciliation_mode = mode
+                default_cfg.enable_mode_resolver = False
+                default_cfg.save()
+                mode_labels = {m: l for m, l in ReconciliationMode.choices}
+                messages.success(request, f"Reconciliation mode set to {mode_labels.get(mode, mode)}.")
+            else:
+                messages.error(request, "No config profile found. Please create one first.")
+            return redirect("reconciliation:recon_settings")
+
         # Create or update
         if config_id:
             config = get_object_or_404(ReconciliationConfig, pk=config_id)
@@ -426,11 +445,11 @@ def recon_settings(request):
         config.auto_close_on_match = request.POST.get("auto_close_on_match") == "on"
         config.enable_agents = request.POST.get("enable_agents") == "on"
 
-        # Mode configuration
+        # Mode configuration -- mode resolver disabled; mode set via the quick selector
         config.default_reconciliation_mode = request.POST.get(
             "default_reconciliation_mode", ReconciliationMode.THREE_WAY
         )
-        config.enable_mode_resolver = request.POST.get("enable_mode_resolver") == "on"
+        config.enable_mode_resolver = False
         config.enable_grn_for_stock_items = request.POST.get("enable_grn_for_stock_items") == "on"
         config.enable_two_way_for_services = request.POST.get("enable_two_way_for_services") == "on"
         config.ap_processor_sees_all_cases = request.POST.get("ap_processor_sees_all_cases") == "on"
@@ -440,11 +459,22 @@ def recon_settings(request):
         messages.success(request, f"Config '{config.name}' {verb}.")
         return redirect("reconciliation:recon_settings")
 
+    policy_code = request.GET.get("policy_code", "").strip()
     policies = ReconciliationPolicy.objects.filter(is_active=True).order_by("priority")
+    if policy_code:
+        policies = policies.filter(policy_code__iexact=policy_code)
+
+    default_config = configs.filter(is_default=True).first() or configs.first()
+    current_recon_mode = (
+        default_config.default_reconciliation_mode if default_config else ReconciliationMode.THREE_WAY
+    )
 
     return render(request, "reconciliation/settings.html", {
         "configs": configs,
         "is_admin": is_admin,
         "policies": policies,
+        "current_policy_code": policy_code,
         "reconciliation_mode_choices": ReconciliationMode.choices,
+        "current_recon_mode": current_recon_mode,
+        "default_config": default_config,
     })

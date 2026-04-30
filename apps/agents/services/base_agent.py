@@ -12,8 +12,10 @@ import json
 import logging
 import re
 import time
+from datetime import date, datetime, time as dt_time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from django.db.models import Q
@@ -43,6 +45,28 @@ from apps.tools.registry.tool_call_logger import ToolCallLogger
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 6  # Safety cap on tool-call loops
+
+
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-serialisable representation for model JSONField writes."""
+
+    def _default(o: Any) -> Any:
+        if isinstance(o, (datetime, date, dt_time)):
+            return o.isoformat()
+        if isinstance(o, Decimal):
+            return str(o)
+        if isinstance(o, set):
+            return list(o)
+        return str(o)
+
+    if value is None:
+        return None
+
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return json.loads(json.dumps(value, default=_default))
 
 
 @dataclass
@@ -447,7 +471,8 @@ class BaseAgent(ABC):
                         failed_tool_count += 1
                     total_tool_calls += 1
                     _called_tool_names.append(tc.name)
-                    tool_msg = json.dumps(tool_result.data if tool_result.success else {"error": tool_result.error})
+                    _tool_payload = tool_result.data if tool_result.success else {"error": tool_result.error}
+                    tool_msg = json.dumps(_json_safe(_tool_payload))
                     messages.append({"role": "tool", "content": tool_msg, "tool_call_id": tc.id, "name": tc.name})
                     self._save_message(agent_run, "tool", tool_msg, len(messages), name=tc.name)
                     self._fire_progress(
@@ -722,8 +747,8 @@ class BaseAgent(ABC):
                         agent_run=agent_run,
                         step_number=step,
                         action=f"tool_call:{tool_name}:denied",
-                        input_data=arguments,
-                        output_data={"error": result.error, "permission_denied": True},
+                        input_data=_json_safe(arguments),
+                        output_data=_json_safe({"error": result.error, "permission_denied": True}),
                         success=False,
                         tenant=agent_run.tenant,
                     )
@@ -736,6 +761,15 @@ class BaseAgent(ABC):
             # Inject tenant from AgentContext so tools scope queries.
             if hasattr(self, "_agent_context") and getattr(self._agent_context, "tenant", None):
                 arguments["tenant"] = self._agent_context.tenant
+            # Propagate reconciliation_result_id so tools can apply
+            # reconciliation-specific resolution policies (for example,
+            # mirror-only ERP reads during investigation).
+            if (
+                hasattr(self, "_agent_context")
+                and getattr(self._agent_context, "reconciliation_result", None)
+                and not arguments.get("reconciliation_result_id")
+            ):
+                arguments["reconciliation_result_id"] = self._agent_context.reconciliation_result.pk
             # Inject parent_run_id so delegation tools can link child runs.
             arguments["parent_run_id"] = agent_run.pk
             from apps.agents.plugins.plugin_router import PluginToolRouter
@@ -751,8 +785,8 @@ class BaseAgent(ABC):
             agent_run=agent_run,
             step_number=step,
             action=f"tool_call:{tool_name}",
-            input_data=arguments,
-            output_data=result.data if result.success else {"error": result.error},
+            input_data=_json_safe(arguments),
+            output_data=_json_safe(result.data if result.success else {"error": result.error}),
             success=result.success,
             duration_ms=result.duration_ms,
             tenant=agent_run.tenant,

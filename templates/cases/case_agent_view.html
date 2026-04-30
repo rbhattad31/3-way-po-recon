@@ -220,8 +220,8 @@
               <button class="nav-link" id="tab-agents" data-bs-toggle="pill"
                       data-bs-target="#panel-agents" type="button" role="tab">
                 <i class="bi bi-robot me-1"></i>Agents
-                {% if agent_runs %}
-                <span class="badge bg-info ms-1">{{ agent_runs|length }}</span>
+                {% if llm_agent_runs %}
+                <span class="badge bg-info ms-1">{{ llm_agent_runs|length }}</span>
                 {% endif %}
               </button>
             </li>
@@ -362,127 +362,160 @@
                   </div>
                   {% endif %}
 
-                  {# Line Matching Details #}
-                  {% if line_matching_details %}
+                  {% if mode_decision_analysis %}
                   <div class="cc-section mb-3">
                     <div class="cc-section-header">
-                      <i class="bi bi-diagram-2"></i> Line Matching Details
-                      <span class="badge bg-secondary ms-2">{{ line_matching_details|length }}</span>
+                      <i class="bi bi-diagram-3"></i> Mode Decision Analysis
                     </div>
-                    <div class="cc-section-body p-0">
-                      <div class="accordion" id="lineMatchingAccordion" style="font-size:.8rem">
-                        {% for line in line_matching_details %}
-                        <div class="accordion-item">
-                          <h2 class="accordion-header" id="lineHead{{ line.id }}">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#lineBody{{ line.id }}" aria-expanded="false" aria-controls="lineBody{{ line.id }}" style="padding:.5rem .75rem">
-                              <span class="me-2">
-                                {% if line.match_status == 'MATCHED' %}
-                                  <i class="bi bi-check2 text-success"></i>
-                                {% elif line.match_status == 'PARTIAL_MATCH' %}
-                                  <i class="bi bi-dash-square text-warning"></i>
-                                {% else %}
-                                  <i class="bi bi-x text-danger"></i>
-                                {% endif %}
-                              </span>
-                              <span class="fw-semibold">{{ line.invoice_description|default:"Line"|truncatechars:35 }}</span>
-                              <span class="ms-2">
-                                {% if line.match_method == 'DETERMINISTIC' %}
-                                  <span class="badge bg-info bg-opacity-10 text-info" style="font-size:.65rem">DETERMINISTIC</span>
-                                {% elif line.match_method == 'LLM_FALLBACK' %}
-                                  <span class="badge bg-primary bg-opacity-10 text-primary" style="font-size:.65rem">LLM</span>
-                                {% elif line.match_method == 'EXACT' %}
-                                  <span class="badge bg-success bg-opacity-10 text-success" style="font-size:.65rem">EXACT</span>
-                                {% endif %}
-                              </span>
-                              <span class="ms-auto me-2">
-                                <span class="cc-conf-bar" style="display:inline-block;width:50px;height:6px;margin:0 4px">
-                                  <span class="cc-conf-fill {% if line.match_confidence >= 80 %}high{% elif line.match_confidence >= 50 %}med{% else %}low{% endif %}" style="width:{% widthratio line.match_confidence 1 100 %}%"></span>
-                                </span>
-                                {{ line.match_confidence|floatformat:0 }}%
-                              </span>
-                            </button>
-                          </h2>
-                          <div id="lineBody{{ line.id }}" class="accordion-collapse collapse" aria-labelledby="lineHead{{ line.id }}" data-bs-parent="#lineMatchingAccordion">
-                            <div class="accordion-body" style="padding:.75rem">
-                              {# Line Details Header #}
-                              <div class="d-flex justify-content-between align-items-start mb-2">
-                                <div>
-                                  <div><strong>Invoice:</strong> {{ line.invoice_description|truncatechars:50|default:"--" }}</div>
-                                  <div class="text-muted" style="font-size:.75rem">Line {{ line.invoice_line_number|default:"--" }}</div>
-                                </div>
-                                <div class="text-end">
-                                  <div><strong>PO:</strong> {{ line.po_description|truncatechars:50|default:"--" }}</div>
-                                  <div class="text-muted" style="font-size:.75rem">Line {{ line.po_line_number|default:"--" }}</div>
-                                </div>
-                              </div>
+                    <div class="cc-section-body">
+                      <div class="d-flex align-items-center gap-2 flex-wrap mb-2" style="font-size:.8rem">
+                        <a class="badge bg-primary text-white text-decoration-none"
+                           href="{% url 'reconciliation:recon_settings' %}?policy_code={{ mode_decision_analysis.policy_code|urlencode }}"
+                           title="Open policy details">
+                          <i class="bi bi-box-arrow-up-right me-1"></i>{{ mode_decision_analysis.policy_code }}
+                        </a>
+                        <span class="badge bg-info bg-opacity-10 text-info">Mode: {{ mode_decision_analysis.resolved_mode }}</span>
+                        {% if mode_decision_analysis.priority is not None %}
+                        <span class="badge bg-secondary bg-opacity-10 text-secondary">Priority: {{ mode_decision_analysis.priority }}</span>
+                        {% endif %}
+                      </div>
 
-                              <hr style="margin:.5rem 0">
+                      <div class="alert alert-light border mb-2" style="font-size:.8rem">
+                        <strong>Why this mode:</strong> {{ mode_decision_analysis.resolution_reason }}
+                        <br>
+                        <small class="text-muted">{{ mode_decision_analysis.precedence_note }}</small>
+                      </div>
 
-                              {# Metadata #}
-                              <div class="mb-2 text-muted" style="font-size:.75rem">
-                                <div>
-                                  <strong>Status:</strong> 
-                                  {% if line.match_status == 'MATCHED' %}<span class="badge bg-success">Matched</span>
-                                  {% elif line.match_status == 'PARTIAL_MATCH' %}<span class="badge bg-warning text-dark">Partial</span>
-                                  {% else %}<span class="badge bg-danger">{{ line.match_status }}</span>{% endif %}
-                                  <strong class="ms-3">Confidence Band:</strong> 
-                                  {% if line.confidence_band == 'HIGH' %}<span class="badge bg-success">High</span>
-                                  {% elif line.confidence_band == 'GOOD' %}<span class="badge bg-info">Good</span>
-                                  {% elif line.confidence_band == 'MODERATE' %}<span class="badge bg-warning text-dark">Moderate</span>
-                                  {% elif line.confidence_band == 'LOW' %}<span class="badge bg-danger">Low</span>
-                                  {% else %}<span class="badge bg-secondary">{{ line.confidence_band }}</span>{% endif %}
-                                </div>
-                                {% if line.is_ambiguous %}
-                                <div class="mt-1"><i class="bi bi-exclamation-circle-fill text-warning"></i> <strong>Ambiguous:</strong> {{ line.candidate_count }} candidates considered</div>
-                                {% endif %}
-                              </div>
-
-                              <hr style="margin:.5rem 0">
-
-                              {# Signal Scores #}
-                              <div class="mb-2">
-                                <strong style="font-size:.75rem">Signal Scores:</strong>
-                                <table style="width:100%;font-size:.7rem;margin-top:.35rem">
-                                  {% for signal_key, signal_data in line.signals.items %}
-                                  <tr>
-                                    <td style="padding:.2rem .4rem">{{ signal_data.label }}</td>
-                                    <td style="padding:.2rem .4rem">
-                                      <div class="cc-conf-bar" style="display:inline-block;width:80px;height:5px;margin:0 4px">
-                                        <div class="cc-conf-fill {% if signal_data.score >= 0.8 %}high{% elif signal_data.score >= 0.5 %}med{% else %}low{% endif %}" style="width:{% widthratio signal_data.score 1 100 %}%"></div>
-                                      </div>
-                                    </td>
-                                    <td class="text-end" style="padding:.2rem .4rem">{{ signal_data.score|floatformat:2 }}</td>
-                                  </tr>
-                                  {% endfor %}
-                                </table>
-                              </div>
-
-                              {# Matched/Rejected Signals #}
-                              {% if line.matched_signals or line.rejected_signals %}
-                              <div style="font-size:.7rem">
-                                {% if line.matched_signals %}
-                                <div class="mb-1">
-                                  <strong>Matched:</strong><br>
-                                  {% for sig in line.matched_signals %}
-                                  <span class="badge bg-success bg-opacity-25 text-success me-1">{{ sig }}</span>
-                                  {% endfor %}
-                                </div>
-                                {% endif %}
-                                {% if line.rejected_signals %}
-                                <div>
-                                  <strong>Rejected:</strong><br>
-                                  {% for sig in line.rejected_signals %}
-                                  <span class="badge bg-danger bg-opacity-25 text-danger me-1">{{ sig }}</span>
-                                  {% endfor %}
-                                </div>
-                                {% endif %}
-                              </div>
-                              {% endif %}
-                            </div>
+                      <div class="row g-2">
+                        <div class="col-md-6">
+                          <div class="border rounded p-2 h-100 bg-light-subtle">
+                            <div class="fw-semibold mb-1" style="font-size:.78rem">Evaluated Invoice Attributes</div>
+                            <table class="table table-sm mb-0" style="font-size:.76rem">
+                              <tbody>
+                                {% for row in mode_decision_analysis.match_inputs %}
+                                <tr>
+                                  <td class="text-muted" style="width:45%">{{ row.label }}</td>
+                                  <td>{{ row.value }}</td>
+                                </tr>
+                                {% endfor %}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
-                        {% endfor %}
+                        <div class="col-md-6">
+                          <div class="border rounded p-2 h-100 bg-light-subtle">
+                            <div class="fw-semibold mb-1" style="font-size:.78rem">Matched Policy Criteria</div>
+                            <table class="table table-sm mb-0" style="font-size:.76rem">
+                              <tbody>
+                                {% for row in mode_decision_analysis.policy_criteria %}
+                                <tr>
+                                  <td class="text-muted" style="width:45%">{{ row.label }}</td>
+                                  <td>{{ row.value }}</td>
+                                </tr>
+                                {% endfor %}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
                       </div>
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {# Business-friendly matching explanation #}
+                  {% if matching_method_overview %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header">
+                      <i class="bi bi-magic"></i> How Matching Worked
+                      <span class="badge bg-secondary ms-2">Method Transparency</span>
+                    </div>
+                    <div class="cc-section-body">
+                      <div class="alert alert-light border mb-2" style="font-size:.8rem">
+                        <strong>Simple explanation:</strong>
+                        Each reconciliation step below shows whether the decision came from deterministic rules or AI-assisted retrieval/matching.
+                      </div>
+
+                      <div style="overflow-x:auto" class="mb-3">
+                        <table class="table table-sm table-hover mb-0" style="font-size:.78rem;min-width:760px">
+                          <thead>
+                            <tr>
+                              <th>Matching Step</th>
+                              <th>Method Used</th>
+                              <th>Result</th>
+                              <th>How It Was Decided</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {% for item in matching_method_overview %}
+                            <tr>
+                              <td class="fw-semibold">{{ item.dimension }}</td>
+                              <td>
+                                <span class="badge bg-{{ item.method_class }} bg-opacity-10 text-{{ item.method_class }}">{{ item.method_label }}</span>
+                              </td>
+                              <td>
+                                <span class="badge bg-{{ item.status_class }} bg-opacity-10 text-{{ item.status_class }}">{{ item.status_label }}</span>
+                              </td>
+                              <td>{{ item.explanation }}</td>
+                            </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {% if line_matching_details %}
+                      <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="fw-semibold" style="font-size:.8rem">Line-level detail</span>
+                        <span class="badge bg-secondary">{{ line_matching_summary.total_lines }} lines</span>
+                      </div>
+
+                      <div class="row g-2 mb-2" style="font-size:.78rem">
+                        <div class="col-md-3"><span class="badge bg-success">{{ line_matching_summary.matched_lines }}</span> Matched</div>
+                        <div class="col-md-3"><span class="badge bg-warning text-dark">{{ line_matching_summary.partial_lines }}</span> Need review</div>
+                        <div class="col-md-3"><span class="badge bg-danger">{{ line_matching_summary.unmatched_lines }}</span> Not matched</div>
+                        <div class="col-md-3"><span class="badge bg-primary">{{ line_matching_summary.ai_used_lines }}</span> AI assisted</div>
+                      </div>
+
+                      <div style="overflow-x:auto">
+                        <table class="table table-sm table-hover mb-0" style="font-size:.78rem;min-width:760px">
+                          <thead>
+                            <tr>
+                              <th>Invoice Line</th>
+                              <th>Matched PO Line</th>
+                              <th>Decision</th>
+                              <th>Method</th>
+                              <th>Confidence</th>
+                              <th>Why This Match</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {% for line in line_matching_details %}
+                            <tr>
+                              <td>{{ line.invoice_description|default:"--"|truncatechars:40 }}</td>
+                              <td>{{ line.po_description|default:"--"|truncatechars:40 }}</td>
+                              <td>
+                                {% if line.match_status == 'MATCHED' %}
+                                <span class="badge bg-success">Matched</span>
+                                {% elif line.match_status == 'PARTIAL_MATCH' %}
+                                <span class="badge bg-warning text-dark">Needs Review</span>
+                                {% else %}
+                                <span class="badge bg-danger">Not Matched</span>
+                                {% endif %}
+                              </td>
+                              <td>
+                                {% if line.match_method_label == 'AI Assisted' %}
+                                <span class="badge bg-primary bg-opacity-10 text-primary">AI Assisted</span>
+                                {% else %}
+                                <span class="badge bg-info bg-opacity-10 text-info">Rule Based</span>
+                                {% endif %}
+                              </td>
+                              <td>{{ line.match_confidence|floatformat:0 }}%</td>
+                              <td>{{ line.business_reason }}</td>
+                            </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
+                      </div>
+                      {% endif %}
                     </div>
                   </div>
                   {% endif %}
@@ -503,6 +536,27 @@
                           <tr><td class="text-muted">Priority</td><td>{{ case.get_priority_display }}</td></tr>
                           <tr><td class="text-muted">Assigned</td><td>{{ case.assigned_to.get_short_name|default:"Unassigned" }}</td></tr>
                           <tr><td class="text-muted">Created</td><td>{{ case.created_at|timesince }} ago</td></tr>
+                          <tr>
+                            <td class="text-muted">Remarks</td>
+                            <td style="white-space:normal;word-break:break-word;overflow-wrap:anywhere;max-width:420px">
+                              {{ case_closure_remark }}
+                              {% if recon_result and recon_result.policy_applied %}
+                              <div class="mt-1 small text-muted">
+                                <a class="badge bg-primary text-white text-decoration-none me-1"
+                                   href="{% url 'reconciliation:recon_settings' %}?policy_code={{ recon_result.policy_applied|urlencode }}"
+                                   title="Open reconciliation policy details for {{ recon_result.policy_applied }}">
+                                  <i class="bi bi-box-arrow-up-right me-1"></i>{{ recon_result.policy_applied }}
+                                </a>
+                                <strong>Policy explanation:</strong>
+                                {% if recon_result.mode_resolution_reason %}
+                                  {{ recon_result.mode_resolution_reason }}
+                                {% else %}
+                                  {{ recon_result.policy_applied }} is the rule code used to choose the reconciliation path and matching mode for this invoice.
+                                {% endif %}
+                              </div>
+                              {% endif %}
+                            </td>
+                          </tr>
                           {% if recon_match_status %}
                           <tr><td class="text-muted">Match</td><td>
                             {% if recon_match_status == "MATCHED" %}<span class="badge bg-success">Matched</span>
@@ -599,7 +653,7 @@
                             <span class="badge bg-secondary">Low</span>
                           {% endif %}
                         </td>
-                        <td style="font-size:.8rem">{{ exc.message|truncatechars:120 }}</td>
+                        <td style="font-size:.8rem; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{{ exc.message }}</td>
                       </tr>
                       {% endfor %}
                     </tbody>
@@ -632,7 +686,7 @@
                           {% if issue.status == "FAIL" %}<span class="badge bg-danger">Fail</span>
                           {% else %}<span class="badge bg-warning text-dark">Warning</span>{% endif %}
                         </td>
-                        <td style="font-size:.8rem">{{ issue.message|truncatechars:120 }}</td>
+                        <td style="font-size:.8rem; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{{ issue.message }}</td>
                       </tr>
                       {% endfor %}
                     </tbody>
@@ -652,13 +706,14 @@
             {# TAB 3: AGENT PIPELINE                                        #}
             <div class="tab-pane fade p-3" id="panel-agents" role="tabpanel">
 
-              {% if agent_runs %}
+              {% if llm_agent_runs or deterministic_agent_steps %}
               <div class="cc-section mb-3">
-                <div class="cc-section-header"><i class="bi bi-table me-1"></i>Agent Run Summary</div>
+                <div class="cc-section-header"><i class="bi bi-table me-1"></i>Agent Runs</div>
                 <div class="cc-section-body p-0" style="overflow-x:auto">
-                  <table class="table table-sm mb-0 cc-data-table" style="min-width:980px">
+                  <table class="table table-sm mb-0 cc-data-table" style="min-width:1100px">
                     <thead>
                       <tr>
+                        <th style="width:42px"></th>
                         <th>Agent</th>
                         <th>Type</th>
                         <th>Status</th>
@@ -667,12 +722,22 @@
                         <th>Duration</th>
                         <th>Recommendation</th>
                         <th>Started</th>
-                        <th>Detail</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {% for run in agent_runs %}
+                      {% for run in llm_agent_runs %}
                       <tr {% if run.parent_run %}class="table-light"{% endif %}>
+                        <td class="text-center align-middle">
+                          <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                                  type="button"
+                                  data-bs-toggle="collapse"
+                                  data-bs-target="#runDetail{{ run.pk }}"
+                                  aria-expanded="false"
+                                  aria-controls="runDetail{{ run.pk }}"
+                                  title="Expand run details">
+                            <i class="bi bi-chevron-down"></i>
+                          </button>
+                        </td>
                         <td class="fw-semibold">
                           {% if run.parent_run %}
                           <span class="text-muted me-1" title="Child run delegated by {{ run.parent_run.agent_definition.name|default:run.parent_run.agent_type }}" style="font-size:.8em">&#8627;</span>
@@ -717,8 +782,168 @@
                           {% endwith %}
                         </td>
                         <td>{{ run.created_at|date:"d M Y H:i" }}</td>
-                        <td>
-                          <a href="{% url 'agents:agent_run_detail' run.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.72rem">Open</a>
+                      </tr>
+                      {% endfor %}
+
+                      {% for step in deterministic_agent_steps %}
+                      <tr class="table-light">
+                        <td class="text-center align-middle text-muted">--</td>
+                        <td class="fw-semibold">{{ step.name }}</td>
+                        <td><span class="badge bg-info">{{ step.type_label }}</span></td>
+                        <td><span class="badge bg-{{ step.status_class }}">{{ step.status_label }}</span></td>
+                        <td>{% if step.confidence is not None %}{{ step.confidence }}%{% else %}--{% endif %}</td>
+                        <td>{{ step.tokens }}</td>
+                        <td>{{ step.duration }}</td>
+                        <td>{{ step.recommendation }}</td>
+                        <td>{{ step.started }}</td>
+                      </tr>
+                      {% endfor %}
+
+                      {% for run in llm_agent_runs %}
+                      <tr class="collapse" id="runDetail{{ run.pk }}">
+                        <td></td>
+                        <td colspan="8" class="p-2 bg-light-subtle">
+                          <div class="row g-2" style="font-size:.8rem">
+                            <div class="col-md-7">
+                              <div class="border rounded p-2 bg-white">
+                                <div class="fw-semibold mb-1"><i class="bi bi-lightbulb me-1"></i>Prompt And Context</div>
+                                <div class="small text-muted mb-1">Invocation reason</div>
+                                <div class="mb-2">{{ run.invocation_reason|default:"--" }}</div>
+                                <div class="small text-muted mb-1">Prompt version</div>
+                                <div class="mb-2">{{ run.prompt_version|default:"--" }}</div>
+                                <div class="small text-muted mb-1">Model</div>
+                                <div class="mb-2">{{ run.llm_model_used|default:"--" }}</div>
+                                {% if run.agent_definition and run.agent_definition.system_prompt %}
+                                <details>
+                                  <summary class="small fw-semibold" style="cursor:pointer">System prompt</summary>
+                                  <pre class="mb-0 mt-1" style="white-space:pre-wrap;max-height:180px;overflow:auto">{{ run.agent_definition.system_prompt }}</pre>
+                                </details>
+                                {% endif %}
+                              </div>
+                            </div>
+
+                            <div class="col-md-5">
+                              <div class="border rounded p-2 bg-white h-100">
+                                <div class="fw-semibold mb-1"><i class="bi bi-journal-code me-1"></i>Run Payloads</div>
+                                <details class="mb-2">
+                                  <summary class="small fw-semibold" style="cursor:pointer">Input payload</summary>
+                                  <pre class="mb-0 mt-1" style="white-space:pre-wrap;max-height:180px;overflow:auto">{{ run.input_payload|pprint }}</pre>
+                                </details>
+                                <details>
+                                  <summary class="small fw-semibold" style="cursor:pointer">Output payload</summary>
+                                  <pre class="mb-0 mt-1" style="white-space:pre-wrap;max-height:180px;overflow:auto">{{ run.output_payload|pprint }}</pre>
+                                </details>
+                              </div>
+                            </div>
+
+                            <div class="col-12">
+                              <div class="border rounded p-2 bg-white">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                  <div class="fw-semibold"><i class="bi bi-tools me-1"></i>Tool Calls</div>
+                                  <span class="badge bg-light text-dark border">{{ run.tool_calls.count }}</span>
+                                </div>
+                                {% if run.tool_calls.all %}
+                                <div style="overflow-x:auto">
+                                  <table class="table table-sm table-striped mb-0" style="font-size:.76rem;min-width:860px">
+                                    <thead>
+                                      <tr>
+                                        <th>Name</th>
+                                        <th>Status</th>
+                                        <th>Duration</th>
+                                        <th>Error</th>
+                                        <th>Input</th>
+                                        <th>Output</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {% for tc in run.tool_calls.all %}
+                                      <tr>
+                                        <td class="fw-semibold">{{ tc.tool_name }}</td>
+                                        <td>{{ tc.status }}</td>
+                                        <td>{% if tc.duration_ms %}{{ tc.duration_ms }}ms{% else %}--{% endif %}</td>
+                                        <td>{{ tc.error_message|default:"--"|truncatechars:80 }}</td>
+                                        <td>
+                                          <details>
+                                            <summary style="cursor:pointer">view</summary>
+                                            <pre class="mb-0" style="white-space:pre-wrap;max-height:140px;overflow:auto">{{ tc.input_payload|pprint }}</pre>
+                                          </details>
+                                        </td>
+                                        <td>
+                                          <details>
+                                            <summary style="cursor:pointer">view</summary>
+                                            <pre class="mb-0" style="white-space:pre-wrap;max-height:140px;overflow:auto">{{ tc.output_payload|pprint }}</pre>
+                                          </details>
+                                        </td>
+                                      </tr>
+                                      {% endfor %}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                {% else %}
+                                <div class="text-muted">No tool calls recorded.</div>
+                                {% endif %}
+                              </div>
+                            </div>
+
+                            <div class="col-12">
+                              <div class="border rounded p-2 bg-white">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                  <div class="fw-semibold"><i class="bi bi-chat-dots me-1"></i>Messages</div>
+                                  <span class="badge bg-light text-dark border">{{ run.messages.count }}</span>
+                                </div>
+                                {% if run.messages.all %}
+                                <div style="overflow-x:auto">
+                                  <table class="table table-sm table-hover mb-0" style="font-size:.76rem;min-width:760px">
+                                    <thead>
+                                      <tr>
+                                        <th>#</th>
+                                        <th>Role</th>
+                                        <th>Tokens</th>
+                                        <th>Content</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {% for m in run.messages.all %}
+                                      <tr>
+                                        <td>{{ m.message_index }}</td>
+                                        <td><span class="badge bg-light text-dark border">{{ m.role }}</span></td>
+                                        <td>{{ m.token_count|default:"--" }}</td>
+                                        <td style="max-width:680px">
+                                          <details>
+                                            <summary style="cursor:pointer">view message</summary>
+                                            <pre class="mb-0" style="white-space:pre-wrap;max-height:180px;overflow:auto">{{ m.content }}</pre>
+                                          </details>
+                                        </td>
+                                      </tr>
+                                      {% endfor %}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                {% else %}
+                                <div class="text-muted">No messages recorded.</div>
+                                {% endif %}
+                              </div>
+                            </div>
+
+                            <div class="col-12">
+                              <div class="border rounded p-2 bg-white">
+                                <div class="fw-semibold mb-1"><i class="bi bi-card-text me-1"></i>Reasoning And Recommendation</div>
+                                {% if run.summarized_reasoning %}
+                                <div class="mb-2"><strong>Reasoning:</strong> {{ run.summarized_reasoning }}</div>
+                                {% else %}
+                                <div class="mb-2 text-muted">No summarized reasoning.</div>
+                                {% endif %}
+                                {% with rec=run.recommendations.all|first %}
+                                  {% if rec %}
+                                  <div class="mb-1"><strong>Recommendation:</strong> {{ rec.get_recommendation_type_display|default:rec.recommendation_type }}</div>
+                                  <div><strong>Rationale:</strong> {{ rec.reasoning|default:"--" }}</div>
+                                  {% else %}
+                                  <div class="text-muted">No recommendation recorded.</div>
+                                  {% endif %}
+                                {% endwith %}
+                              </div>
+                            </div>
+                          </div>
                         </td>
                       </tr>
                       {% endfor %}
@@ -727,41 +952,10 @@
                 </div>
               </div>
 
-              <div class="accordion" id="agentRunDetails">
-                {% for run in agent_runs %}
-                <div class="accordion-item {% if run.parent_run %}ms-4 border-start border-info{% endif %}">
-                  <h2 class="accordion-header" id="runHead{{ run.pk }}">
-                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#runBody{{ run.pk }}" aria-expanded="false" aria-controls="runBody{{ run.pk }}" style="font-size:.82rem">
-                      {% if run.parent_run %}<span class="badge bg-light text-muted border me-2" style="font-size:.65rem">child</span>{% endif %}
-                      {{ run.agent_definition.name|default:run.get_agent_type_display }} &mdash; {{ run.status }}
-                    </button>
-                  </h2>
-                  <div id="runBody{{ run.pk }}" class="accordion-collapse collapse" aria-labelledby="runHead{{ run.pk }}" data-bs-parent="#agentRunDetails">
-                    <div class="accordion-body" style="font-size:.82rem">
-                      {% if run.summarized_reasoning %}
-                      <div class="mb-2"><strong>Reasoning:</strong><div class="text-muted">{{ run.summarized_reasoning }}</div></div>
-                      {% endif %}
-                      <div class="d-flex gap-3 text-muted mb-2">
-                        <span>Steps: {{ run.steps.count }}</span>
-                        <span>Tools: {{ run.tool_calls.count }}</span>
-                        <span>Messages: {{ run.messages.count }}</span>
-                        <span>Decisions: {{ run.decisions.count }}</span>
-                      </div>
-                      {% with rec=run.recommendations.all|first %}
-                        {% if rec and rec.reasoning %}
-                        <div><strong>Recommendation Rationale:</strong> {{ rec.reasoning }}</div>
-                        {% endif %}
-                      {% endwith %}
-                    </div>
-                  </div>
-                </div>
-                {% endfor %}
-              </div>
-
               {% else %}
               <div class="text-center py-5 text-muted">
                 <i class="bi bi-robot" style="font-size:2.5rem;opacity:.3"></i>
-                <div class="mt-2">No agent runs recorded for this case</div>
+                <div class="mt-2">No LLM agent runs recorded for this case</div>
               </div>
               {% endif %}
 
@@ -1235,6 +1429,42 @@
               </div>
 
               {# Per-run breakdown #}
+              {% if cost_reconciliation_history %}
+              <div class="cc-section mb-3">
+                <div class="cc-section-header"><i class="bi bi-diagram-3"></i> Per-Reconciliation Token Usage</div>
+                <div class="cc-section-body p-0">
+                  <table class="table table-sm table-hover mb-0 cc-data-table">
+                    <thead>
+                      <tr>
+                        <th>Recon Run</th>
+                        <th>Result</th>
+                        <th>Status</th>
+                        <th>Agent Runs</th>
+                        <th>Tokens (In / Out / Total)</th>
+                        <th>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for rr in cost_reconciliation_history %}
+                      <tr>
+                        <td>{% if rr.reconciliation_run_id %}#{{ rr.reconciliation_run_id }}{% else %}<span class="text-muted">N/A</span>{% endif %}</td>
+                        <td>{% if rr.reconciliation_result_id %}#{{ rr.reconciliation_result_id }}{% else %}<span class="text-muted">Orphan</span>{% endif %}</td>
+                        <td>{{ rr.match_status }}</td>
+                        <td>{{ rr.run_count }}</td>
+                        <td>
+                          <span class="text-success">{{ rr.prompt_tokens|floatformat:0 }}</span> /
+                          <span class="text-info">{{ rr.completion_tokens|floatformat:0 }}</span> /
+                          <span class="fw-semibold">{{ rr.total_tokens|floatformat:0 }}</span>
+                        </td>
+                        <td>${{ rr.llm_cost }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
+
               {% if cost_run_history %}
               <div class="cc-section">
                 <div class="cc-section-header"><i class="bi bi-list-ul"></i> Per-Agent Breakdown</div>

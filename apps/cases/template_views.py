@@ -3,6 +3,7 @@
 import json
 import logging
 
+from django.db.models import Q
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -14,6 +15,7 @@ from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode, UserRole
 from apps.core.permissions import permission_required_code, _has_permission_code
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
+from apps.core.utils import build_case_remarks
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +315,56 @@ def case_inbox(request):
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
-    stats = CaseSelectors.stats(user=request.user)
+    # Add a human-readable remark for why a case is closed/open.
+    from django.db.models import Count
+    result_ids = [
+        c.reconciliation_result_id
+        for c in page_obj
+        if getattr(c, "reconciliation_result_id", None)
+    ]
+    exception_counts_by_result = {}
+    review_decision_by_result = {}
+    if result_ids:
+        from apps.reconciliation.models import ReconciliationException
+        from apps.cases.models import ReviewDecision
+        for row in (
+            ReconciliationException.objects
+            .filter(result_id__in=result_ids, resolved=False)
+            .values("result_id")
+            .annotate(count=Count("id"))
+        ):
+            exception_counts_by_result[row["result_id"]] = row["count"]
+
+        # Keep the latest review decision per reconciliation result.
+        for decision in (
+            ReviewDecision.objects
+            .filter(assignment__reconciliation_result_id__in=result_ids)
+            .select_related("assignment")
+            .order_by("assignment__reconciliation_result_id", "-decided_at")
+        ):
+            result_id = decision.assignment.reconciliation_result_id
+            if result_id and result_id not in review_decision_by_result:
+                review_decision_by_result[result_id] = decision.decision
+
+    for c in page_obj:
+        unresolved_exceptions = exception_counts_by_result.get(
+            getattr(c, "reconciliation_result_id", None), 0,
+        )
+        c.closure_remark = build_case_remarks(
+            invoice_status=(getattr(getattr(c, "invoice", None), "status", "") or ""),
+            case_status=(getattr(c, "status", "") or ""),
+            match_status=(getattr(getattr(c, "reconciliation_result", None), "match_status", "") or ""),
+            unresolved_exceptions=unresolved_exceptions,
+            has_case=True,
+            policy_applied=(getattr(getattr(c, "reconciliation_result", None), "policy_applied", "") or ""),
+            review_decision=review_decision_by_result.get(
+                getattr(c, "reconciliation_result_id", None),
+                "",
+            ),
+        )
+
+    # KPI cards should reflect the same scoped + filtered dataset as the table.
+    stats = CaseSelectors.stats_from_queryset(qs)
 
     # Build vendor choices scoped for user
     from apps.vendors.models import Vendor
@@ -549,8 +600,6 @@ def case_agent_view(request, pk):
 
     # Agent runs
     from apps.agents.models import AgentRun
-    from django.db.models import Q
-
     agent_run_q = Q()
     if recon_result:
         agent_run_q |= Q(reconciliation_result=recon_result)
@@ -572,7 +621,13 @@ def case_agent_view(request, pk):
         agent_run_qs = agent_run_qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
     agent_runs = list(
         agent_run_qs
-        .select_related("agent_definition", "parent_run", "parent_run__agent_definition")
+        .select_related(
+            "agent_definition",
+            "parent_run",
+            "parent_run__agent_definition",
+            "reconciliation_result",
+            "reconciliation_result__run",
+        )
         .prefetch_related(
             "steps", "tool_calls", "decisions", "recommendations",
             "messages",
@@ -593,7 +648,13 @@ def case_agent_view(request, pk):
         child_runs = list(
             AgentRun.objects.filter(child_q)
             .exclude(pk__in=_found_pks)
-            .select_related("agent_definition", "parent_run", "parent_run__agent_definition")
+            .select_related(
+                "agent_definition",
+                "parent_run",
+                "parent_run__agent_definition",
+                "reconciliation_result",
+                "reconciliation_result__run",
+            )
             .prefetch_related(
                 "steps", "tool_calls", "decisions", "recommendations",
                 "messages",
@@ -604,6 +665,13 @@ def case_agent_view(request, pk):
                 agent_runs + child_runs,
                 key=lambda r: r.created_at,
             )
+
+    # Hide deterministic system agents from UI tabs that are intended to
+    # show only LLM-based activity and costs.
+    llm_agent_runs = [
+        run for run in agent_runs
+        if "SYSTEM_" not in (getattr(run, "agent_type", "") or "")
+    ]
 
     # ── Attach eval field outcomes per agent run ──
     _agent_run_ids = [r.pk for r in agent_runs]
@@ -708,6 +776,27 @@ def case_agent_view(request, pk):
     failed_stages_count = sum(1 for s in stages if s.stage_status == 'FAILED')
     has_open_issues = (open_exceptions_count + failed_validations_count + failed_stages_count) > 0
 
+    # Reconciliation match status
+    recon_match_status = None
+    recon_mode = None
+    if recon_result:
+        recon_match_status = recon_result.match_status
+        recon_mode = getattr(recon_result, "reconciliation_mode", None)
+
+    review_decision_value = ""
+    if review_decision is not None:
+        review_decision_value = getattr(review_decision, "decision", "") or ""
+
+    case_closure_remark = build_case_remarks(
+        invoice_status=(getattr(invoice, "status", "") if invoice else ""),
+        case_status=(getattr(case, "status", "") or ""),
+        match_status=(recon_match_status or ""),
+        unresolved_exceptions=open_exceptions_count,
+        has_case=True,
+        policy_applied=(getattr(recon_result, "policy_applied", "") if recon_result else ""),
+        review_decision=review_decision_value,
+    )
+
     # Reviewers list for assignment dropdown (only for users with cases.assign)
     reviewers = []
     if _has_permission_code(request.user, "cases.assign"):
@@ -721,12 +810,13 @@ def case_agent_view(request, pk):
     # ── Cost & Token data (aggregated across all agent runs for this case) ──
     cost_token_data = None
     cost_run_history = []
-    if agent_runs:
+    cost_reconciliation_history = []
+    if llm_agent_runs:
         try:
             from decimal import Decimal
             from django.db.models import Sum
 
-            run_pks = [r.pk for r in agent_runs]
+            run_pks = [r.pk for r in llm_agent_runs]
             totals = AgentRun.objects.filter(pk__in=run_pks).aggregate(
                 prompt_tk=Sum("prompt_tokens"),
                 completion_tk=Sum("completion_tokens"),
@@ -741,7 +831,7 @@ def case_agent_view(request, pk):
             if total_tk > 0 or total_duration_ms > 0:
                 llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
                 total_cost = llm_cost.quantize(Decimal("0.000001"))
-                latest_run = agent_runs[-1]  # ordered by created_at ASC
+                latest_run = llm_agent_runs[-1]  # ordered by created_at ASC
                 cost_token_data = {
                     "prompt_tokens": prompt_tk,
                     "completion_tokens": completion_tk,
@@ -750,10 +840,10 @@ def case_agent_view(request, pk):
                     "llm_cost": llm_cost.quantize(Decimal("0.000001")),
                     "cost_estimate": total_cost,
                     "llm_model": getattr(latest_run, "llm_model_used", None) or "gpt-4o",
-                    "run_count": len(agent_runs),
+                    "run_count": len(llm_agent_runs),
                 }
 
-                for _cr in agent_runs:
+                for _cr in llm_agent_runs:
                     _cr_prompt = _cr.prompt_tokens or 0
                     _cr_compl = _cr.completion_tokens or 0
                     _cr_total = _cr.total_tokens or 0
@@ -772,15 +862,48 @@ def case_agent_view(request, pk):
                         "started_at": _cr.started_at if hasattr(_cr, "started_at") else _cr.created_at,
                         "confidence": _cr.confidence,
                     })
+
+                    _rr = getattr(_cr, "reconciliation_result", None)
+                    _rr_key = _rr.pk if _rr else 0
+                    _row = None
+                    for _existing in cost_reconciliation_history:
+                        if _existing["reconciliation_result_id"] == _rr_key:
+                            _row = _existing
+                            break
+                    if _row is None:
+                        _row = {
+                            "reconciliation_result_id": _rr.pk if _rr else None,
+                            "reconciliation_run_id": (_rr.run_id if _rr and getattr(_rr, "run_id", None) else None),
+                            "match_status": (_rr.match_status if _rr else "ORPHAN"),
+                            "run_count": 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "llm_cost": Decimal("0"),
+                            "latest_started_at": _cr.started_at if hasattr(_cr, "started_at") else _cr.created_at,
+                        }
+                        cost_reconciliation_history.append(_row)
+
+                    _row["run_count"] += 1
+                    _row["prompt_tokens"] += _cr_prompt
+                    _row["completion_tokens"] += _cr_compl
+                    _row["total_tokens"] += _cr_total
+                    _row["llm_cost"] += _cr_llm
+                    _row["latest_started_at"] = max(
+                        _row["latest_started_at"],
+                        _cr.started_at if hasattr(_cr, "started_at") else _cr.created_at,
+                    )
+
+                for _row in cost_reconciliation_history:
+                    _row["llm_cost"] = _row["llm_cost"].quantize(Decimal("0.000001"))
+
+                cost_reconciliation_history = sorted(
+                    cost_reconciliation_history,
+                    key=lambda x: x["latest_started_at"] or timezone.now(),
+                    reverse=True,
+                )
         except Exception:
             logger.debug("Cost run history build failed for case context (non-fatal)", exc_info=True)
-
-    # Reconciliation match status
-    recon_match_status = None
-    recon_mode = None
-    if recon_result:
-        recon_match_status = recon_result.match_status
-        recon_mode = getattr(recon_result, "reconciliation_mode", None)
 
     # Invoice deep-dive panel (embedded extraction console subset)
     extraction_result = None
@@ -993,6 +1116,16 @@ def case_agent_view(request, pk):
 
     # ── Line-level matching details (reconciliation result lines) ──
     line_matching_details = []
+    line_matching_summary = {
+        "total_lines": 0,
+        "matched_lines": 0,
+        "partial_lines": 0,
+        "unmatched_lines": 0,
+        "ai_used_lines": 0,
+        "rule_based_lines": 0,
+    }
+    matching_method_overview = []
+    deterministic_agent_steps = []
     if recon_result:
         try:
             from apps.reconciliation.models import ReconciliationResultLine
@@ -1002,50 +1135,55 @@ def case_agent_view(request, pk):
                 .order_by("id")
             )
             for line_result in line_results:
-                # Format signal scores as percentages
-                signals = {
-                    "item_code": {
-                        "score": line_result.description_match_score or 0,
-                        "label": "Item Code",
-                    },
-                    "description": {
-                        "score": line_result.description_match_score or 0,
-                        "label": "Description",
-                    },
-                    "token_sim": {
-                        "score": line_result.token_similarity_score or 0,
-                        "label": "Token Similarity",
-                    },
-                    "fuzzy": {
-                        "score": line_result.fuzzy_similarity_score or 0,
-                        "label": "Fuzzy Match",
-                    },
-                    "quantity": {
-                        "score": line_result.quantity_match_score or 0,
-                        "label": "Quantity",
-                    },
-                    "price": {
-                        "score": line_result.price_match_score or 0,
-                        "label": "Price",
-                    },
-                    "amount": {
-                        "score": line_result.amount_match_score or 0,
-                        "label": "Amount",
-                    },
-                }
-                
+                method = (line_result.match_method or "").upper()
+                match_status = (line_result.match_status or "").upper()
+
+                line_matching_summary["total_lines"] += 1
+                if match_status == "MATCHED":
+                    line_matching_summary["matched_lines"] += 1
+                elif match_status == "PARTIAL_MATCH":
+                    line_matching_summary["partial_lines"] += 1
+                else:
+                    line_matching_summary["unmatched_lines"] += 1
+
+                if method == "LLM_FALLBACK":
+                    line_matching_summary["ai_used_lines"] += 1
+                    method_label = "AI Assisted"
+                else:
+                    line_matching_summary["rule_based_lines"] += 1
+                    method_label = "Rule Based"
+
+                reason_bits = []
+                if (line_result.description_match_score or 0) >= 0.75:
+                    reason_bits.append("description")
+                if (line_result.quantity_match_score or 0) >= 0.75:
+                    reason_bits.append("quantity")
+                if (line_result.price_match_score or 0) >= 0.75:
+                    reason_bits.append("price")
+                if (line_result.amount_match_score or 0) >= 0.75:
+                    reason_bits.append("amount")
+
+                if reason_bits:
+                    basis = ", ".join(reason_bits)
+                else:
+                    basis = "overall closest commercial fit"
+
+                if method == "LLM_FALLBACK":
+                    business_reason = f"AI compared candidate PO lines and selected the best fit using {basis}."
+                elif match_status == "MATCHED":
+                    business_reason = f"Rule-based matching found a strong fit on {basis}."
+                elif match_status == "PARTIAL_MATCH":
+                    business_reason = f"Potential match found on {basis}, but differences remain for review."
+                else:
+                    business_reason = "No reliable PO line match was found from available evidence."
+
                 line_matching_details.append({
                     "id": line_result.id,
                     "match_status": line_result.match_status,
                     "match_method": line_result.match_method,
+                    "match_method_label": method_label,
                     "match_confidence": float(line_result.match_confidence or 0) * 100,  # as percentage
-                    "confidence_band": line_result.confidence_band,
-                    "is_ambiguous": line_result.is_ambiguous,
-                    "candidate_count": line_result.candidate_count,
-                    "signals": signals,
-                    "matched_signals": line_result.matched_signals or [],
-                    "rejected_signals": line_result.rejected_signals or [],
-                    "line_match_meta": line_result.line_match_meta or {},
+                    "business_reason": business_reason,
                     "invoice_line_number": line_result.invoice_line.line_number if line_result.invoice_line else None,
                     "invoice_description": line_result.invoice_line.description if line_result.invoice_line else None,
                     "po_line_number": line_result.po_line.line_number if line_result.po_line else None,
@@ -1054,6 +1192,253 @@ def case_agent_view(request, pk):
         except Exception as e:
             logger.debug(f"Line matching details build failed (non-fatal): {e}")
             line_matching_details = []
+
+    # ── Mode decision analysis (policy + precedence + evaluated attributes) ──
+    mode_decision_analysis = None
+    if recon_result:
+        policy_code = (getattr(recon_result, "policy_applied", "") or "").strip()
+        policy_obj = None
+        if policy_code:
+            try:
+                from apps.reconciliation.models import ReconciliationPolicy
+
+                policy_obj = (
+                    ReconciliationPolicy.objects
+                    .filter(policy_code__iexact=policy_code, is_active=True, tenant=tenant)
+                    .order_by("priority", "policy_code")
+                    .first()
+                )
+                if policy_obj is None:
+                    policy_obj = (
+                        ReconciliationPolicy.objects
+                        .filter(policy_code__iexact=policy_code, is_active=True, tenant__isnull=True)
+                        .order_by("priority", "policy_code")
+                        .first()
+                    )
+            except Exception:
+                logger.debug("Policy lookup failed for case %s", case.pk, exc_info=True)
+
+        item_categories = []
+        try:
+            item_categories = sorted({
+                (li.item_category or "").strip()
+                for li in invoice.line_items.all()
+                if (li.item_category or "").strip()
+            })
+        except Exception:
+            item_categories = []
+
+        service_flag = None
+        stock_flag = None
+        try:
+            if po is not None:
+                _po_lines = list(po.line_items.all())
+                if _po_lines:
+                    service_flag = any(getattr(li, "is_service_item", False) for li in _po_lines)
+                    stock_flag = any(getattr(li, "is_stock_item", False) for li in _po_lines)
+        except Exception:
+            service_flag = None
+            stock_flag = None
+
+        def _display(v, fallback="Any"):
+            if v is None:
+                return fallback
+            s = str(v).strip()
+            return s if s else fallback
+
+        mode_decision_analysis = {
+            "policy_code": policy_code or "Tenant Default",
+            "policy_name": _display(getattr(policy_obj, "policy_name", ""), "Applied tenant-level default mode" if not policy_code else "--"),
+            "priority": getattr(policy_obj, "priority", None),
+            "resolved_mode": _display(getattr(recon_result, "reconciliation_mode", ""), "--"),
+            "resolution_reason": _display(getattr(recon_result, "mode_resolution_reason", ""), "Mode set at tenant level -- no per-invoice policy rules active."),
+            "precedence_note": "Mode is configured at tenant level. All invoices use the same mode unless a custom policy is added.",
+            "match_inputs": [
+                {"label": "Vendor", "value": _display(invoice.vendor.name if invoice and invoice.vendor else getattr(invoice, "raw_vendor_name", ""), "--")},
+                {"label": "Item Category", "value": ", ".join(item_categories) if item_categories else "--"},
+                {"label": "Location", "value": _display(getattr(invoice, "location_code", ""), "--")},
+                {"label": "Business Unit", "value": _display(getattr(invoice, "business_unit", ""), "--")},
+                {"label": "Service Invoice", "value": "Yes" if service_flag is True else "No" if service_flag is False else "--"},
+                {"label": "Stock Invoice", "value": "Yes" if stock_flag is True else "No" if stock_flag is False else "--"},
+            ],
+            "policy_criteria": [
+                {"label": "Vendor Rule", "value": _display(getattr(getattr(policy_obj, "vendor", None), "name", ""))},
+                {"label": "Invoice Type Rule", "value": _display(getattr(policy_obj, "invoice_type", ""))},
+                {"label": "Item Category Rule", "value": _display(getattr(policy_obj, "item_category", ""))},
+                {"label": "Location Rule", "value": _display(getattr(policy_obj, "location_code", ""))},
+                {"label": "Business Unit Rule", "value": _display(getattr(policy_obj, "business_unit", ""))},
+                {"label": "Service Rule", "value": "Yes" if getattr(policy_obj, "is_service_invoice", None) is True else "No" if getattr(policy_obj, "is_service_invoice", None) is False else "Any"},
+                {"label": "Stock Rule", "value": "Yes" if getattr(policy_obj, "is_stock_invoice", None) is True else "No" if getattr(policy_obj, "is_stock_invoice", None) is False else "Any"},
+            ],
+        }
+
+    if recon_result:
+        # Build an at-a-glance method summary so users can clearly see
+        # whether each matching decision came from rules or AI assistance.
+        _tool_calls = [
+            tc for run in llm_agent_runs
+            for tc in run.tool_calls.all()
+        ]
+
+        vendor_ai_used = any(
+            (tc.tool_name or "").lower() == "vendor_search"
+            and (tc.status or "").upper() == "SUCCESS"
+            for tc in _tool_calls
+        )
+        po_ai_used = any(
+            (getattr(run, "agent_type", "") or "").upper() == "PO_RETRIEVAL"
+            and (getattr(run, "status", "") or "").upper() == "COMPLETED"
+            for run in llm_agent_runs
+        )
+        grn_ai_used = any(
+            (getattr(run, "agent_type", "") or "").upper() == "GRN_RETRIEVAL"
+            and (getattr(run, "status", "") or "").upper() == "COMPLETED"
+            for run in llm_agent_runs
+        )
+
+        vendor_matched = getattr(recon_result, "vendor_match", None)
+        po_matched = bool(getattr(recon_result, "purchase_order_id", None))
+        grn_required = bool(getattr(recon_result, "grn_required_flag", False))
+        grn_matched = bool(getattr(recon_result, "grn_available", False))
+
+        line_method_label = "Rule Based"
+        line_method_class = "info"
+        if line_matching_summary["ai_used_lines"] > 0 and line_matching_summary["rule_based_lines"] > 0:
+            line_method_label = "Mixed (Rule + AI)"
+            line_method_class = "primary"
+        elif line_matching_summary["ai_used_lines"] > 0:
+            line_method_label = "AI Assisted"
+            line_method_class = "primary"
+
+        matching_method_overview = [
+            {
+                "dimension": "Vendor",
+                "method_label": "AI Assisted" if vendor_ai_used else "Rule Based",
+                "method_class": "primary" if vendor_ai_used else "info",
+                "status_label": (
+                    "Matched" if vendor_matched is True
+                    else "Mismatch" if vendor_matched is False
+                    else "Not Evaluated"
+                ),
+                "status_class": (
+                    "success" if vendor_matched is True
+                    else "danger" if vendor_matched is False
+                    else "secondary"
+                ),
+                "explanation": (
+                    "Vendor was resolved via agent-assisted vendor search before reconciliation."
+                    if vendor_ai_used else
+                    "Vendor was matched using deterministic master-data checks."
+                ),
+            },
+            {
+                "dimension": "PO",
+                "method_label": "AI Assisted" if po_ai_used else "Rule Based",
+                "method_class": "primary" if po_ai_used else "info",
+                "status_label": "Matched" if po_matched else "Not Matched",
+                "status_class": "success" if po_matched else "danger",
+                "explanation": (
+                    "PO was retrieved by PO Retrieval agent before match execution."
+                    if po_ai_used else
+                    "PO was resolved directly from PO number / deterministic document lookup rules, so PO Retrieval agent was not invoked."
+                ),
+            },
+            {
+                "dimension": "GRN",
+                "method_label": (
+                    "AI Assisted" if grn_ai_used else "Rule Based"
+                ) if grn_required else "Not Required",
+                "method_class": (
+                    "primary" if grn_ai_used else "info"
+                ) if grn_required else "secondary",
+                "status_label": (
+                    "Matched" if grn_matched else "Not Matched"
+                ) if grn_required else "Skipped",
+                "status_class": (
+                    "success" if grn_matched else "danger"
+                ) if grn_required else "secondary",
+                "explanation": (
+                    "GRN was retrieved by GRN Retrieval agent before 3-way comparison."
+                    if grn_required and grn_ai_used and grn_matched else
+                    "GRN Retrieval agent was invoked, but no matching GRN was found for this PO."
+                    if grn_required and grn_ai_used and not grn_matched else
+                    "GRN matching was performed using deterministic receipt lookup rules."
+                    if grn_required else
+                    "GRN check was not required for this reconciliation mode."
+                ),
+            },
+            {
+                "dimension": "Line Items",
+                "method_label": line_method_label,
+                "method_class": line_method_class,
+                "status_label": (
+                    "Matched" if line_matching_summary["matched_lines"] == line_matching_summary["total_lines"] and line_matching_summary["total_lines"] > 0
+                    else "Partial" if line_matching_summary["partial_lines"] > 0
+                    else "Not Matched" if line_matching_summary["unmatched_lines"] > 0
+                    else "Not Evaluated"
+                ),
+                "status_class": (
+                    "success" if line_matching_summary["matched_lines"] == line_matching_summary["total_lines"] and line_matching_summary["total_lines"] > 0
+                    else "warning" if line_matching_summary["partial_lines"] > 0
+                    else "danger" if line_matching_summary["unmatched_lines"] > 0
+                    else "secondary"
+                ),
+                "explanation": (
+                    "All lines matched with deterministic scoring rules."
+                    if line_matching_summary["ai_used_lines"] == 0 else
+                    "Rule-based scorer ran first; AI was used only for low-confidence or ambiguous lines."
+                ),
+            },
+        ]
+
+        # Explicit deterministic steps for Agent tab visibility, even when no
+        # dedicated agent run exists for vendor or line-item matching.
+        deterministic_agent_steps = [
+            {
+                "name": "Vendor resolution step",
+                "type_label": "DETERMINISTIC",
+                "status_label": (
+                    "Matched" if vendor_matched is True
+                    else "Mismatch" if vendor_matched is False
+                    else "Not Evaluated"
+                ),
+                "status_class": (
+                    "success" if vendor_matched is True
+                    else "danger" if vendor_matched is False
+                    else "secondary"
+                ),
+                "confidence": None,
+                "tokens": "--",
+                "duration": "--",
+                "recommendation": "--",
+                "started": "Deterministic (reconciliation stage)",
+            },
+            {
+                "name": "Line matching step",
+                "type_label": "DETERMINISTIC",
+                "status_label": (
+                    "Matched"
+                    if line_matching_summary["matched_lines"] == line_matching_summary["total_lines"]
+                    and line_matching_summary["total_lines"] > 0
+                    else "Partial" if line_matching_summary["partial_lines"] > 0
+                    else "Not Matched" if line_matching_summary["unmatched_lines"] > 0
+                    else "Not Evaluated"
+                ),
+                "status_class": (
+                    "success"
+                    if line_matching_summary["matched_lines"] == line_matching_summary["total_lines"]
+                    and line_matching_summary["total_lines"] > 0
+                    else "warning" if line_matching_summary["partial_lines"] > 0
+                    else "danger" if line_matching_summary["unmatched_lines"] > 0
+                    else "secondary"
+                ),
+                "confidence": None,
+                "tokens": "--",
+                "duration": "--",
+                "recommendation": "--",
+                "started": "Deterministic (reconciliation stage)",
+            },
+        ]
 
     return render(request, "cases/case_agent_view.html", {
         "case": case,
@@ -1067,6 +1452,7 @@ def case_agent_view(request, pk):
         "validation_issues": validation_issues,
         "total_issues_count": len(exceptions) + len(validation_issues),
         "agent_runs": agent_runs,
+        "llm_agent_runs": llm_agent_runs,
         "agent_timeline": agent_timeline,
         "summary": summary,
         "timeline": timeline,
@@ -1080,8 +1466,10 @@ def case_agent_view(request, pk):
         "open_exceptions_count": open_exceptions_count,
         "failed_validations_count": failed_validations_count,
         "failed_stages_count": failed_stages_count,
+        "case_closure_remark": case_closure_remark,
         "cost_token_data": cost_token_data,
         "cost_run_history": cost_run_history,
+        "cost_reconciliation_history": cost_reconciliation_history,
         "recon_match_status": recon_match_status,
         "recon_mode": recon_mode,
         "extraction_result": extraction_result,
@@ -1109,6 +1497,10 @@ def case_agent_view(request, pk):
         "reviewers": reviewers,
         "activities": list(case.activities.select_related("actor").order_by("-created_at")),
         "line_matching_details": line_matching_details,
+        "line_matching_summary": line_matching_summary,
+        "matching_method_overview": matching_method_overview,
+        "deterministic_agent_steps": deterministic_agent_steps,
+        "mode_decision_analysis": mode_decision_analysis,
     })
 
 

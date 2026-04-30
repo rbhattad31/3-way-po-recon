@@ -10,6 +10,7 @@ Resolution flow:
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -24,6 +25,11 @@ from apps.erp_integration.services.connectors.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert nested values into JSON-serialisable primitives."""
+    return json.loads(json.dumps(value, default=str))
 
 
 class BaseResolver:
@@ -222,6 +228,8 @@ class BaseResolver:
     ) -> None:
         """Persist resolution to ERPResolutionLog and audit service."""
         duration_ms = int((time.monotonic() - start_time) * 1000)
+        safe_value = _json_safe(result.value or {})
+        safe_metadata = _json_safe(result.metadata or {})
         try:
             ERPResolutionLog.objects.create(
                 resolution_type=self.resolution_type,
@@ -232,8 +240,8 @@ class BaseResolver:
                 confidence=result.confidence,
                 connector_name=result.connector_name,
                 reason=result.reason or "",
-                value_json=result.value or {},
-                metadata_json=result.metadata or {},
+                value_json=safe_value,
+                metadata_json=safe_metadata,
                 freshness_timestamp=result.freshness_timestamp,
                 duration_ms=duration_ms,
                 related_invoice_id=invoice_id,

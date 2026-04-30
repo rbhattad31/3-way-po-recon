@@ -6,6 +6,8 @@ import logging
 from decimal import Decimal
 from typing import Any, Dict, List
 
+from django.conf import settings
+
 from apps.core.utils import normalize_category, resolve_line_tax_percentage, resolve_tax_percentage
 from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
@@ -16,6 +18,25 @@ def _decimal_serialise(obj):
     if isinstance(obj, Decimal):
         return str(obj)
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+def _erp_service_for_tool_call(**kwargs):
+    """Build ERPResolutionService with reconciliation-aware source policy.
+
+    For reconciliation agent investigations, force mirror/fallback-only reads
+    when ERP_RECON_USE_MIRROR_AS_PRIMARY is enabled, so tool calls do not hit
+    live SQL/API connectors.
+    """
+    from apps.erp_integration.services.resolution_service import ERPResolutionService
+
+    is_recon_agent_investigation = bool(
+        kwargs.get("parent_run_id") and kwargs.get("reconciliation_result_id")
+    )
+    use_mirror_primary = getattr(settings, "ERP_RECON_USE_MIRROR_AS_PRIMARY", True)
+
+    if is_recon_agent_investigation and use_mirror_primary:
+        return ERPResolutionService(connector=None)
+    return ERPResolutionService.with_default_connector()
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +142,7 @@ class POLookupTool(BaseTool):
         fall through to legacy direct DB lookup.
         """
         try:
-            from apps.erp_integration.services.resolution_service import ERPResolutionService
-
-            svc = ERPResolutionService.with_default_connector()
+            svc = _erp_service_for_tool_call(**kwargs)
             result = svc.resolve_po(
                 po_number=po_number,
                 reconciliation_result_id=kwargs.get("reconciliation_result_id"),
@@ -286,9 +305,7 @@ class GRNLookupTool(BaseTool):
         fall through to legacy direct DB lookup.
         """
         try:
-            from apps.erp_integration.services.resolution_service import ERPResolutionService
-
-            svc = ERPResolutionService.with_default_connector()
+            svc = _erp_service_for_tool_call(**kwargs)
             result = svc.resolve_grn(
                 po_number=po_number,
                 reconciliation_result_id=kwargs.get("reconciliation_result_id"),
@@ -343,7 +360,6 @@ class VendorSearchTool(BaseTool):
 
     def run(self, *, query: str = "", **kwargs) -> ToolResult:
         from apps.core.utils import normalize_string
-        from apps.erp_integration.services.resolution_service import ERPResolutionService
         from apps.posting_core.models import ERPVendorReference
         from apps.vendors.models import Vendor
         from apps.posting_core.models import VendorAliasMapping
@@ -357,10 +373,11 @@ class VendorSearchTool(BaseTool):
 
         # ERP-first exact resolution
         try:
-            svc = ERPResolutionService.with_default_connector()
+            svc = _erp_service_for_tool_call(**kwargs)
             erp_result = svc.resolve_vendor(
                 vendor_code=query,
                 vendor_name=query,
+                reconciliation_result_id=kwargs.get("reconciliation_result_id"),
                 lf_parent_span=kwargs.get("lf_parent_span"),
             )
             if erp_result.resolved:
@@ -497,7 +514,6 @@ class ItemSearchTool(BaseTool):
 
     def run(self, *, query: str = "", **kwargs) -> ToolResult:
         from apps.core.utils import normalize_string
-        from apps.erp_integration.services.resolution_service import ERPResolutionService
         from apps.posting_core.models import ERPItemReference, ItemAliasMapping
 
         if not query:
@@ -509,10 +525,11 @@ class ItemSearchTool(BaseTool):
 
         # ERP exact resolver path
         try:
-            svc = ERPResolutionService.with_default_connector()
+            svc = _erp_service_for_tool_call(**kwargs)
             erp_result = svc.resolve_item(
                 item_code=query,
                 description=query,
+                reconciliation_result_id=kwargs.get("reconciliation_result_id"),
                 lf_parent_span=kwargs.get("lf_parent_span"),
             )
             if erp_result.resolved:

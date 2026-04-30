@@ -84,12 +84,10 @@ class ReconciliationModeResolver:
         tenant_id = self._extract_tenant_id(invoice)
         self._ensure_tenant_config(tenant_id)
 
-        if not self.config.enable_mode_resolver:
-            return self._fallback_default(
-                reason="Mode resolver disabled in config -- using default mode",
-            )
-
-        # 0. Non-PO early exit: no PO number on invoice and no PO found
+        # 0. Non-PO early exit: always runs, even when mode resolver is disabled.
+        # If the invoice carries no PO reference and no PO was found, it cannot
+        # be matched against a PO regardless of the tenant default -- classify it
+        # as NON_PO immediately so it is routed through the non-PO workflow.
         if not invoice.po_number and purchase_order is None:
             logger.info(
                 "Mode resolver: invoice %s has no PO number and no PO found "
@@ -101,6 +99,11 @@ class ReconciliationModeResolver:
                 reason="Invoice has no PO number and no matching PO was found",
                 grn_required=False,
                 resolution_method="heuristic",
+            )
+
+        if not self.config.enable_mode_resolver:
+            return self._fallback_default(
+                reason="Mode resolver disabled -- using tenant-configured default mode",
             )
 
         # 1. Try explicit policy rules

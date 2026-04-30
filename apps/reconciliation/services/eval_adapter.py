@@ -319,6 +319,15 @@ class ReconciliationEvalAdapter:
         # Store runtime mirror metrics
         cls._store_runtime_metrics(eval_run, result, ctx, tenant_id=tenant_id, tenant=_tenant)
 
+        # Store baseline field outcomes so reconciliation runs always have
+        # structured eval fields even before reviewer corrections exist.
+        cls._store_field_outcomes_for_run(
+            eval_run=eval_run,
+            predicted=predicted,
+            tenant_id=tenant_id,
+            tenant=_tenant,
+        )
+
     # ======================================================================
     # INTERNAL: sync_for_review_assignment
     # ======================================================================
@@ -553,6 +562,16 @@ class ReconciliationEvalAdapter:
         eval_run.result_json = rj
         eval_run.save(update_fields=["result_json", "updated_at"])
 
+        # Refresh field outcomes with actual values and reviewer corrections.
+        cls._store_field_outcomes_for_run(
+            eval_run=eval_run,
+            predicted=predicted,
+            actual=actual_section,
+            assignment=assignment,
+            tenant_id=tenant_id,
+            tenant=_tenant,
+        )
+
         # Generate learning signals
         cls._emit_review_learning_signals(
             eval_run=eval_run,
@@ -564,14 +583,6 @@ class ReconciliationEvalAdapter:
             decision_status=decision_status,
             corrections_count=corrections_count,
             is_reprocessed=is_reprocessed,
-            tenant_id=tenant_id,
-            tenant=_tenant,
-        )
-
-        # Store structured field outcomes for reviewer corrections
-        cls._store_review_field_outcomes(
-            eval_run=eval_run,
-            assignment=assignment,
             tenant_id=tenant_id,
             tenant=_tenant,
         )
@@ -1105,41 +1116,121 @@ class ReconciliationEvalAdapter:
             )
 
     # ======================================================================
-    # Helpers: field outcomes from reviewer corrections
+    # Helpers: field outcomes
     # ======================================================================
     @classmethod
-    def _store_review_field_outcomes(
+    def _store_field_outcomes_for_run(
         cls,
         *,
         eval_run,
-        assignment,
+        predicted: Dict[str, Any],
+        actual: Optional[Dict[str, Any]] = None,
+        assignment=None,
         tenant_id: str = "",
         tenant=None,
     ) -> None:
-        """Store EvalFieldOutcome for structured reviewer corrections.
-
-        Only creates outcomes when ManualReviewAction records with
-        action_type=CORRECT_FIELD and field_name are available.
-        """
+        """Store baseline outcomes and optional reviewer-correction outcomes."""
         try:
-            from apps.cases.models import ManualReviewAction
-            from apps.core.enums import ReviewActionType
             from apps.core_eval.services.eval_field_outcome_service import (
                 EvalFieldOutcomeService,
             )
-            from apps.core_eval.models import EvalFieldOutcome
         except ImportError:
             return
+
+        outcomes = cls._build_baseline_field_outcomes(predicted, actual)
+        outcomes.extend(cls._build_reviewer_correction_outcomes(assignment))
+
+        EvalFieldOutcomeService.replace_for_run(
+            eval_run=eval_run,
+            outcomes=outcomes,
+            tenant_id=tenant_id,
+            tenant=tenant,
+        )
+
+    @classmethod
+    def _build_baseline_field_outcomes(
+        cls,
+        predicted: Dict[str, Any],
+        actual: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Create baseline outcomes for key reconciliation fields."""
+        try:
+            from apps.core_eval.models import EvalFieldOutcome
+        except ImportError:
+            return []
+
+        actual = actual or {}
+
+        predicted_match_status = _str(predicted.get("match_status", ""))
+        predicted_route = cls._predicted_route_label(predicted)
+        predicted_auto_close = bool(predicted.get("auto_close_eligible", False))
+
+        actual_match_status = _str(actual.get("match_status", ""))
+        actual_route = _str(actual.get("final_route", ""))
+        actual_auto_close = cls._safe_bool_text(actual.get("auto_closed"))
+
+        return [
+            {
+                "field_name": "match_status",
+                "status": cls._comparison_status(
+                    predicted_match_status, actual_match_status, EvalFieldOutcome,
+                ),
+                "predicted_value": predicted_match_status,
+                "ground_truth_value": actual_match_status,
+                "detail_json": {
+                    "source": "reconciliation_baseline",
+                    "key_field": True,
+                },
+            },
+            {
+                "field_name": "route",
+                "status": cls._comparison_status(
+                    predicted_route, actual_route, EvalFieldOutcome,
+                ),
+                "predicted_value": predicted_route,
+                "ground_truth_value": actual_route,
+                "detail_json": {
+                    "source": "reconciliation_baseline",
+                    "key_field": True,
+                },
+            },
+            {
+                "field_name": "auto_close",
+                "status": cls._comparison_status(
+                    predicted_auto_close,
+                    actual_auto_close,
+                    EvalFieldOutcome,
+                ),
+                "predicted_value": str(predicted_auto_close).lower(),
+                "ground_truth_value": (
+                    "" if actual_auto_close is None else str(actual_auto_close).lower()
+                ),
+                "detail_json": {
+                    "source": "reconciliation_baseline",
+                    "key_field": True,
+                },
+            },
+        ]
+
+    @classmethod
+    def _build_reviewer_correction_outcomes(cls, assignment) -> List[Dict[str, Any]]:
+        """Create outcomes from reviewer correction actions."""
+        if assignment is None:
+            return []
+
+        try:
+            from apps.cases.models import ManualReviewAction
+            from apps.core.enums import ReviewActionType
+            from apps.core_eval.models import EvalFieldOutcome
+        except ImportError:
+            return []
 
         corrections = ManualReviewAction.objects.filter(
             assignment=assignment,
             action_type=ReviewActionType.CORRECT_FIELD,
         ).exclude(field_name="")
 
-        if not corrections.exists():
-            return
-
-        outcomes = []
+        outcomes: List[Dict[str, Any]] = []
         for correction in corrections:
             outcomes.append({
                 "field_name": _str(correction.field_name),
@@ -1152,11 +1243,76 @@ class ReconciliationEvalAdapter:
                     "reason": _str(getattr(correction, "reason", ""))[:200],
                 },
             })
+        return outcomes
 
-        if outcomes:
-            EvalFieldOutcomeService.replace_for_run(
-                eval_run=eval_run,
-                outcomes=outcomes,
-                tenant_id=tenant_id,
-                tenant=tenant,
+    @classmethod
+    def _predicted_route_label(cls, predicted: Dict[str, Any]) -> str:
+        """Map predicted reconciliation routing to a compact route label."""
+        if bool(predicted.get("requires_review", False)):
+            return "review"
+        if bool(predicted.get("auto_close_eligible", False)):
+            return "auto_close"
+        if bool(predicted.get("routed_to_agents", False)):
+            return "agents"
+        return "unknown"
+
+    @staticmethod
+    def _safe_bool_text(value: Any) -> Optional[bool]:
+        """Convert JSON-compatible bool-like values to Optional[bool]."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        text = _str(value).lower()
+        if text in ("true", "1", "yes"):
+            return True
+        if text in ("false", "0", "no"):
+            return False
+        return None
+
+    @staticmethod
+    def _comparison_status(
+        predicted_value: Any,
+        actual_value: Any,
+        eval_field_outcome_model,
+    ) -> str:
+        """Return SKIPPED until actual exists, otherwise CORRECT/INCORRECT."""
+        if actual_value in (None, ""):
+            return eval_field_outcome_model.Status.SKIPPED
+        return (
+            eval_field_outcome_model.Status.CORRECT
+            if predicted_value == actual_value
+            else eval_field_outcome_model.Status.INCORRECT
+        )
+
+    @classmethod
+    def _store_review_field_outcomes(
+        cls,
+        *,
+        eval_run,
+        assignment,
+        tenant_id: str = "",
+        tenant=None,
+    ) -> None:
+        """Backward-compatible shim for older call sites.
+
+        New code should use _store_field_outcomes_for_run to include baseline
+        and reviewer-correction outcomes together.
+        """
+        try:
+            from apps.core_eval.services.eval_field_outcome_service import (
+                EvalFieldOutcomeService,
             )
+        except ImportError:
+            return
+
+        outcomes = cls._build_reviewer_correction_outcomes(assignment)
+        if not outcomes:
+            return
+
+        EvalFieldOutcomeService.replace_for_run(
+            eval_run=eval_run,
+            outcomes=outcomes,
+            tenant_id=tenant_id,
+            tenant=tenant,
+        )

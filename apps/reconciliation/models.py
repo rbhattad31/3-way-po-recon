@@ -47,7 +47,7 @@ class ReconciliationConfig(BaseModel):
         default=ReconciliationMode.THREE_WAY, db_index=True,
     )
     enable_mode_resolver = models.BooleanField(
-        default=True, help_text="Use policy rules to auto-resolve 2-way vs 3-way per invoice",
+        default=False, help_text="Use policy rules to auto-resolve 2-way vs 3-way per invoice",
     )
     enable_grn_for_stock_items = models.BooleanField(
         default=True, help_text="Require GRN for stock/inventory items",

@@ -69,7 +69,8 @@
     <div class="row">
       <div class="col-md-6">
         <table class="table table-sm table-borderless mb-0">
-          <tr><th class="text-muted" style="width:140px">Module</th><td>{{ run.app_module }}</td></tr>
+          <tr><th class="text-muted" style="width:140px">Pipeline</th><td>{{ pipeline_label }}</td></tr>
+          <tr><th class="text-muted">Module</th><td>{{ run.app_module }}</td></tr>
           <tr><th class="text-muted">Entity Type</th><td>{{ run.entity_type }}</td></tr>
           <tr><th class="text-muted">Entity ID</th><td>{{ run.entity_id }}</td></tr>
           {% if run.run_key %}<tr><th class="text-muted">Run Key</th><td><code class="small">{{ run.run_key }}</code></td></tr>{% endif %}
@@ -207,7 +208,12 @@
     </table>
   </div>
   {% else %}
-  <div class="ap-card-body text-center text-muted py-3">No field outcomes recorded.</div>
+  <div class="ap-card-body text-center text-muted py-3">
+    <div>No field outcomes recorded.</div>
+    {% if empty_outcome_note %}
+    <div class="small mt-1">{{ empty_outcome_note }}</div>
+    {% endif %}
+  </div>
   {% endif %}
 </div>
 
