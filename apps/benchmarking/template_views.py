@@ -88,6 +88,76 @@ def _safe_attr(instance, attr_name: str, default=None):
         return default
 
 
+def _to_float(value):
+    if value is None:
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except Exception:
+        return None
+
+
+def _is_reasonable_benchmark_price(value, reference_values=None):
+    numeric_value = _to_float(value)
+    if numeric_value is None or numeric_value <= 0:
+        return False
+
+    max_unit_price = float(getattr(settings, "BENCHMARKING_MARKET_MAX_UNIT_PRICE", 1000000) or 1000000)
+    if numeric_value > max_unit_price:
+        return False
+
+    refs = [
+        _to_float(ref)
+        for ref in (reference_values or [])
+    ]
+    refs = [ref for ref in refs if ref is not None and ref > 0]
+    if not refs:
+        return True
+
+    max_anchor_ratio = float(getattr(settings, "BENCHMARKING_MARKET_MAX_ANCHOR_RATIO", 50) or 50)
+    min_anchor_ratio = float(getattr(settings, "BENCHMARKING_MARKET_MIN_ANCHOR_RATIO", 0.02) or 0.02)
+
+    for ref in refs:
+        ratio = numeric_value / ref
+        if ratio > max_anchor_ratio or ratio < min_anchor_ratio:
+            return False
+
+    return True
+
+
+def _line_benchmark_references(line_item):
+    refs = []
+    quoted_rate = _to_float(_safe_attr(line_item, "quoted_unit_rate"))
+    if quoted_rate is not None and quoted_rate > 0:
+        refs.append(quoted_rate)
+
+    line_amount = _to_float(_safe_attr(line_item, "line_amount"))
+    quantity = _to_float(_safe_attr(line_item, "quantity"))
+    if line_amount is not None and quantity is not None and quantity > 0:
+        refs.append(line_amount / quantity)
+
+    live_json = _safe_attr(line_item, "live_price_json", {}) or {}
+    if isinstance(live_json, dict):
+        hybrid_components = live_json.get("hybrid_components") or {}
+        if isinstance(hybrid_components, dict):
+            corridor = hybrid_components.get("corridor") or {}
+            if isinstance(corridor, dict):
+                corridor_mid = _to_float(corridor.get("benchmark_mid"))
+                if corridor_mid is not None and corridor_mid > 0:
+                    refs.append(corridor_mid)
+
+    return refs
+
+
+def _sanitised_line_benchmark_mid(line_item):
+    benchmark_mid = _to_float(_safe_attr(line_item, "benchmark_mid"))
+    if benchmark_mid is None:
+        return None
+    if _is_reasonable_benchmark_price(benchmark_mid, reference_values=_line_benchmark_references(line_item)):
+        return benchmark_mid
+    return None
+
+
 def _apply_schema_compat(qs):
     model_class = qs.model
     optional_fields = ()
@@ -805,7 +875,7 @@ def request_detail(request, pk):
         for li in q_items:
             line_amt = float(_safe_attr(li, "line_amount") or 0)
             q_total += line_amt
-            li_benchmark_mid = _safe_attr(li, "benchmark_mid")
+            li_benchmark_mid = _sanitised_line_benchmark_mid(li)
             li_quantity = _safe_attr(li, "quantity")
             if li_benchmark_mid is not None and li_quantity is not None:
                 q_total_bench_covered += line_amt
@@ -1191,10 +1261,19 @@ def request_detail(request, pk):
                 if _market_price is None:
                     _market_price = li.benchmark_mid
 
+                if not _is_reasonable_benchmark_price(_market_price, reference_values=_line_benchmark_references(li)):
+                    _market_price = None
+
                 if _hybrid_mode:
                     _benchmark_price = _hybrid_corridor.get("benchmark_mid")
             elif li.benchmark_source == "CORRIDOR_DB":
                 _benchmark_price = li.benchmark_mid
+
+            if _benchmark_price is not None and not _is_reasonable_benchmark_price(
+                _benchmark_price,
+                reference_values=_line_benchmark_references(li),
+            ):
+                _benchmark_price = None
 
             if key not in pivot_map:
                 pivot_map[key] = {
@@ -1241,7 +1320,11 @@ def request_detail(request, pk):
                 rate_list.append({
                     "vendor_name": vname,
                     "rate": rate,
-                    "variance_pct": float(li.variance_pct) if li.variance_pct is not None else None,
+                    "variance_pct": (
+                        float(li.variance_pct)
+                        if li.variance_pct is not None and _sanitised_line_benchmark_mid(li) is not None
+                        else None
+                    ),
                     "is_best": (
                         rate is not None
                         and best_rate is not None
@@ -2981,7 +3064,7 @@ def benchmark_e2e_timeline(request, pk):
         except Exception:
             return getattr(user, "email", "") or ""
 
-    actor_label = _label(bench_request.submitted_by)
+    actor_label = _label(_safe_attr(bench_request, "submitted_by", None))
 
     _events = []
 
@@ -3254,4 +3337,5 @@ def benchmark_e2e_timeline(request, pk):
         "quotations": quotations,
         "total_lines": _total_lines,
         "result": result,
+        "submitted_by_label": actor_label,
     })

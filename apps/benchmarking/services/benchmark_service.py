@@ -41,6 +41,77 @@ class BenchmarkEngine:
     """Orchestrates benchmarking pipeline via agent coordination."""
 
     @staticmethod
+    def _to_decimal(value) -> Optional[Decimal]:
+        if value is None:
+            return None
+        try:
+            return Decimal(str(value))
+        except Exception:
+            return None
+
+    @classmethod
+    def _is_market_benchmark_plausible(
+        cls,
+        *,
+        line_item,
+        benchmark_min: Optional[Decimal],
+        benchmark_mid: Decimal,
+        benchmark_max: Optional[Decimal],
+    ) -> bool:
+        if benchmark_mid <= 0:
+            return False
+
+        max_unit_price = cls._to_decimal(getattr(settings, "BENCHMARKING_MARKET_MAX_UNIT_PRICE", "1000000")) or Decimal("1000000")
+        if benchmark_mid > max_unit_price:
+            return False
+
+        if benchmark_min is not None and benchmark_min <= 0:
+            return False
+        if benchmark_max is not None and benchmark_max <= 0:
+            return False
+        if benchmark_min is not None and benchmark_max is not None and benchmark_max < benchmark_min:
+            return False
+
+        max_range_ratio = cls._to_decimal(getattr(settings, "BENCHMARKING_MARKET_MAX_RANGE_RATIO", "25")) or Decimal("25")
+        if benchmark_min is not None and benchmark_max is not None and benchmark_min > 0:
+            try:
+                if (benchmark_max / benchmark_min) > max_range_ratio:
+                    return False
+            except Exception:
+                return False
+
+        anchors = []
+        quoted_rate = cls._to_decimal(getattr(line_item, "quoted_unit_rate", None))
+        if quoted_rate is not None and quoted_rate > 0:
+            anchors.append(quoted_rate)
+
+        existing_benchmark = cls._to_decimal(getattr(line_item, "benchmark_mid", None))
+        if existing_benchmark is not None and existing_benchmark > 0:
+            anchors.append(existing_benchmark)
+
+        line_amount = cls._to_decimal(getattr(line_item, "line_amount", None))
+        quantity = cls._to_decimal(getattr(line_item, "quantity", None))
+        if line_amount is not None and quantity is not None and quantity > 0:
+            implied_rate = line_amount / quantity
+            if implied_rate > 0:
+                anchors.append(implied_rate)
+
+        max_anchor_ratio = cls._to_decimal(getattr(settings, "BENCHMARKING_MARKET_MAX_ANCHOR_RATIO", "50")) or Decimal("50")
+        min_anchor_ratio = cls._to_decimal(getattr(settings, "BENCHMARKING_MARKET_MIN_ANCHOR_RATIO", "0.02")) or Decimal("0.02")
+
+        for anchor in anchors:
+            if anchor <= 0:
+                continue
+            try:
+                ratio = benchmark_mid / anchor
+            except Exception:
+                return False
+            if ratio > max_anchor_ratio or ratio < min_anchor_ratio:
+                return False
+
+        return True
+
+    @staticmethod
     def _json_safe(value):
         try:
             return json.loads(json.dumps(value, default=str))
@@ -1315,6 +1386,21 @@ class BenchmarkEngine:
 
             benchmark_min = Decimal(str(payload.get("benchmark_min") or benchmark_mid))
             benchmark_max = Decimal(str(payload.get("benchmark_max") or benchmark_mid))
+
+            if not cls._is_market_benchmark_plausible(
+                line_item=line_item,
+                benchmark_min=benchmark_min,
+                benchmark_mid=benchmark_mid,
+                benchmark_max=benchmark_max,
+            ):
+                logger.warning(
+                    "BenchmarkEngine: rejected implausible market benchmark for line_item=%s (mid=%s, min=%s, max=%s)",
+                    line_item.pk,
+                    benchmark_mid,
+                    benchmark_min,
+                    benchmark_max,
+                )
+                continue
 
             corridor_min = line_item.benchmark_min
             corridor_mid = line_item.benchmark_mid
