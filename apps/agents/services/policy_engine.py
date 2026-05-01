@@ -61,6 +61,7 @@ class PolicyEngine:
         recon_mode = getattr(result, "reconciliation_mode", "") or ""
         is_two_way = recon_mode == ReconciliationMode.TWO_WAY
         is_non_po = recon_mode == ReconciliationMode.NON_PO
+        auto_close_enabled = self._is_auto_close_enabled(result)
 
         # Gather exception types
         exc_types = set(
@@ -68,7 +69,7 @@ class PolicyEngine:
         )
 
         # Rule 1: Full match, high confidence -> skip agents
-        if status == MatchStatus.MATCHED and confidence >= REVIEW_AUTO_CLOSE_THRESHOLD:
+        if auto_close_enabled and status == MatchStatus.MATCHED and confidence >= REVIEW_AUTO_CLOSE_THRESHOLD:
             return AgentPlan(
                 skip_agents=True,
                 reason=f"Full match with confidence {confidence:.2f} >= {REVIEW_AUTO_CLOSE_THRESHOLD}",
@@ -92,6 +93,8 @@ class PolicyEngine:
             if isinstance(exc, dict)
         )
         if (
+            auto_close_enabled
+            and
             status == MatchStatus.PARTIAL_MATCH
             and not grn_blocks_close
             and not first_partial_blocks_close
@@ -201,6 +204,21 @@ class PolicyEngine:
 
         logger.info("Policy plan for result %s: %s (%s)", result.pk, agents, reason)
         return AgentPlan(agents=agents, reason=reason, reconciliation_mode=recon_mode)
+
+    @staticmethod
+    def _is_auto_close_enabled(result: ReconciliationResult) -> bool:
+        """Return whether auto-close is enabled for this result's tenant config."""
+        config = getattr(getattr(result, "run", None), "config", None)
+        if config is None:
+            try:
+                config = ReconciliationConfig.get_or_create_default(
+                    tenant=getattr(result, "tenant", None),
+                )
+            except Exception:
+                config = None
+        if config is None:
+            return True
+        return bool(getattr(config, "auto_close_on_match", True))
 
     # ------------------------------------------------------------------
     # Auto-close tolerance check

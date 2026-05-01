@@ -25,6 +25,18 @@ class DashboardService:
     # Scoping helpers
     # ------------------------------------------------------------------
     @staticmethod
+    def _ap_processor_can_see_all_cases(user=None, tenant=None) -> bool:
+        if getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+            return False
+        from apps.reconciliation.models import ReconciliationConfig
+
+        effective_tenant = tenant or getattr(user, "company", None)
+        config = ReconciliationConfig.objects.filter(is_default=True, tenant=effective_tenant).first()
+        if config is None:
+            config = ReconciliationConfig.objects.filter(is_default=True, tenant__isnull=True).first()
+        return bool(config and config.ap_processor_sees_all_cases)
+
+    @staticmethod
     def _scope_invoices(qs, user=None, tenant=None):
         """Restrict invoice queryset based on user role and tenant."""
         if tenant is not None:
@@ -34,9 +46,7 @@ class DashboardService:
         user_role = getattr(user, "role", None)
 
         if user_role == UserRole.AP_PROCESSOR:
-            from apps.reconciliation.models import ReconciliationConfig
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if config and config.ap_processor_sees_all_cases:
+            if DashboardService._ap_processor_can_see_all_cases(user=user, tenant=tenant):
                 return qs
             return qs.filter(document_upload__uploaded_by=user)
 
@@ -57,9 +67,7 @@ class DashboardService:
         user_role = getattr(user, "role", None)
 
         if user_role == UserRole.AP_PROCESSOR:
-            from apps.reconciliation.models import ReconciliationConfig
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if config and config.ap_processor_sees_all_cases:
+            if DashboardService._ap_processor_can_see_all_cases(user=user, tenant=tenant):
                 return qs
             return qs.filter(invoice__document_upload__uploaded_by=user)
 
@@ -80,9 +88,7 @@ class DashboardService:
         user_role = getattr(user, "role", None)
 
         if user_role == UserRole.AP_PROCESSOR:
-            from apps.reconciliation.models import ReconciliationConfig
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if config and config.ap_processor_sees_all_cases:
+            if DashboardService._ap_processor_can_see_all_cases(user=user, tenant=tenant):
                 return qs
             return qs.filter(result__invoice__document_upload__uploaded_by=user)
 
@@ -103,9 +109,7 @@ class DashboardService:
         user_role = getattr(user, "role", None)
 
         if user_role == UserRole.AP_PROCESSOR:
-            from apps.reconciliation.models import ReconciliationConfig
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if config and config.ap_processor_sees_all_cases:
+            if DashboardService._ap_processor_can_see_all_cases(user=user, tenant=tenant):
                 return qs
             return qs.filter(
                 reconciliation_result__invoice__document_upload__uploaded_by=user
@@ -226,9 +230,7 @@ class DashboardService:
         user_role = getattr(user, "role", None)
 
         if user_role == UserRole.AP_PROCESSOR:
-            from apps.reconciliation.models import ReconciliationConfig
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if config and config.ap_processor_sees_all_cases:
+            if DashboardService._ap_processor_can_see_all_cases(user=user, tenant=tenant):
                 return qs
             return qs.filter(
                 reconciliation_result__invoice__document_upload__uploaded_by=user

@@ -206,18 +206,26 @@ def run_reconciliation_task(
         except Exception:
             logger.exception("Failed to link reconciliation results to AP cases")
 
-    # Chain agent pipeline for non-matched results
-    from apps.agents.tasks import run_agent_pipeline_task
+    # Chain agent pipeline for non-matched results only when enabled by config.
+    agent_result_ids = []
+    if config and not bool(getattr(config, "enable_agents", True)):
+        logger.info(
+            "Agent pipeline disabled by ReconciliationConfig (tenant_id=%s, config_id=%s)",
+            tenant_id,
+            getattr(config, "pk", None),
+        )
+    else:
+        from apps.agents.tasks import run_agent_pipeline_task
+        from apps.core.utils import dispatch_task
 
-    agent_result_ids = list(
-        ReconciliationResult.objects.filter(run=run)
-        .exclude(match_status="MATCHED")
-        .values_list("pk", flat=True)
-    )
-    from apps.core.utils import dispatch_task
-    actor_id = triggered_by.pk if triggered_by else None
-    for result_id in agent_result_ids:
-        dispatch_task(run_agent_pipeline_task, tenant_id, result_id, actor_id)
+        agent_result_ids = list(
+            ReconciliationResult.objects.filter(run=run)
+            .exclude(match_status="MATCHED")
+            .values_list("pk", flat=True)
+        )
+        actor_id = triggered_by.pk if triggered_by else None
+        for result_id in agent_result_ids:
+            dispatch_task(run_agent_pipeline_task, tenant_id, result_id, actor_id)
 
     # Langfuse: emit trace-level scores summarising the run outcome
     if run and _lf_task_trace_id:

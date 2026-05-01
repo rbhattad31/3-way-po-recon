@@ -1,10 +1,14 @@
 # Database Documentation — 3-Way PO Reconciliation Platform
 
 **Database**: MySQL (utf8mb4)
-**Generated**: 2026-04-07
-**Total tables**: 109 (Django system + application)
+**Generated**: 2026-05-01
+**Total tables**: ~115 (Django system + application)
 
-> **Changelog** — 2026-04-07: Added country-specific tax fields to `documents_purchase_order` (8 fields: `country`, `gstin`, `state_code`, `vendor_gstin`, `vendor_state_code`, `reverse_charge`, `place_of_supply`, `india_supply_type`) and `documents_po_line` (12 fields: `hsn_sac_code`, `discount_percent`, CGST/SGST/IGST/Cess/VAT rate+amount columns) via migration `0010_country_tax_fields`. Added `langfuse_trace_id` (VARCHAR 64, indexed) to `extraction_result`, `reconciliation_run`, and `posting_core_posting_run` via observability upgrade migrations.
+> **Changelog**
+>
+> **2026-05-01**: Added Evaluation & Learning Framework section (`core_eval_eval_run`, `core_eval_eval_metric`, `core_eval_eval_field_outcome`, `core_eval_learning_signal`, `core_eval_learning_action`). Added `CompanyProfile` and `CompanyAlias` table definitions to Accounts section. Added `source_message` FK to `documents_upload`. Added `actual_cost_usd`, `cost_currency`, `parent_run_id`, `permission_checked` to `agents_run`. Added `agents_llm_cost_rate` table. Fixed `reconciliation_config` field names and added 8 missing config flags. Fixed `reconciliation_policy` field names (`policy_code`/`policy_name`); added `invoice_type`, `effective_from`, `effective_to`. Expanded `reconciliation_result` with 12 new evidence/mode/ERP-provenance fields. Expanded `reconciliation_result_line` with line-match v2 fields (match_method, confidence_band, 6 signal scores, ambiguity fields) and receipt-availability fields (cumulative_received_qty, previously_consumed_qty, available_qty, contributing_grn_line_ids, invoiced_exceeds_available). Expanded `reconciliation_exception` with `result_line`, `resolved`, `resolved_by`, `resolved_at`, `details`. Restored `posting_core_vendor_alias` and `posting_core_erp_vendor_ref` to Section 6 (Vendors). ERP Integration tables (erp_integration_*, posting_core_erp_*) retained in Section 14.
+>
+> **2026-04-07**: Added country-specific tax fields to `documents_purchase_order` (8 fields: `country`, `gstin`, `state_code`, `vendor_gstin`, `vendor_state_code`, `reverse_charge`, `place_of_supply`, `india_supply_type`) and `documents_po_line` (12 fields: `hsn_sac_code`, `discount_percent`, CGST/SGST/IGST/Cess/VAT rate+amount columns) via migration `0010_country_tax_fields`. Added `langfuse_trace_id` (VARCHAR 64, indexed) to `extraction_result`, `reconciliation_run`, and `posting_core_posting_run` via observability upgrade migrations.
 
 ---
 
@@ -29,8 +33,9 @@
 17. [Audit & Observability](#17-audit--observability)
 18. [Reports & Integrations](#18-reports--integrations)
 19. [Core Shared](#19-core-shared)
-20. [Status Enumerations](#20-status-enumerations)
-21. [Index Reference](#21-index-reference)
+20. [Evaluation & Learning](#20-evaluation--learning)
+21. [Status Enumerations](#21-status-enumerations)
+22. [Index Reference](#22-index-reference)
 
 ---
 
@@ -137,6 +142,51 @@ All `BaseModel` tables also have a **`tenant_id`** FK to `accounts_companyprofil
 ---
 
 ## 4. Accounts & RBAC
+
+### `accounts_company_profile`
+
+Tenant entity — one row per organisation (company / subsidiary). Central FK target for all row-level tenant isolation.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `name` | VARCHAR(255) | Primary display name |
+| `legal_name` | VARCHAR(255) | Registered legal name (for exact matching) |
+| `tax_id` | VARCHAR(50) | Primary GSTIN / VAT / TIN of the company |
+| `country` | VARCHAR(10) | ISO country code (IN, AE, US, ...) |
+| `state_code` | VARCHAR(10) | State code (India GST) |
+| `address` | TEXT | |
+| `currency` | VARCHAR(10) | Default: INR |
+| `website` | URLField | |
+| `is_default` | BOOL | Mark as primary company profile for extraction |
+| `is_active` | BOOL | |
+| `slug` | SlugField(80) | UNIQUE, indexed — URL-safe identifier for subdomain / path routing; auto-generated from name |
+| `plan_type` | VARCHAR(30) | `trial`, `starter`, `professional`, `enterprise`; default `trial` |
+| `timezone` | VARCHAR(60) | Default: UTC |
+| `max_users` | SMALLINT UNSIGNED | Default: 10 |
+| `created_by_id` | FK -> accounts_user | SET NULL |
+| `onboarded_at` | DATETIME | Nullable |
+| `created_at` / `updated_at` | DATETIME | |
+
+**Constraint**: Only one `is_default=True` record enforced in `save()`.
+
+---
+
+### `accounts_company_alias`
+
+Alternate / trading names for a company. Used during extraction to distinguish buyer from vendor.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `company_id` | FK -> accounts_company_profile | CASCADE |
+| `alias_name` | VARCHAR(255) | Display form of the alternate name |
+| `normalized_alias` | VARCHAR(255) | `alias_name.strip().lower()`, indexed |
+| `created_at` / `updated_at` | DATETIME | |
+
+**Constraint**: UNIQUE `(company_id, normalized_alias)`
+
+---
 
 ### `accounts_user`
 
@@ -304,6 +354,7 @@ File upload record. One per uploaded file. Current rows: **4**
 | `blob_metadata` | JSON | |
 | `blob_uploaded_at` | DATETIME | |
 | `uploaded_by_id` | FK -> accounts_user | SET NULL |
+| `source_message_id` | FK -> email_integration_email_message | SET NULL — email that triggered this upload when source is EMAIL |
 | `created_at` / `updated_at` | DATETIME | |
 | `created_by_id` / `updated_by_id` | FK -> accounts_user | SET NULL |
 
@@ -547,7 +598,7 @@ Master vendor records. Current rows: **1**
 | `notes` | TEXT | |
 | timestamps + audit FKs | | |
 
-> The `vendor` FK is populated automatically when `VendorImporter` imports an ERP reference. Extraction and reconciliation look up via `normalized_alias -> vendor_id`. Posting maps via `normalized_alias -> vendor_reference_id -> ERP vendor code`.
+> Extraction and reconciliation look up via `normalized_alias -> vendor_id`. Posting maps via `normalized_alias -> vendor_reference_id -> ERP vendor code`.
 
 ---
 
@@ -794,17 +845,26 @@ Single global tolerance configuration. Current rows: **1**
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | |
-| `name` | VARCHAR(100) | |
-| `price_tolerance_pct` | DECIMAL(5,2) | Strict band — default 2% |
-| `qty_tolerance_pct` | DECIMAL(5,2) | Strict band — default 1% |
-| `amount_tolerance_pct` | DECIMAL(5,2) | Strict band — default 1% |
-| `auto_close_price_tolerance_pct` | DECIMAL(5,2) | Wider band — default 3% |
-| `auto_close_qty_tolerance_pct` | DECIMAL(5,2) | Default 5% |
-| `auto_close_amount_tolerance_pct` | DECIMAL(5,2) | Default 3% |
-| `default_reconciliation_mode` | VARCHAR(20) | `TWO_WAY` or `THREE_WAY` |
-| `mode_resolver_enabled` | BOOL | Enable policy/heuristic mode resolution |
-| `is_active` | BOOL | |
+| `name` | VARCHAR(100) | indexed |
+| `quantity_tolerance_pct` | FLOAT | Strict band — default 2% |
+| `price_tolerance_pct` | FLOAT | Strict band — default 1% |
+| `amount_tolerance_pct` | FLOAT | Strict band — default 1% |
+| `auto_close_qty_tolerance_pct` | FLOAT | Wider band — default 5% |
+| `auto_close_price_tolerance_pct` | FLOAT | Wider band — default 3% |
+| `auto_close_amount_tolerance_pct` | FLOAT | Wider band — default 3% |
+| `auto_close_on_match` | BOOL | Default: True |
+| `enable_agents` | BOOL | Default: True — controls whether agent pipeline runs post-reconciliation |
+| `extraction_confidence_threshold` | FLOAT | Default: 0.75 — minimum extraction confidence to proceed |
+| `is_default` | BOOL | indexed — exactly one default config per tenant |
+| `default_reconciliation_mode` | VARCHAR(20) | `TWO_WAY` or `THREE_WAY`; default `THREE_WAY` |
+| `enable_mode_resolver` | BOOL | Default: False — use policy/heuristic mode resolution |
+| `enable_grn_for_stock_items` | BOOL | Default: True — require GRN for stock/inventory items |
+| `enable_two_way_for_services` | BOOL | Default: True — auto-select 2-way mode for service invoices |
+| `partial_invoice_threshold_pct` | FLOAT | Default: 95.0 — invoice total % of PO total below which it is treated as partial/milestone |
+| `ap_processor_sees_all_cases` | BOOL | Default: False — when False, AP Processors see only their own uploaded cases |
 | timestamps + audit FKs | | |
+
+**Constraint**: UNIQUE `(name, tenant)` (enforced via `clean()` for global configs where `tenant` is NULL)
 
 ---
 
@@ -815,34 +875,47 @@ Vendor/category/location-based mode overrides. Current rows: **16**
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | |
-| `name` | VARCHAR(200) | |
+| `policy_code` | VARCHAR(50) | indexed — short unique code used in code references |
+| `policy_name` | VARCHAR(200) | Display name |
 | `vendor_id` | FK -> vendors_vendor | SET NULL |
+| `invoice_type` | VARCHAR(100) | e.g. `STANDARD`, `NON_PO` — blank = any |
 | `item_category` | VARCHAR(100) | |
-| `location_code` | VARCHAR(50) | |
+| `location_code` | VARCHAR(100) | |
 | `business_unit` | VARCHAR(100) | |
 | `is_service_invoice` | BOOL | Nullable — match only when True |
 | `is_stock_invoice` | BOOL | Nullable |
 | `reconciliation_mode` | VARCHAR(20) | Mode to apply when this policy matches |
-| `priority` | INT | Lower = higher priority |
-| `is_active` | BOOL | |
+| `priority` | INT UNSIGNED | indexed — lower = higher precedence |
+| `effective_from` | DATE | Nullable — policy not active before this date |
+| `effective_to` | DATE | Nullable — policy not active after this date |
+| `notes` | TEXT | |
+| `is_active` | BOOL | indexed |
 | timestamps + audit FKs | | |
+
+**Constraint**: UNIQUE `(policy_code, tenant)`
 
 ---
 
 ### `reconciliation_run`
 
-Top-level reconciliation execution for a batch (legacy). Current rows: **0**
+Top-level reconciliation execution for a batch. Current rows: **0**
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | |
-| `run_date` | DATETIME | |
-| `run_by_id` | FK -> accounts_user | SET NULL |
-| `status` | VARCHAR(20) | `PENDING`, `RUNNING`, `COMPLETED`, `FAILED` |
-| `total_invoices` / `matched` / `partial` / `unmatched` / `errors` | INT | |
-| `config_snapshot` | JSON | Config at run time |
-| `trace_id` | VARCHAR(64) | Internal correlation ID, indexed |
-| `langfuse_trace_id` | VARCHAR(64) | Langfuse trace ID — indexed. Persisted by `reconciliation_pipeline` trace. Enables cross-flow correlation with extraction and agent runs. |
+| `status` | VARCHAR(20) | `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, indexed |
+| `config_id` | FK -> reconciliation_config | SET NULL |
+| `started_at` / `completed_at` | DATETIME | Nullable |
+| `total_invoices` | INT UNSIGNED | |
+| `matched_count` / `partial_count` / `unmatched_count` / `error_count` / `review_count` | INT UNSIGNED | |
+| `triggered_by_id` | FK -> accounts_user | SET NULL |
+| `celery_task_id` | VARCHAR(255) | Celery task ID for async tracking |
+| `error_message` | TEXT | |
+| `reconciliation_mode` | VARCHAR(20) | Dominant mode used across invoices in this run |
+| `policy_name_applied` | VARCHAR(200) | Policy code that determined the mode (if uniform) |
+| `grn_required_flag` | BOOL | Nullable — whether GRN was required |
+| `grn_checked_flag` | BOOL | Nullable — whether GRN matching was performed |
+| `langfuse_trace_id` | VARCHAR(64) | Langfuse trace ID — indexed. Persisted by `reconciliation_pipeline` trace. |
 | timestamps + audit FKs | | |
 
 ---
@@ -854,19 +927,36 @@ Match result per invoice. Current rows: **0**
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | |
-| `reconciliation_run_id` | FK -> reconciliation_run | SET NULL |
+| `run_id` | FK -> reconciliation_run | CASCADE |
 | `invoice_id` | FK -> documents_invoice | CASCADE |
 | `purchase_order_id` | FK -> documents_purchase_order | SET NULL |
-| `grn_id` | FK -> documents_grn | SET NULL |
 | `match_status` | VARCHAR(30) | `MATCHED`, `PARTIAL_MATCH`, `UNMATCHED`, `REQUIRES_REVIEW`, `ERROR`, indexed |
-| `reconciliation_mode` | VARCHAR(20) | `TWO_WAY` or `THREE_WAY` |
-| `mode_resolved_by` | VARCHAR(20) | `policy`, `heuristic`, `default` |
-| `confidence_score` | FLOAT | 0.0-1.0 |
-| `summary` | TEXT | LLM-generated plain-text summary |
-| `match_details` | JSON | Per-field comparison breakdown |
-| `price_variance_pct` / `qty_variance_pct` / `amount_variance_pct` | FLOAT | Nullable |
-| `within_auto_close_band` | BOOL | True if PARTIAL_MATCH within wider tolerance |
-| `created_at` / `updated_at` | DATETIME | |
+| `requires_review` | BOOL | indexed — True when exceptions require human decision |
+| `reconciliation_mode` | VARCHAR(20) | `TWO_WAY` or `THREE_WAY`, indexed |
+| `is_two_way_result` | BOOL | indexed |
+| `is_three_way_result` | BOOL | indexed |
+| `mode_resolution_reason` | TEXT | Explanation of why the mode was selected |
+| `policy_applied` | VARCHAR(200) | Policy code that determined the reconciliation mode |
+| `grn_required_flag` | BOOL | Nullable — whether GRN verification was required |
+| `grn_checked_flag` | BOOL | Nullable — whether GRN matching was executed |
+| **Header-level comparison evidence** | | |
+| `vendor_match` | BOOL | Nullable |
+| `currency_match` | BOOL | Nullable |
+| `po_total_match` | BOOL | Nullable |
+| `invoice_total_vs_po` | DECIMAL(18,2) | Nullable — invoice total minus PO total |
+| `total_amount_difference` | DECIMAL(18,2) | Nullable |
+| `total_amount_difference_pct` | DECIMAL(8,2) | Nullable |
+| `grn_available` | BOOL | Default: False |
+| `grn_fully_received` | BOOL | Nullable — all lines fully received per GRN |
+| `extraction_confidence` | FLOAT | Nullable — extraction confidence at match time |
+| `deterministic_confidence` | FLOAT | Nullable — computed header confidence 0-1 |
+| `summary` | TEXT | LLM/system-generated plain-text summary |
+| **ERP source provenance** | | |
+| `po_erp_source_type` | VARCHAR(20) | ERPSourceType value for the PO data used |
+| `grn_erp_source_type` | VARCHAR(20) | ERPSourceType value for the GRN data used |
+| `data_is_stale` | BOOL | True if any ERP source exceeded the freshness threshold |
+| `erp_source_metadata_json` | JSON | Full ERP resolution provenance for PO and GRN sources |
+| timestamps + audit FKs | | |
 
 **Match Status values**: `MATCHED` (all lines within strict tolerance), `PARTIAL_MATCH` (some lines out), `UNMATCHED` (no PO found), `REQUIRES_REVIEW` (exceptions need human), `ERROR` (processing failure)
 
@@ -879,17 +969,42 @@ Per-line comparison detail.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | |
-| `reconciliation_result_id` | FK -> reconciliation_result | CASCADE |
+| `result_id` | FK -> reconciliation_result | CASCADE |
 | `invoice_line_id` | FK -> documents_invoice_line | SET NULL |
 | `po_line_id` | FK -> documents_po_line | SET NULL |
-| `grn_line_id` | FK -> documents_grn_line | SET NULL |
-| `match_status` | VARCHAR(30) | Line-level match |
-| `price_match` / `qty_match` / `amount_match` | BOOL | Nullable |
-| `invoice_qty` / `po_qty` / `grn_qty` | DECIMAL | Nullable |
-| `invoice_price` / `po_price` | DECIMAL | Nullable |
-| `invoice_amount` / `po_amount` / `grn_amount` | DECIMAL | Nullable |
-| `price_variance_pct` / `qty_variance_pct` / `amount_variance_pct` | FLOAT | Nullable |
-| `notes` | TEXT | |
+| `match_status` | VARCHAR(30) | Line-level match status |
+| `qty_invoice` / `qty_po` / `qty_received` | DECIMAL(18,4) | Nullable |
+| `qty_difference` | DECIMAL(18,4) | Nullable |
+| `qty_within_tolerance` | BOOL | Nullable |
+| `price_invoice` / `price_po` | DECIMAL(18,4) | Nullable |
+| `price_difference` | DECIMAL(18,4) | Nullable |
+| `price_within_tolerance` | BOOL | Nullable |
+| `amount_invoice` / `amount_po` | DECIMAL(18,2) | Nullable |
+| `amount_difference` | DECIMAL(18,2) | Nullable |
+| `amount_within_tolerance` | BOOL | Nullable |
+| `tax_invoice` / `tax_po` / `tax_difference` | DECIMAL(18,2) | Nullable |
+| `description_similarity` | FLOAT | Nullable — 0-100 fuzzy score |
+| **Line match v2 fields** | | *Added: deterministic multi-signal scorer* |
+| `match_method` | VARCHAR(30) | `EXACT`, `DETERMINISTIC`, `LLM_FALLBACK`, `NONE` |
+| `match_confidence` | DECIMAL(5,4) | Composite score 0.0000-1.0000 |
+| `confidence_band` | VARCHAR(20) | `HIGH`, `GOOD`, `MODERATE`, `LOW`, `NONE` |
+| `description_match_score` | DECIMAL(5,4) | Nullable — exact description signal score |
+| `token_similarity_score` | DECIMAL(5,4) | Nullable |
+| `fuzzy_similarity_score` | DECIMAL(5,4) | Nullable |
+| `quantity_match_score` | DECIMAL(5,4) | Nullable |
+| `price_match_score` | DECIMAL(5,4) | Nullable |
+| `amount_match_score` | DECIMAL(5,4) | Nullable |
+| `candidate_count` | INT UNSIGNED | Nullable — number of PO line candidates evaluated |
+| `is_ambiguous` | BOOL | Default: False — True when multiple candidates score similarly |
+| `matched_signals` | JSON | List of signal names that contributed to match |
+| `rejected_signals` | JSON | List of signal names that failed |
+| `line_match_meta` | JSON | Detailed scorer metadata (top_gap, second_best_score, etc.) |
+| **Receipt availability fields** | | *Added: partial-invoice 3-way matching* |
+| `cumulative_received_qty` | DECIMAL(18,4) | Nullable — total GRN-received qty for the matched PO line across all GRNs |
+| `previously_consumed_qty` | DECIMAL(18,4) | Nullable — qty already invoiced against the same PO line by prior results |
+| `available_qty` | DECIMAL(18,4) | Nullable — `cumulative_received_qty - previously_consumed_qty` |
+| `contributing_grn_line_ids` | JSON | GRN line item PKs contributing to cumulative_received_qty |
+| `invoiced_exceeds_available` | BOOL | Default: False — True when invoice qty > available qty |
 | `created_at` / `updated_at` | DATETIME | |
 
 ---
@@ -901,14 +1016,16 @@ Exception items requiring attention.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | |
-| `reconciliation_result_id` | FK -> reconciliation_result | CASCADE |
-| `exception_type` | VARCHAR(50) | `PRICE_MISMATCH`, `QTY_MISMATCH`, `MISSING_GRN`, `DUPLICATE_INVOICE`, `PO_NOT_FOUND`, etc. |
+| `result_id` | FK -> reconciliation_result | CASCADE |
+| `result_line_id` | FK -> reconciliation_result_line | SET NULL — the specific line this exception relates to |
+| `exception_type` | VARCHAR(40) | `PRICE_MISMATCH`, `QTY_MISMATCH`, `MISSING_GRN`, `DUPLICATE_INVOICE`, `PO_NOT_FOUND`, `NO_CONFIDENT_PO_LINE_MATCH`, `MULTIPLE_PO_LINE_CANDIDATES`, `LINE_DESCRIPTION_AMBIGUOUS`, `LINE_MATCH_LOW_CONFIDENCE`, etc., indexed |
 | `severity` | VARCHAR(20) | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
-| `field_name` | VARCHAR(100) | Affected field |
-| `invoice_value` / `po_value` / `grn_value` | TEXT | Nullable |
-| `variance_pct` | FLOAT | Nullable |
 | `message` | TEXT | Human-readable description |
-| `applies_to_mode` | VARCHAR(20) | `TWO_WAY`, `THREE_WAY`, or blank (both) |
+| `details` | JSON | Nullable — structured context for agent consumption |
+| `resolved` | BOOL | Default: False, indexed |
+| `resolved_by_id` | FK -> accounts_user | SET NULL |
+| `resolved_at` | DATETIME | Nullable |
+| `applies_to_mode` | VARCHAR(20) | `TWO_WAY`, `THREE_WAY`, or `BOTH` (default), indexed |
 | `created_at` / `updated_at` | DATETIME | |
 
 ---
@@ -993,12 +1110,16 @@ Individual agent execution. Current rows: **18**
 | `prompt_version` | VARCHAR(50) | |
 | `actor_user_id` | INT UNSIGNED | |
 | `cost_estimate` | DECIMAL(10,6) | |
+| `actual_cost_usd` | DECIMAL(10,6) | Nullable — actual LLM cost in USD (computed from token counts + LLMCostRate) |
+| `cost_currency` | VARCHAR(3) | Default: USD |
 | `llm_model_used` | VARCHAR(100) | |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | INT | |
 | `actor_primary_role` | VARCHAR(50) | RBAC snapshot |
 | `actor_roles_snapshot_json` | JSON | |
 | `permission_source` | VARCHAR(50) | |
+| `permission_checked` | VARCHAR(100) | Permission code that was evaluated |
 | `access_granted` | BOOL | |
+| `parent_run_id` | FK -> self (agents_run) | SET NULL — supervisor-to-sub-agent delegation link |
 | `handed_off_to_id` | FK -> self | SET NULL |
 | timestamps + audit FKs | | |
 
@@ -1015,6 +1136,25 @@ Individual agent execution. Current rows: **18**
 | `agents_escalation` | Escalation records | `agent_run_id`, `severity`, `reason`, `suggested_assignee_role`, `resolved` |
 
 **Recommendation types**: `APPROVE_AND_CLOSE`, `SEND_TO_AP_REVIEW`, `REQUEST_CREDIT_NOTE`, `ESCALATE_TO_FINANCE`, `AUTO_CLOSE_PARTIAL`, `REJECT_INVOICE`, `REPROCESS`
+
+---
+
+### `agents_llm_cost_rate`
+
+LLM token pricing table — used to compute `actual_cost_usd` on `agents_run`. Current rows: **0**
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `model_name` | VARCHAR(100) | e.g. `gpt-4o`, `gpt-4o-mini` |
+| `input_cost_per_1k_tokens` | DECIMAL(10,6) | USD per 1,000 prompt tokens |
+| `output_cost_per_1k_tokens` | DECIMAL(10,6) | USD per 1,000 completion tokens |
+| `effective_from` | DATE | Pricing effective date |
+| `effective_to` | DATE | Nullable — null means currently active |
+| `notes` | TEXT | |
+| `created_at` / `updated_at` | DATETIME | |
+
+**Unique together**: `(model_name, effective_from)`
 
 ---
 
@@ -1374,7 +1514,129 @@ LLM prompt templates managed via Admin. Current rows: **12**
 
 ---
 
-## 20. Status Enumerations
+## 20. Evaluation & Learning
+
+Domain-agnostic evaluation and continuous learning framework. Stores predictions, ground truth, quality signals, and proposed corrective actions across all pipeline modules.
+
+### `core_eval_eval_run`
+
+One evaluation pass per entity execution. Current rows: **0**
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `tenant_id` | FK -> accounts_company_profile | CASCADE |
+| `app_module` | VARCHAR(50) | `extraction`, `reconciliation`, `posting`, etc., indexed |
+| `entity_type` | VARCHAR(50) | `invoice`, `reconciliation_result`, `posting_run`, etc. |
+| `entity_id` | BIGINT | Nullable, indexed |
+| `run_key` | VARCHAR(100) | Caller-defined idempotency key; unique together with `(entity_type, entity_id)` |
+| `prompt_hash` | VARCHAR(64) | SHA-256 of the prompt used, indexed |
+| `prompt_slug` | VARCHAR(120) | PromptTemplate slug |
+| `status` | VARCHAR(20) | `CREATED`, `PENDING`, `RUNNING`, `COMPLETED`, `FAILED` |
+| `trace_id` | VARCHAR(64) | Langfuse / distributed trace ID |
+| `triggered_by_id` | FK -> accounts_user | SET NULL |
+| `config_json` | JSON | Run configuration snapshot |
+| `input_snapshot_json` | JSON | Input data snapshot |
+| `result_json` | JSON | Aggregate result |
+| `error_json` | JSON | Error details on failure |
+| `started_at` / `completed_at` | DATETIME | Nullable |
+| `duration_ms` | INT UNSIGNED | Nullable |
+| `created_at` / `updated_at` | DATETIME | |
+
+**Indexes**: `app_module`, `(entity_type, entity_id)`, `prompt_hash`, `created_at`, `(entity_type, entity_id, run_key)`, `(tenant_id, app_module)`
+
+---
+
+### `core_eval_eval_metric`
+
+Named numeric/text/JSON metrics per eval run.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `tenant_id` | FK -> accounts_company_profile | CASCADE |
+| `eval_run_id` | FK -> core_eval_eval_run | CASCADE |
+| `metric_name` | VARCHAR(100) | e.g. `extraction_confidence`, `match_rate` |
+| `value_type` | VARCHAR(20) | `float`, `string`, `json` |
+| `raw_value` | TEXT | String-serialized value |
+| `unit` | VARCHAR(50) | Nullable — e.g. `pct`, `ms`, `USD` |
+| `dimension_json` | JSON | Nullable — grouping/breakdown dimensions |
+| `metadata_json` | JSON | Nullable |
+| `created_at` / `updated_at` | DATETIME | |
+
+---
+
+### `core_eval_eval_field_outcome`
+
+Per-field predicted vs ground-truth comparison. Ground truth is empty at pipeline time; populated on human approval or correction.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `tenant_id` | FK -> accounts_company_profile | CASCADE |
+| `eval_run_id` | FK -> core_eval_eval_run | CASCADE |
+| `field_name` | VARCHAR(100) | e.g. `total_amount`, `vendor_code` |
+| `status` | VARCHAR(20) | `CORRECT`, `INCORRECT`, `MISSING`, `EXTRA`, `SKIPPED` |
+| `predicted_value` | TEXT | LLM/pipeline output |
+| `ground_truth_value` | TEXT | Nullable — populated on human confirmation |
+| `confidence` | FLOAT | Nullable |
+| `detail_json` | JSON | Nullable — source provenance, deterministic values, etc. |
+| `created_at` / `updated_at` | DATETIME | |
+
+---
+
+### `core_eval_learning_signal`
+
+Atomic observable events from production (field corrections, review decisions, match overrides, etc.).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `tenant_id` | FK -> accounts_company_profile | CASCADE |
+| `app_module` | VARCHAR(50) | Source module |
+| `signal_type` | VARCHAR(60) | e.g. `field_corrected`, `review_approved`, `match_overridden` |
+| `entity_type` | VARCHAR(50) | |
+| `entity_id` | BIGINT | Nullable |
+| `aggregation_key` | VARCHAR(200) | Nullable — for grouping signals of the same kind |
+| `confidence` | FLOAT | Nullable |
+| `actor_id` | FK -> accounts_user | SET NULL |
+| `field_name` | VARCHAR(100) | Nullable |
+| `old_value` | TEXT | Nullable |
+| `new_value` | TEXT | Nullable |
+| `payload_json` | JSON | Full signal payload |
+| `eval_run_id` | FK -> core_eval_eval_run | SET NULL |
+| `created_at` / `updated_at` | DATETIME | |
+
+---
+
+### `core_eval_learning_action`
+
+Proposed corrective actions generated by the `LearningEngine`. Status machine: `PROPOSED` -> `APPROVED` -> `APPLIED` | `REJECTED` | `FAILED`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | |
+| `tenant_id` | FK -> accounts_company_profile | CASCADE |
+| `action_type` | VARCHAR(60) | e.g. `add_vendor_alias`, `update_tolerance_config`, `flag_extraction_prompt` |
+| `status` | VARCHAR(20) | `PROPOSED`, `APPROVED`, `APPLIED`, `REJECTED`, `FAILED` |
+| `app_module` | VARCHAR(50) | Target module |
+| `target_description` | VARCHAR(500) | Human-readable description of the change |
+| `rationale` | TEXT | Evidence-based justification |
+| `input_signals_json` | JSON | Learning signals that triggered this action |
+| `action_payload_json` | JSON | Exact change payload |
+| `result_json` | JSON | Nullable — outcome after application |
+| `proposed_by_id` | FK -> accounts_user | SET NULL |
+| `approved_by_id` | FK -> accounts_user | SET NULL |
+| `applied_at` | DATETIME | Nullable |
+| `execution_log_json` | JSON | Nullable |
+| `execution_error` | TEXT | Nullable |
+| `next_retry_at` | DATETIME | Nullable |
+| `retry_count` | SMALLINT UNSIGNED | Default: 0 |
+| `created_at` / `updated_at` | DATETIME | |
+
+---
+
+## 21. Status Enumerations
 
 ### Invoice Status
 
@@ -1428,7 +1690,7 @@ LLM prompt templates managed via Admin. Current rows: **12**
 
 ---
 
-## 21. Index Reference
+## 22. Index Reference
 
 Key indexes beyond PKs and FKs:
 

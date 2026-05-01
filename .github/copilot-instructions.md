@@ -2,12 +2,35 @@
 
 ## Project Identity
 
-Django 4.2+ enterprise AP finance application for 3-way Purchase Order reconciliation
-(Invoice vs PO vs GRN). MySQL, Celery+Redis, Azure OpenAI (GPT-4o), Bootstrap 5.
-17+ Django apps under `apps/`. `apps/reviews` is a migrations-only stub (merged into `apps/cases`).
+Django 5.0 enterprise AP finance application for 3-way Purchase Order reconciliation
+(Invoice vs PO vs GRN). MySQL (utf8mb4), Celery 5.6+Redis, Azure OpenAI (GPT-4o),
+Azure Document Intelligence, Bootstrap 5. 23 Django apps under `apps/`.
+`apps/reviews` is a migrations-only stub (merged into `apps/cases`).
 
-Read `PROJECT.md` for full architecture. Read `docs/AGENT_ARCHITECTURE.md` for the agentic layer.
-Read the `docs/current_system_review/` folder for the latest code-first system analysis.
+**Key docs**:
+- `docs/PROJECT.md` -- full architecture, models, data flow
+- `docs/current_system_review/` -- code-first system analysis (19 documents, April 2026)
+- `docs/AGENT_ARCHITECTURE_COMBINED.md` -- agentic layer, policy engine, guardrails
+- `docs/MULTI_TENANT.md` -- tenant isolation patterns
+- `docs/LANGFUSE_OBSERVABILITY.md` -- observability patterns, trace/score conventions
+
+**Copilot customization files** (read these when working on specific areas):
+- `.github/instructions/django-conventions.instructions.md` -- Python/model rules
+- `.github/instructions/agent-system.instructions.md` -- agent architecture rules
+- `.github/instructions/erp-integration.instructions.md` -- ERP connector rules
+- `.github/instructions/rbac.instructions.md` -- RBAC enforcement rules
+- `.github/instructions/langfuse-tracing.instructions.md` -- Langfuse observability rules
+- `.github/instructions/multi-tenant.instructions.md` -- tenant isolation rules
+- `.github/instructions/posting-pipeline.instructions.md` -- posting pipeline rules
+
+**Available slash-command prompts** (type `/` in chat):
+- `/scaffold-model` -- scaffold a new Django model end-to-end
+- `/add-agent` -- add a new LLM or deterministic agent
+- `/add-erp-connector` -- add a new ERP connector
+- `/write-tests` -- write tests for a service, view, or agent
+- `/add-langfuse-tracing` -- instrument a pipeline with Langfuse
+- `/add-permission` -- add a new RBAC permission
+- `/debug-pipeline` -- diagnose a failing pipeline
 
 ---
 
@@ -216,7 +239,7 @@ Specialized locations:
 
 ## Project Context
 
-This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **17 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`, `core_eval`). Note: `apps/reviews` was merged into `apps/cases` -- the `reviews` entry in INSTALLED_APPS is a migrations-only stub.
+This is a Django 5.0 enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL (utf8mb4), Celery 5.6+Redis, Azure OpenAI (GPT-4o), Azure Document Intelligence, and Bootstrap 5 templates. The codebase lives under `apps/` with **23 Django apps** (including: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`, `core_eval`, `benchmarking`, `extraction_configs`). Note: `apps/reviews` was merged into `apps/cases` -- the `reviews` entry in INSTALLED_APPS is a migrations-only stub.
 
 The platform uses **shared-database multi-tenancy** with row-level isolation via `CompanyProfile` as the tenant entity. Every business model has a `tenant` FK to `CompanyProfile`. See [MULTI_TENANT.md](../docs/MULTI_TENANT.md) for full details.
 

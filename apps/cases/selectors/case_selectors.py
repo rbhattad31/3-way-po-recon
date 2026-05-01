@@ -148,7 +148,10 @@ class CaseSelectors:
             return qs  # ADMIN, FINANCE_MANAGER, AUDITOR see everything
 
         from apps.reconciliation.models import ReconciliationConfig
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
+        tenant = getattr(user, "company", None)
+        config = ReconciliationConfig.objects.filter(is_default=True, tenant=tenant).first()
+        if config is None:
+            config = ReconciliationConfig.objects.filter(is_default=True, tenant__isnull=True).first()
         if config and config.ap_processor_sees_all_cases:
             return qs
 

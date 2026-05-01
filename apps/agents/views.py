@@ -45,7 +45,10 @@ class AgentRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
         user_role = getattr(user, "role", None)
         if user_role == UserRole.AP_PROCESSOR:
             from apps.reconciliation.models import ReconciliationConfig
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            tenant = getattr(user, "company", None)
+            config = ReconciliationConfig.objects.filter(is_default=True, tenant=tenant).first()
+            if config is None:
+                config = ReconciliationConfig.objects.filter(is_default=True, tenant__isnull=True).first()
             if not (config and config.ap_processor_sees_all_cases):
                 return qs.filter(
                     reconciliation_result__invoice__document_upload__uploaded_by=user

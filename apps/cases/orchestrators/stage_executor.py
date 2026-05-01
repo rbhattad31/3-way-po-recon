@@ -605,6 +605,25 @@ class StageExecutor:
         redundant PO_RETRIEVAL agent run.  Same for GRN_RETRIEVAL.
         """
         if case.reconciliation_result:
+            from apps.reconciliation.models import ReconciliationConfig
+
+            config = ReconciliationConfig.get_or_create_default(
+                tenant=getattr(case, "tenant", None),
+            )
+
+            if not bool(getattr(config, "enable_agents", True)):
+                CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.DETERMINISTIC)
+                return {
+                    "agents_executed": [],
+                    "final_recommendation": None,
+                    "confidence": 0.0,
+                    "skipped": True,
+                    "auto_closed": False,
+                    "blocked_by_high_exception": StageExecutor._has_unresolved_high_exceptions(case),
+                    "posting_enqueued": False,
+                    "reason": "Agent pipeline disabled by tenant ReconciliationConfig.enable_agents",
+                }
+
             from apps.agents.services.orchestrator import AgentOrchestrator
 
             orchestrator = AgentOrchestrator()
@@ -622,10 +641,21 @@ class StageExecutor:
             auto_closed = False
             blocking_high_exceptions = StageExecutor._has_unresolved_high_exceptions(case)
 
-            if not blocking_high_exceptions and orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED:
+            auto_close_allowed = bool(getattr(config, "auto_close_on_match", True))
+
+            if (
+                auto_close_allowed
+                and not blocking_high_exceptions
+                and orch_result.skipped
+                and case.reconciliation_result.match_status == MatchStatus.MATCHED
+            ):
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
                 auto_closed = True
-            elif not blocking_high_exceptions and orch_result.final_recommendation == "AUTO_CLOSE":
+            elif (
+                auto_close_allowed
+                and not blocking_high_exceptions
+                and orch_result.final_recommendation == "AUTO_CLOSE"
+            ):
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.AGENT)
                 auto_closed = True
             elif orch_result.final_recommendation == "ESCALATE_TO_MANAGER":

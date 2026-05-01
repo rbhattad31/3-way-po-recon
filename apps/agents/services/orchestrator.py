@@ -728,7 +728,21 @@ class AgentOrchestrator:
         """Apply PolicyEngine post-run checks (auto-close, escalation)."""
         actor = getattr(self, "_actor", None)
 
-        if self.policy.should_auto_close(orch.final_recommendation, orch.final_confidence):
+        auto_close_enabled = True
+        config = getattr(getattr(result, "run", None), "config", None)
+        if config is None:
+            try:
+                from apps.reconciliation.models import ReconciliationConfig
+
+                config = ReconciliationConfig.get_or_create_default(
+                    tenant=getattr(result, "tenant", None),
+                )
+            except Exception:
+                config = None
+        if config is not None:
+            auto_close_enabled = bool(getattr(config, "auto_close_on_match", True))
+
+        if auto_close_enabled and self.policy.should_auto_close(orch.final_recommendation, orch.final_confidence):
             # RBAC: check auto-close permission
             if actor and not AgentGuardrailsService.authorize_action(actor, "auto_close_result"):
                 AgentGuardrailsService.log_guardrail_decision(

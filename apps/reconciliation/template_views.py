@@ -377,7 +377,13 @@ def case_export_csv(request, pk):
 @login_required
 def recon_settings(request):
     """View and edit reconciliation config profiles. Admin-only for writes."""
-    configs = ReconciliationConfig.objects.all().order_by("-is_default", "name")
+    tenant = require_tenant(request)
+    configs = ReconciliationConfig.objects.filter(tenant=tenant).order_by("-is_default", "name")
+
+    # Ensure there is always a tenant-scoped default row for this settings page.
+    if not configs.exists() and tenant is not None:
+        ReconciliationConfig.get_or_create_default(tenant=tenant)
+        configs = ReconciliationConfig.objects.filter(tenant=tenant).order_by("-is_default", "name")
     user_role = getattr(request.user, "role", None)
     is_admin = user_role == UserRole.ADMIN
 
@@ -386,7 +392,7 @@ def recon_settings(request):
         action = request.POST.get("action")
 
         if action == "delete" and config_id:
-            config = get_object_or_404(ReconciliationConfig, pk=config_id)
+            config = get_object_or_404(ReconciliationConfig, pk=config_id, tenant=tenant)
             if config.is_default:
                 messages.error(request, "Cannot delete the default config profile.")
             else:
@@ -395,8 +401,8 @@ def recon_settings(request):
             return redirect("reconciliation:recon_settings")
 
         if action == "set_default" and config_id:
-            ReconciliationConfig.objects.filter(is_default=True).update(is_default=False)
-            ReconciliationConfig.objects.filter(pk=config_id).update(is_default=True)
+            ReconciliationConfig.objects.filter(is_default=True, tenant=tenant).update(is_default=False)
+            ReconciliationConfig.objects.filter(pk=config_id, tenant=tenant).update(is_default=True)
             messages.success(request, "Default config updated.")
             return redirect("reconciliation:recon_settings")
 
@@ -406,9 +412,9 @@ def recon_settings(request):
             if mode not in valid_modes:
                 messages.error(request, "Invalid reconciliation mode.")
                 return redirect("reconciliation:recon_settings")
-            default_cfg = ReconciliationConfig.objects.filter(is_default=True).first()
+            default_cfg = ReconciliationConfig.objects.filter(is_default=True, tenant=tenant).first()
             if not default_cfg:
-                default_cfg = ReconciliationConfig.objects.first()
+                default_cfg = ReconciliationConfig.objects.filter(tenant=tenant).first()
             if default_cfg:
                 default_cfg.default_reconciliation_mode = mode
                 default_cfg.enable_mode_resolver = False
@@ -421,9 +427,9 @@ def recon_settings(request):
 
         # Create or update
         if config_id:
-            config = get_object_or_404(ReconciliationConfig, pk=config_id)
+            config = get_object_or_404(ReconciliationConfig, pk=config_id, tenant=tenant)
         else:
-            config = ReconciliationConfig()
+            config = ReconciliationConfig(tenant=tenant)
 
         config.name = request.POST.get("name", "").strip()
         if not config.name:
@@ -449,7 +455,7 @@ def recon_settings(request):
         config.default_reconciliation_mode = request.POST.get(
             "default_reconciliation_mode", ReconciliationMode.THREE_WAY
         )
-        config.enable_mode_resolver = False
+        config.enable_mode_resolver = request.POST.get("enable_mode_resolver") == "on"
         config.enable_grn_for_stock_items = request.POST.get("enable_grn_for_stock_items") == "on"
         config.enable_two_way_for_services = request.POST.get("enable_two_way_for_services") == "on"
         config.ap_processor_sees_all_cases = request.POST.get("ap_processor_sees_all_cases") == "on"
@@ -460,7 +466,7 @@ def recon_settings(request):
         return redirect("reconciliation:recon_settings")
 
     policy_code = request.GET.get("policy_code", "").strip()
-    policies = ReconciliationPolicy.objects.filter(is_active=True).order_by("priority")
+    policies = ReconciliationPolicy.objects.filter(is_active=True, tenant=tenant).order_by("priority")
     if policy_code:
         policies = policies.filter(policy_code__iexact=policy_code)
 
